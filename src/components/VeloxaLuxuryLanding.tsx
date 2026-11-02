@@ -6,11 +6,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Globe,
   Heart,
   Layers,
   MessageCircle,
-  Pause,
   Play,
   Rocket,
   Send,
@@ -560,6 +558,106 @@ function createFallbackSvg(title: string, subtitle: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
+export interface DynamicHeroSlide {
+  id: string;
+  tabLabel: string;
+  promoBadge: string;
+  titlePre: string;
+  titleHighlight: string;
+  titlePost?: string;
+  subtitle: string;
+}
+
+function getDynamicHeroSlides(
+  locale: VeloxaLocale,
+  copy: (typeof VELOXA_I18N_COPY)[VeloxaLocale],
+): DynamicHeroSlide[] {
+  if (locale === 'id') {
+    return [
+      {
+        id: 'promo_pricing',
+        tabLabel: '🔥 Promo & 4 Sosmed',
+        promoBadge: 'PROMO SPESIAL UMKM, CAFE, KLINIK & EVENT · HEMAT 85% BIAYA AGENSI',
+        titlePre: 'Tim Produksi Reels, Carousel, Poster & AI Media Buyer 24/7 Mulai ',
+        titleHighlight: 'Rp500.000/Bulan',
+        titlePost: '',
+        subtitle:
+          'Pengganti agensi medsos Rp8 juta/bulan. Veloxa AI merancang Reels 9:16, Carousel 4:5, & Feed Poster berkelas agensi global, memvalidasi kualitas hingga 0 kesalahan, lalu memposting otomatis ke Instagram, Facebook, TikTok, & YouTube Shorts setiap hari.',
+      },
+      {
+        id: 'dual_brand_vault',
+        tabLabel: '🎨 Tiru Gaya + Foto Asli',
+        promoBadge: 'DUAL BRAND VAULT AI · 100% FOTO PRODUK ASLI TANPA HALUSINASI',
+        titlePre: 'Tiru Gaya Visual Brand Idola & Padukan dengan ',
+        titleHighlight: 'Foto Produk Asli Anda',
+        titlePost: '',
+        subtitle:
+          'Cukup unggah contoh poster/Reels referensi yang Anda kagumi di Laci 1 dan stok foto menu, produk, atau dokumentasi event asli Anda di Laci 2. Lima Agen OpenAI merakit konten 100% autentik dengan Quality Gate >=88/100.',
+      },
+      {
+        id: 'ai_meta_ads',
+        tabLabel: '📈 AI Meta Ads ROAS 6.8x',
+        promoBadge: 'AI AGENT MARKETING META ADS · AUTO-OPTIMIZER ROAS 24/7',
+        titlePre: 'Pasang Iklan IG & FB Otomatis, Matikan Iklan Boncos & ',
+        titleHighlight: 'Scale-Up ROAS 6.8x',
+        titlePost: '',
+        subtitle:
+          'AI Media Buyer meriset demografi & Validated Interest Meta, menguji A/B testing kreatif, mematikan variasi iklan mahal secara otomatis, dan mengalihkan 100% budget ke iklan pemenang di bawah Pagar Budget Harian Anda.',
+      },
+      {
+        id: 'event_countdown',
+        tabLabel: '🗓️ Mode Event & Mobile',
+        promoBadge: 'JADWAL OTONOM 1X–4X SEHARI · COUNTDOWN EVENT H-30 S.D. HARI-H',
+        titlePre: 'Otomasi Promosi Harian & Hitung Mundur ',
+        titleHighlight: 'Event H-30 s.d. Hari-H',
+        titlePost: '',
+        subtitle:
+          'Atur jadwal tayang 1x hingga 4x sehari atau aktifkan Mode Kampanye Event (Teaser H-30, Early Bird, H-7, hingga Hari-H) langsung dari Web Desktop, Android (.apk), maupun iOS Native tanpa potongan komisi 30%.',
+      },
+    ];
+  }
+
+  return [
+    {
+      id: 'promo_pricing',
+      tabLabel: '🔥 Save 85% Promo',
+      promoBadge: copy.heroBadge,
+      titlePre: copy.heroTitlePre,
+      titleHighlight: copy.heroTitleHighlight,
+      titlePost: copy.heroTitlePost,
+      subtitle: copy.heroSubtitle,
+    },
+    {
+      id: 'dual_brand_vault',
+      tabLabel: '🎨 Style DNA + Real Photos',
+      promoBadge: 'DUAL BRAND VAULT AI · ZERO FAKE PRODUCT HALLUCINATIONS',
+      titlePre: 'Clone Winning Reference Styles & Fuse With ',
+      titleHighlight: 'Your Real Product Photos',
+      titlePost: '',
+      subtitle: copy.vaultSubtitle,
+    },
+    {
+      id: 'ai_meta_ads',
+      tabLabel: '📈 AI Meta Ads 6.8x ROAS',
+      promoBadge: 'AUTONOMOUS META ADS MEDIA BUYER · 24/7 ROAS OPTIMIZER',
+      titlePre: 'Auto-Kill Expensive Ad Sets & Scale ',
+      titleHighlight: '6.8x ROAS Winners 24/7',
+      titlePost: '',
+      subtitle:
+        'AI researches demographics & validated Meta interests, runs A/B creative splits, pauses high-CPR losers automatically, and shifts 100% budget to winning Reels under your Hard Daily Cap.',
+    },
+    {
+      id: 'event_countdown',
+      tabLabel: '🗓️ Event Mode & Native App',
+      promoBadge: '1X–4X DAILY AUTOPILOT · D-30 TO RACE-DAY EVENT COUNTDOWN',
+      titlePre: 'Autonomous 4-Channel Publishing & ',
+      titleHighlight: 'D-30 Event Countdowns',
+      titlePost: '',
+      subtitle: copy.nativeSubtitle,
+    },
+  ];
+}
+
 export interface VeloxaLuxuryLandingProps {
   locale: VeloxaLocale;
   onSelectLocale: (locale: VeloxaLocale) => void;
@@ -576,13 +674,16 @@ export function VeloxaLuxuryLanding({
   const copy = VELOXA_I18N_COPY[locale];
   const footerCopy = FOOTER_COPY[locale];
   const localeMeta = VELOXA_LOCALES.find((l) => l.code === locale) || VELOXA_LOCALES[0];
+  const heroSlides = getDynamicHeroSlides(locale, copy);
 
-  // Interactive state for Hero Carousel, Industry Gallery, and Kinetic Motion Pause/Play
+  // Interactive state for Dynamic Hero Headline, Hero Carousel & Industry Gallery
+  const [heroHeadlineIndex, setHeroHeadlineIndex] = useState<number>(0);
   const [heroCarouselIndex, setHeroCarouselIndex] = useState<number>(0);
   const [activeIndustryId, setActiveIndustryId] = useState<IndustryShowcaseItem['id']>('marathon');
   const [galleryCarouselIndex, setGalleryCarouselIndex] = useState<number>(0);
-  const [isMotionActive, setIsMotionActive] = useState<boolean>(true);
+  const isMotionActive = true;
 
+  const activeHeroSlide = heroSlides[heroHeadlineIndex % heroSlides.length];
   const activeIndustry =
     INDUSTRY_SHOWCASES.find((item) => item.id === activeIndustryId) || INDUSTRY_SHOWCASES[0];
   const heroIndustry = INDUSTRY_SHOWCASES[0];
@@ -591,101 +692,94 @@ export function VeloxaLuxuryLanding({
   const galleryCurrentSlide =
     activeIndustry.carousel.slides[galleryCarouselIndex % activeIndustry.carousel.slides.length];
 
+  // Auto-cycle Dynamic Hero Headline + Promo every 3.8 seconds
+  useEffect(() => {
+    const headlineTimer = window.setInterval(() => {
+      setHeroHeadlineIndex((prev) => (prev + 1) % heroSlides.length);
+    }, 3800);
+    return () => window.clearInterval(headlineTimer);
+  }, [heroSlides.length]);
+
   // Auto-cycle Hero 4:5 Carousel slides every 3.5 seconds when live motion is active
   useEffect(() => {
-    if (!isMotionActive) return;
     const timer = window.setInterval(() => {
       setHeroCarouselIndex((prev) => (prev + 1) % heroIndustry.carousel.slides.length);
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [isMotionActive, heroIndustry.carousel.slides.length]);
+  }, [heroIndustry.carousel.slides.length]);
 
   return (
     <div
       dir={localeMeta.dir}
-      className={`space-y-16 bg-white pb-12 ${isMotionActive ? 'veloxa-motion-active' : ''}`}
+      className="veloxa-motion-active space-y-16 bg-white pb-12"
       data-testid="veloxa-sales-landing-page"
     >
       {/* ============================================================================
          SECTION 1: ULTRA-LUXURY GLOBAL HERO + LIVE REELS, CAROUSEL & META ADS BENTO
          Open Full-Width Pure White Canvas (#FFFFFF) + Strong Individual Card Shadows
          ============================================================================ */}
-      <section className="relative bg-white pt-2">
-        {/* Top Global Language, Currency & Motion Control Bar inside Hero */}
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-pink-200 bg-pink-50/80 px-3.5 py-1.5 text-xs font-black text-[#D85A88]">
-              <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#EC749B]" />
-              <span className="veloxa-trim-text">{copy.heroBadge}</span>
-            </div>
-
-            {/* Accessible Pause/Play Mechanism for Kinetic Animations (modern-web-guidance: motion) */}
-            <button
-              type="button"
-              data-testid="toggle-kinetic-motion-btn"
-              onClick={() => setIsMotionActive((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-bold text-neutral-700 shadow-xs transition hover:border-pink-200 hover:text-[#D85A88]"
-            >
-              {isMotionActive ? (
-                <>
-                  <Pause className="h-3 w-3 text-[#EC749B]" />
-                  <span>{footerCopy.motionPlayingLabel}</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-3 w-3 text-neutral-500" />
-                  <span>{footerCopy.motionPausedLabel}</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <div
-            className="flex flex-wrap items-center gap-1.5"
-            role="group"
-            aria-label="Global Language and Market Switcher"
-          >
-            <span className="mr-1 inline-flex items-center gap-1 text-[11px] font-bold text-neutral-500">
-              <Globe className="h-3.5 w-3.5 text-[#EC749B]" />
-              Global Market:
-            </span>
-            {VELOXA_LOCALES.map((item) => {
-              const isSelected = item.code === locale;
-              return (
-                <button
-                  key={item.code}
-                  type="button"
-                  data-testid={`landing-lang-btn-${item.code}`}
-                  onClick={() => onSelectLocale(item.code)}
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition ${
-                    isSelected
-                      ? 'bg-[#EC749B] text-white shadow-sm'
-                      : 'border border-neutral-200 bg-white text-neutral-700 shadow-2xs hover:border-pink-200 hover:text-[#D85A88]'
-                  }`}
-                >
-                  <span>{item.flag}</span>
-                  <span>{item.code.toUpperCase()}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
+      <section className="relative bg-white pt-4">
         {/* Main Hero Grid: Left Editorial Pitch + Right Live Animated Social Visual Studio */}
         <div className="grid items-center gap-10 lg:grid-cols-[1.03fr_0.97fr]">
-          {/* Left Column: High-Converting Luxury Copy & Trust Signals */}
+          {/* Left Column: Dynamic Rotating Hero Headline, Promo Info & Trust Signals */}
           <div className="text-left">
-            <h1 className="text-3xl font-black leading-[1.12] tracking-tight text-neutral-900 sm:text-5xl">
-              {copy.heroTitlePre}
-              <span className="inline-block rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-0.5 text-[#EC749B] shadow-xs">
-                {copy.heroTitleHighlight}
-              </span>
-              {copy.heroTitlePost}
-            </h1>
+            {/* 4 Interactive Dynamic Value-Prop & Promo Selector Pills with Live Progress Timer */}
+            <div
+              className="mb-4 flex flex-wrap items-center gap-2"
+              role="tablist"
+              aria-label="Informasi Platform & Promo Utama Veloxa AI"
+            >
+              {heroSlides.map((slide, idx) => {
+                const isActive = idx === heroHeadlineIndex % heroSlides.length;
+                return (
+                  <button
+                    key={slide.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    data-testid={`hero-dynamic-tab-${slide.id}`}
+                    onClick={() => setHeroHeadlineIndex(idx)}
+                    className={`relative overflow-hidden rounded-full px-3.5 py-1.5 text-[11px] font-black transition ${
+                      isActive
+                        ? 'border border-pink-300 bg-pink-50/90 text-[#D85A88] shadow-xs'
+                        : 'border border-neutral-200 bg-white text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]'
+                    }`}
+                  >
+                    <span>{slide.tabLabel}</span>
+                    {isActive && (
+                      <span
+                        aria-hidden="true"
+                        className="veloxa-headline-timer-bar absolute inset-x-0 bottom-0 h-0.5 bg-[#EC749B]"
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
-            <p className="mt-5 max-w-2xl text-sm leading-relaxed text-neutral-600 sm:text-base">
-              {copy.heroSubtitle}
-            </p>
+            {/* Dynamic Morphing Headline Container (re-triggers smooth slide+fade animation on each slide change) */}
+            <div
+              key={activeHeroSlide.id}
+              className="veloxa-headline-morph min-h-[220px] sm:min-h-[245px]"
+              data-testid="hero-dynamic-headline-box"
+            >
+              <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-white px-3 py-1 text-[11px] font-black tracking-wide text-[#D85A88] shadow-2xs">
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#EC749B]" />
+                <span>{activeHeroSlide.promoBadge}</span>
+              </div>
+
+              <h1 className="text-3xl font-black leading-[1.12] tracking-tight text-neutral-900 sm:text-5xl">
+                {activeHeroSlide.titlePre}
+                <span className="inline-block rounded-2xl border border-pink-200 bg-pink-50/80 px-3 py-0.5 text-[#EC749B] shadow-xs">
+                  {activeHeroSlide.titleHighlight}
+                </span>
+                {activeHeroSlide.titlePost || ''}
+              </h1>
+
+              <p className="mt-4 max-w-2xl text-sm leading-relaxed text-neutral-600 sm:text-base">
+                {activeHeroSlide.subtitle}
+              </p>
+            </div>
 
             {/* Primary & Secondary CTAs */}
             <div className="mt-7 flex flex-wrap items-center gap-3.5">

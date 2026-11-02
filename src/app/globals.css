@@ -190,6 +190,35 @@ dialog::backdrop {
   }
 }
 
+@keyframes veloxa-headline-enter {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes veloxa-headline-progress {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+.veloxa-headline-morph {
+  animation: veloxa-headline-enter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.veloxa-headline-timer-bar {
+  transform-origin: left center;
+  animation: veloxa-headline-progress 3.8s linear infinite;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .veloxa-motion-active .veloxa-float-slow {
     animation: veloxa-float-y 5.5s ease-in-out infinite;

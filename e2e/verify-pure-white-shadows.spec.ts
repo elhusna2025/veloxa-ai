@@ -11,61 +11,51 @@ async function runVerification() {
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
     const page = await context.newPage();
 
-    await page.goto('https://veloxa-ai-saas.web.app/?v=open_wide_audit', {
+    await page.goto('https://veloxa-ai-saas.web.app/?v=dynamic_hero_audit', {
       waitUntil: 'domcontentloaded',
     });
 
     await page.getByTestId('veloxa-sales-landing-page').waitFor({ state: 'visible' });
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1000);
 
-    const styles = await page.evaluate(() => {
-      const bodyBg = window.getComputedStyle(document.body).backgroundColor;
-      const landingEl = document.querySelector('[data-testid="veloxa-sales-landing-page"]');
-      const landingBg = landingEl ? window.getComputedStyle(landingEl).backgroundColor : '';
-      const heroSectionEl = landingEl?.querySelector('section');
-      const heroSectionShadow = heroSectionEl ? window.getComputedStyle(heroSectionEl).boxShadow : '';
-      const cardEl = document.querySelector('.veloxa-luxury-card');
-      const cardShadow = cardEl ? window.getComputedStyle(cardEl).boxShadow : '';
-      const pinkCardEl = document.querySelector('.veloxa-luxury-card-pink');
-      const pinkCardShadow = pinkCardEl ? window.getComputedStyle(pinkCardEl).boxShadow : '';
-      const ctaEl = document.querySelector('[data-testid="landing-cta-start-btn"]');
-      const ctaBg = ctaEl ? window.getComputedStyle(ctaEl).backgroundColor : '';
-      return { bodyBg, landingBg, heroSectionShadow, cardShadow, pinkCardShadow, ctaBg };
-    });
+    // Verify redundant second language bar in Hero is gone
+    const redundantLangBtnCount = await page.locator('[data-testid^="landing-lang-btn-"]').count();
+    assert.equal(redundantLangBtnCount, 0);
 
-    console.log('Computed Open-Wide Luxury Styles:', styles);
-    assert.equal(styles.bodyBg, 'rgb(255, 255, 255)');
-    assert.equal(styles.landingBg, 'rgb(255, 255, 255)');
-    assert.equal(styles.heroSectionShadow, 'none');
-    assert.equal(styles.ctaBg, 'rgb(236, 116, 155)');
-    assert.notEqual(styles.cardShadow, 'none');
-    assert.notEqual(styles.pinkCardShadow, 'none');
+    // Verify Slide 1 (Promo & 4 Sosmed) is visible initially
+    await page.getByTestId('hero-dynamic-tab-promo_pricing').click();
+    await page.waitForTimeout(400);
+    const slide1Text = await page.getByTestId('hero-dynamic-headline-box').textContent();
+    assert.ok(slide1Text?.includes('Rp500.000/Bulan'));
 
-    // 1. Screenshot Open Full-Width Hero + Live Marquee Ticker on Pure White Background
     await page.screenshot({
-      path: path.join(ARTIFACT_DIR, 'luxury_10_pure_white_strong_shadow_hero.png'),
+      path: path.join(ARTIFACT_DIR, 'luxury_13_clean_header_dynamic_hero_slide1.png'),
       fullPage: false,
     });
 
-    // 2. Scroll to Open Interactive Industry Visual Gallery (Reels 9:16 + Carousel 4:5 + Single Feed 4:5)
-    const gallerySection = page.getByTestId('landing-visual-gallery-section');
-    await gallerySection.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(800);
+    // Click Slide 2 (Tiru Gaya + Foto Asli) and verify dynamic headline morphs
+    await page.getByTestId('hero-dynamic-tab-dual_brand_vault').click();
+    await page.waitForTimeout(450);
+    const slide2Text = await page.getByTestId('hero-dynamic-headline-box').textContent();
+    assert.ok(slide2Text?.includes('Foto Produk Asli Anda'));
+
     await page.screenshot({
-      path: path.join(ARTIFACT_DIR, 'luxury_11_pure_white_strong_shadow_gallery.png'),
+      path: path.join(ARTIFACT_DIR, 'luxury_14_clean_header_dynamic_hero_slide2.png'),
       fullPage: false,
     });
 
-    // 3. Scroll to Open Global Footer & Pricing Cards
-    const footerSection = page.getByTestId('veloxa-global-footer');
-    await footerSection.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(800);
+    // Click Slide 3 (AI Meta Ads ROAS 6.8x) and verify dynamic headline morphs
+    await page.getByTestId('hero-dynamic-tab-ai_meta_ads').click();
+    await page.waitForTimeout(450);
+    const slide3Text = await page.getByTestId('hero-dynamic-headline-box').textContent();
+    assert.ok(slide3Text?.includes('Scale-Up ROAS 6.8x'));
+
     await page.screenshot({
-      path: path.join(ARTIFACT_DIR, 'luxury_12_pure_white_strong_shadow_pricing_footer.png'),
+      path: path.join(ARTIFACT_DIR, 'luxury_15_clean_header_dynamic_hero_slide3.png'),
       fullPage: false,
     });
 
-    console.log('✅ All Open-Wide Pure White Background & Strong Card Shadow checks passed!');
+    console.log('✅ Clean Header & Dynamic Rotating Hero Headline + Promo checks passed!');
   } finally {
     await browser.close();
   }

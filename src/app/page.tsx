@@ -966,14 +966,10 @@ export default function VeloxaAiPlatformPage() {
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-xs">
               V
             </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-lg font-black tracking-tight text-neutral-900">VELOXA AI</span>
-                {!authUser ? (
-                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
-                    {i18nCopy.headerBadgePublic}
-                  </span>
-                ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="text-xl font-black tracking-tight text-neutral-900">VELOXA AI</span>
+              {authUser &&
+                (authUser.isSuperAdmin && activeRole === 'admin' ? (
                   <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
                     Super Admin Control Center
                   </span>
@@ -981,11 +977,7 @@ export default function VeloxaAiPlatformPage() {
                   <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
                     Workspace: {brand.businessName} ({brand.city})
                   </span>
-                )}
-              </div>
-              <p className="text-xs text-neutral-500">
-                Autonomous Social Content Studio & AI Meta Ads Marketing Agent
-              </p>
+                ))}
             </div>
           </div>
 
