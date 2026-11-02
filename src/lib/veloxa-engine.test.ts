@@ -1,0 +1,243 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  BRAND_PRESETS,
+  SUBSCRIPTION_PLANS,
+  buildMetaAdCampaignPlan,
+  calculatePlatformAdminMetrics,
+  calculateTenantUnitEconomics,
+  canConsumePostingQuota,
+  computeEventCampaignPhase,
+  extractStyleDnaFromReference,
+  generateBrandContentDraft,
+  resolveTargetChannelsForFormat,
+  runAutonomousQualityRepairLoop,
+  runMetaAdsAutonomousOptimizer,
+  searchValidatedMetaInterests,
+  validateAutonomyScheduleAgainstPlan,
+} from './veloxa-engine';
+import type { ChannelConnectionState, MetaAdsAccountConnection } from './veloxa-types';
+
+const ALL_CONNECTED_CHANNELS: ChannelConnectionState[] = [
+  {
+    channel: 'instagram',
+    connected: true,
+    handle: '@nusantararun.id',
+    accountName: 'Nusantara Run Festival',
+    followerCount: 28400,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-15T00:00:00Z',
+    lastPublishedAt: 'Hari ini, 07:00 WIB',
+  },
+  {
+    channel: 'facebook',
+    connected: true,
+    handle: 'Nusantara Run Official',
+    accountName: 'Nusantara Run Page',
+    followerCount: 14200,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-15T00:00:00Z',
+    lastPublishedAt: 'Hari ini, 07:00 WIB',
+  },
+  {
+    channel: 'tiktok',
+    connected: true,
+    handle: '@nusantararun',
+    accountName: 'Nusantara Run TikTok',
+    followerCount: 41900,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-15T00:00:00Z',
+    lastPublishedAt: 'Hari ini, 07:00 WIB',
+  },
+  {
+    channel: 'youtube_shorts',
+    connected: true,
+    handle: '@NusantaraRunTV',
+    accountName: 'Nusantara Run Shorts',
+    followerCount: 9800,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-15T00:00:00Z',
+    lastPublishedAt: 'Kemarin, 19:00 WIB',
+  },
+];
+
+test('resolveTargetChannelsForFormat routes short_video to all 4 platforms on Pro plan and excludes YouTube Shorts for carousel', () => {
+  const videoTargets = resolveTargetChannelsForFormat('short_video', ALL_CONNECTED_CHANNELS, 'pro_1500k');
+  assert.deepEqual(videoTargets, ['instagram', 'facebook', 'tiktok', 'youtube_shorts']);
+
+  const carouselTargets = resolveTargetChannelsForFormat('carousel', ALL_CONNECTED_CHANNELS, 'pro_1500k');
+  assert.deepEqual(carouselTargets, ['instagram', 'facebook', 'tiktok']);
+
+  const starterTargets = resolveTargetChannelsForFormat('short_video', ALL_CONNECTED_CHANNELS, 'starter_500k');
+  assert.deepEqual(starterTargets, ['instagram', 'facebook']);
+});
+
+test('runAutonomousQualityRepairLoop removes forbidden words and reaches passed status with 0 issues', () => {
+  const cafeBrand = BRAND_PRESETS.cafe_fnb;
+  const result = runAutonomousQualityRepairLoop({
+    title: 'Kopi Sore',
+    hook: 'Kopi instan buat sore',
+    caption: 'Rasanya tidak murahan dan cocok buat WFC.',
+    brand: cafeBrand,
+  });
+
+  assert.equal(result.review.passed, true);
+  assert.equal(result.review.issues.length, 0);
+  assert.ok(result.review.score >= 90);
+  assert.equal(result.repairedHook.toLowerCase().includes('instan'), false);
+  assert.equal(result.repairedCaption.toLowerCase().includes('murahan'), false);
+  assert.ok(result.repairedCaption.includes('Kopi Senja'));
+});
+
+test('generateBrandContentDraft integrates user real assets and style reference DNA', () => {
+  const runBrand = BRAND_PRESETS.running_event;
+  const draft = generateBrandContentDraft({
+    brand: runBrand,
+    format: 'short_video',
+    source: 'autonomous_agent',
+    vaultAssets: [
+      {
+        id: 'ref_1',
+        workspaceId: runBrand.workspaceId,
+        drawer: 'style_reference',
+        mediaType: 'video_reel',
+        title: 'Contoh Reels Marathon Energetik',
+        description: 'Transisi cepat pelari saat matahari terbit',
+        previewUrl: '/demo/reel-ref.jpg',
+        aspectRatio: '9:16',
+        tags: ['marathon', 'reels'],
+        uploadedFrom: 'ios',
+        createdAt: '2026-11-01',
+        usedInPostsCount: 4,
+        extractedStyleDna: extractStyleDnaFromReference({
+          title: 'Contoh Reels Marathon',
+          description: 'Fast cut',
+          mediaType: 'video_reel',
+          category: 'running_event',
+        }),
+      },
+      {
+        id: 'real_1',
+        workspaceId: runBrand.workspaceId,
+        drawer: 'real_asset',
+        mediaType: 'photo',
+        title: 'Foto Pelari Finisher & Medali Bandung 10K',
+        description: 'Dokumentasi asli pelari memegang medali',
+        previewUrl: '/demo/real-runner.jpg',
+        aspectRatio: '9:16',
+        tags: ['medali', 'pelari'],
+        uploadedFrom: 'android',
+        createdAt: '2026-11-01',
+        usedInPostsCount: 2,
+      },
+    ],
+    connections: ALL_CONNECTED_CHANNELS,
+    planId: 'pro_1500k',
+  });
+
+  assert.equal(draft.format, 'short_video');
+  assert.equal(draft.usedStyleReferenceId, 'ref_1');
+  assert.deepEqual(draft.usedRealAssetIds, ['real_1']);
+  assert.equal(draft.videoScenes?.length, 4);
+  assert.equal(draft.qualityReview.passed, true);
+});
+
+test('computeEventCampaignPhase calculates accurate countdown phases', () => {
+  const earlyBird = computeEventCampaignPhase('2026-11-22T00:00:00Z', '2026-11-02T00:00:00Z');
+  assert.equal(earlyBird.phase, 'early_bird_launch');
+  assert.equal(earlyBird.daysUntilEvent, 20);
+
+  const urgency = computeEventCampaignPhase('2026-11-05T00:00:00Z', '2026-11-02T00:00:00Z');
+  assert.equal(urgency.phase, 'countdown_urgency');
+});
+
+test('buildMetaAdCampaignPlan enforces Hard Budget Cap and runMetaAdsAutonomousOptimizer scales winning variant', () => {
+  const metaAccount: MetaAdsAccountConnection = {
+    connected: true,
+    adAccountId: 'act_889900112233',
+    adAccountName: 'Nusantara Run Ads Manager',
+    businessPortfolioName: 'PT Nusantara Sportainment',
+    currency: 'IDR',
+    paymentMethodLabel: 'Visa Corporate •• 4821',
+    dailyHardCapIdr: 200_000,
+    monthlyHardCapIdr: 5_000_000,
+    autoOptimizeEnabled: true,
+    autoBoostOrganicWinners: true,
+  };
+
+  const plan = buildMetaAdCampaignPlan({
+    brand: BRAND_PRESETS.running_event,
+    metaAccount,
+    objective: 'WEBSITE_CONVERSIONS',
+    promotedOfferingTitle: 'Bandung Sunrise Run 10K Early Bird',
+    requestedDailyBudgetIdr: 350_000, // Exceeds 200k hard cap!
+    durationDays: 10,
+    targetCity: 'Bandung',
+    radiusKm: 25,
+    customInterestKeyword: 'Half Marathon',
+  });
+
+  // Hard cap must clamp 350k down to 200k!
+  assert.equal(plan.budget.hardCapClamped, true);
+  assert.equal(plan.budget.appliedDailyBudgetIdr, 200_000);
+  assert.equal(plan.budget.totalBudgetIdr, 2_000_000);
+  assert.ok(plan.validatedInterests.some((i) => i.name.includes('Half Marathon')));
+  assert.equal(plan.optimizationLogs.length, 1);
+  assert.equal(plan.optimizationLogs[0].actionType, 'cap_guard_enforced');
+
+  // Run autonomous Media Buyer optimizer
+  const optimized = runMetaAdsAutonomousOptimizer(plan);
+  assert.equal(optimized.status, 'active_running');
+  const winner = optimized.creatives.find((c) => c.status === 'winner_scaled');
+  const loser = optimized.creatives.find((c) => c.status === 'paused_by_ai_loser');
+  assert.ok(winner);
+  assert.ok(loser);
+  assert.equal(winner.budgetSharePct, 100);
+  assert.equal(loser.budgetSharePct, 0);
+});
+
+test('calculateTenantUnitEconomics and quota guards protect SaaS gross margins across 500k–1.5M plans', () => {
+  const proEcon = calculateTenantUnitEconomics({
+    planId: 'pro_1500k',
+    postsPublishedThisMonth: 60,
+    realAssetRatioPct: 50,
+  });
+  assert.equal(proEcon.monthlyRevenueIdr, 1_500_000);
+  assert.ok(proEcon.grossMarginPct >= 75);
+
+  const exhausted = canConsumePostingQuota({
+    planId: 'starter_500k',
+    postsPublishedThisMonth: SUBSCRIPTION_PLANS.starter_500k.monthlyPostQuota,
+  });
+  assert.equal(exhausted.allowed, false);
+
+  const scheduleValidation = validateAutonomyScheduleAgainstPlan(
+    { postsPerDay: 3, targetChannels: ['instagram', 'tiktok', 'youtube_shorts'] },
+    'starter_500k',
+  );
+  assert.equal(scheduleValidation.valid, false);
+  assert.equal(scheduleValidation.clampedPostsPerDay, 1);
+  assert.deepEqual(scheduleValidation.allowedTargetChannels, ['instagram']);
+
+  const adminSummary = calculatePlatformAdminMetrics([
+    {
+      workspaceId: 'ws_1',
+      businessName: 'Kopi Senja',
+      ownerName: 'Raka',
+      ownerEmail: 'raka@kopisenja.id',
+      category: 'cafe_fnb',
+      planId: 'growth_1000k',
+      subscriptionStatus: 'active',
+      postsPublishedThisMonth: 30,
+      monthlyPostQuota: 45,
+      connectedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+      metaAdsConnected: false,
+      activeMetaCampaigns: 0,
+      monthlySubscriptionRevenueIdr: 1_000_000,
+      estimatedMonthlyApiCostIdr: 120_000,
+      grossMarginPct: 88,
+    },
+  ]);
+  assert.equal(adminSummary.totalMrrIdr, 1_000_000);
+  assert.equal(adminSummary.averageGrossMarginPct, 88);
+});

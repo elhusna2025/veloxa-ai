@@ -1,0 +1,53 @@
+{
+  "name": "veloxa-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Veloxa AI — Autonomous Multi-Channel Social Content & Meta Ads Marketing SaaS (Web, Android, iOS)",
+  "engines": {
+    "node": "20.x || 22.x"
+  },
+  "scripts": {
+    "dev": "next dev -p 3035",
+    "build": "NODE_ENV=production next build",
+    "build:mobile": "NODE_ENV=production NEXT_OUTPUT_EXPORT=true next build",
+    "start": "next start -p 3035",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/lib/veloxa-engine.test.ts",
+    "functions:build": "npm --prefix functions run build",
+    "functions:test": "npm --prefix functions test",
+    "cap:sync": "npm run build:mobile && npx cap sync",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/camera": "^8.2.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/push-notifications": "^8.0.4",
+    "@capacitor/share": "^8.0.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "firebase": "^12.16.0",
+    "lucide-react": "^0.475.0",
+    "next": "15.3.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^3.0.1",
+    "tailwindcss-animate": "^1.0.7",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "playwright": "^1.63.0",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
+  }
+}

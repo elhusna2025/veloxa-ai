@@ -1,0 +1,347 @@
+import {
+  BRAND_PRESETS,
+  buildMetaAdCampaignPlan,
+  extractStyleDnaFromReference,
+  generateBrandContentDraft,
+} from './veloxa-engine';
+import type {
+  AutonomyConfig,
+  BrandVaultAsset,
+  CentralPlatformCredentials,
+  ChannelConnectionState,
+  ContentDraft,
+  EventCampaign,
+  MetaAdCampaignPlan,
+  MetaAdsAccountConnection,
+  TenantWorkspaceSummary,
+} from './veloxa-types';
+
+export const INITIAL_CHANNEL_CONNECTIONS: ChannelConnectionState[] = [
+  {
+    channel: 'instagram',
+    connected: true,
+    handle: '@nusantararun.id',
+    accountName: 'Nusantara Run Official',
+    followerCount: 28_450,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-10T00:00:00Z',
+    lastPublishedAt: 'Hari ini, 07:00 WIB',
+  },
+  {
+    channel: 'facebook',
+    connected: true,
+    handle: 'Nusantara Run Festival Page',
+    accountName: 'Nusantara Run Festival',
+    followerCount: 14_200,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-10T00:00:00Z',
+    lastPublishedAt: 'Hari ini, 07:00 WIB',
+  },
+  {
+    channel: 'tiktok',
+    connected: true,
+    handle: '@nusantararun',
+    accountName: 'Nusantara Run TikTok',
+    followerCount: 41_900,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2026-12-28T00:00:00Z',
+    lastPublishedAt: 'Hari ini, 07:00 WIB',
+  },
+  {
+    channel: 'youtube_shorts',
+    connected: true,
+    handle: '@NusantaraRunTV',
+    accountName: 'Nusantara Run Shorts',
+    followerCount: 9_820,
+    oauthMode: 'direct_publish',
+    tokenExpiresAt: '2027-01-15T00:00:00Z',
+    lastPublishedAt: 'Kemarin, 19:00 WIB',
+  },
+];
+
+export const INITIAL_META_ADS_ACCOUNT: MetaAdsAccountConnection = {
+  connected: true,
+  adAccountId: 'act_889920144512',
+  adAccountName: 'Veloxa Client Ads · Nusantara Run & Cafe',
+  businessPortfolioName: 'PT Veloxa Digital Nusantara',
+  currency: 'IDR',
+  paymentMethodLabel: 'Kartu Debit/Kredit Bisnis User (Ditarik Langsung oleh Meta)',
+  dailyHardCapIdr: 250_000,
+  monthlyHardCapIdr: 6_000_000,
+  autoOptimizeEnabled: true,
+  autoBoostOrganicWinners: true,
+};
+
+export const INITIAL_VAULT_ASSETS: BrandVaultAsset[] = [
+  {
+    id: 'vault_ref_reel_1',
+    workspaceId: 'ws_nusantara_run',
+    drawer: 'style_reference',
+    mediaType: 'video_reel',
+    title: 'Referensi Reels Marathon Sunrise (Fast-Cut 9:16)',
+    description: 'Contoh gaya transisi cepat pelari dengan teks pace tebal & musik berenergi tinggi.',
+    previewUrl: 'https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&w=800&q=80',
+    aspectRatio: '9:16',
+    tags: ['referensi-reels', 'olahraga-lari', 'fast-cut'],
+    uploadedFrom: 'ios',
+    createdAt: '2 Nov 2026, 08:15 WIB',
+    usedInPostsCount: 12,
+    extractedStyleDna: extractStyleDnaFromReference({
+      title: 'Referensi Reels Marathon Sunrise',
+      description: 'Fast-cut',
+      mediaType: 'video_reel',
+      category: 'running_event',
+    }),
+  },
+  {
+    id: 'vault_ref_cafe_1',
+    workspaceId: 'ws_kopi_senja',
+    drawer: 'style_reference',
+    mediaType: 'photo',
+    title: 'Referensi Carousel Estetik Coffee Shop Korea',
+    description: 'Tipografi bersih di atas foto close-up latte art dan croissant hangat.',
+    previewUrl: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=800&q=80',
+    aspectRatio: '4:5',
+    tags: ['referensi-carousel', 'cafe', 'warm-tone'],
+    uploadedFrom: 'web',
+    createdAt: '1 Nov 2026, 14:20 WIB',
+    usedInPostsCount: 9,
+    extractedStyleDna: extractStyleDnaFromReference({
+      title: 'Referensi Carousel Estetik Coffee Shop',
+      description: 'Warm cafe',
+      mediaType: 'photo',
+      category: 'cafe_fnb',
+    }),
+  },
+  {
+    id: 'vault_real_run_1',
+    workspaceId: 'ws_nusantara_run',
+    drawer: 'real_asset',
+    mediaType: 'photo',
+    title: 'Foto Asli Pelari & Medali Finisher Bandung 10K',
+    description: 'Dokumentasi asli pelari melewati garis finish Gedung Sate sambil mengangkat medali.',
+    previewUrl: 'https://images.unsplash.com/photo-1452626038306-9aae5e071dd3?auto=format&fit=crop&w=800&q=80',
+    aspectRatio: '9:16',
+    tags: ['aset-asli', 'medali-finisher', 'pelari'],
+    uploadedFrom: 'android',
+    createdAt: '2 Nov 2026, 09:00 WIB',
+    usedInPostsCount: 7,
+  },
+  {
+    id: 'vault_real_cafe_1',
+    workspaceId: 'ws_kopi_senja',
+    drawer: 'real_asset',
+    mediaType: 'photo',
+    title: 'Foto Asli Es Kopi Senja Gula Aren & Butter Croissant',
+    description: 'Foto menu asli di meja kayu cabang Senopati saat sore hari.',
+    previewUrl: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=800&q=80',
+    aspectRatio: '4:5',
+    tags: ['aset-asli', 'menu-kopi', 'croissant'],
+    uploadedFrom: 'ios',
+    createdAt: '1 Nov 2026, 16:40 WIB',
+    usedInPostsCount: 11,
+  },
+];
+
+export const INITIAL_AUTONOMY_CONFIG: AutonomyConfig = {
+  workspaceId: 'ws_nusantara_run',
+  enabled: true,
+  executionMode: 'full_autonomous',
+  postsPerDay: 2,
+  scheduleTimesWib: ['07:00', '19:00'],
+  activeDays: ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'],
+  preferredFormats: ['short_video', 'carousel', 'single_post'],
+  targetChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+  contentMixPct: {
+    educationTips: 40,
+    communityStory: 30,
+    productEventPromo: 30,
+  },
+  autoRepairUntilZeroIssues: true,
+};
+
+export const INITIAL_EVENT_CAMPAIGNS: EventCampaign[] = [
+  {
+    id: 'camp_bandung_10k',
+    workspaceId: 'ws_nusantara_run',
+    name: 'Bandung Sunrise Run 10K & 5K 2026',
+    eventDateIso: '2026-11-22',
+    location: 'Gedung Sate – Braga, Bandung',
+    ticketOrPromoHighlight: 'Tiket Early Bird Rp225.000 (Termasuk Jersey Dry-Fit + Medali + Refreshment)',
+    targetRegistrationsOrSales: 1_500,
+    currentConversions: 1_140,
+    status: 'active',
+    currentPhase: 'early_bird_launch',
+    autoInjectIntoDailyAutonomy: true,
+  },
+  {
+    id: 'camp_kopi_wfc',
+    workspaceId: 'ws_kopi_senja',
+    name: 'Promo Payday Bundling Kopi Senja & Croissant',
+    eventDateIso: '2026-11-08',
+    location: 'Kopi Senja Senopati & Kemang',
+    ticketOrPromoHighlight: 'Beli 2 Es Kopi Senja Gratis 1 Artisan Butter Croissant (15.00–18.00 WIB)',
+    targetRegistrationsOrSales: 600,
+    currentConversions: 435,
+    status: 'active',
+    currentPhase: 'countdown_urgency',
+    autoInjectIntoDailyAutonomy: true,
+  },
+];
+
+export function buildInitialDrafts(): ContentDraft[] {
+  const runDraft = generateBrandContentDraft({
+    brand: BRAND_PRESETS.running_event,
+    format: 'short_video',
+    source: 'autonomous_agent',
+    vaultAssets: INITIAL_VAULT_ASSETS,
+    connections: INITIAL_CHANNEL_CONNECTIONS,
+    planId: 'pro_1500k',
+    activeCampaign: INITIAL_EVENT_CAMPAIGNS[0],
+  });
+  runDraft.status = 'published';
+  runDraft.publishedAtWib = 'Hari ini, 07:00 WIB';
+  runDraft.organicMetrics = {
+    reach: 34_800,
+    likes: 2_940,
+    comments: 318,
+    saves: 890,
+    shares: 610,
+    engagementRatePct: 13.6,
+    isOrganicWinner: true,
+    recommendedAdDailyBudgetIdr: 150_000,
+  };
+
+  const cafeDraft = generateBrandContentDraft({
+    brand: BRAND_PRESETS.cafe_fnb,
+    format: 'carousel',
+    source: 'autonomous_agent',
+    vaultAssets: INITIAL_VAULT_ASSETS,
+    connections: INITIAL_CHANNEL_CONNECTIONS,
+    planId: 'pro_1500k',
+    activeCampaign: INITIAL_EVENT_CAMPAIGNS[1],
+    scheduledForWib: 'Hari ini, 19:00 WIB',
+  });
+
+  return [runDraft, cafeDraft];
+}
+
+export function buildInitialMetaAdCampaigns(drafts: ContentDraft[]): MetaAdCampaignPlan[] {
+  const plan1 = buildMetaAdCampaignPlan({
+    brand: BRAND_PRESETS.running_event,
+    metaAccount: INITIAL_META_ADS_ACCOUNT,
+    objective: 'WEBSITE_CONVERSIONS',
+    promotedOfferingTitle: 'Bandung Sunrise Run 10K · Early Bird Rp225rb',
+    requestedDailyBudgetIdr: 150_000,
+    durationDays: 14,
+    targetCity: 'Bandung',
+    radiusKm: 30,
+    ageMin: 19,
+    ageMax: 44,
+    customInterestKeyword: 'Garmin & Strava Runners',
+    originatedFromOrganicDraft: drafts[0],
+  });
+  plan1.status = 'active_running';
+  plan1.budget.spentToDateIdr = 600_000;
+
+  const plan2 = buildMetaAdCampaignPlan({
+    brand: BRAND_PRESETS.cafe_fnb,
+    metaAccount: INITIAL_META_ADS_ACCOUNT,
+    objective: 'WHATSAPP_MESSAGES',
+    promotedOfferingTitle: 'Paket WFC & Bundling Sore Kopi Senja',
+    requestedDailyBudgetIdr: 100_000,
+    durationDays: 10,
+    targetCity: 'Jakarta Selatan',
+    radiusKm: 10,
+    ageMin: 21,
+    ageMax: 38,
+  });
+
+  return [plan1, plan2];
+}
+
+export const INITIAL_TENANT_WORKSPACES: TenantWorkspaceSummary[] = [
+  {
+    workspaceId: 'ws_nusantara_run',
+    businessName: 'Nusantara Run Festival',
+    ownerName: 'Dimas Pratama',
+    ownerEmail: 'dimas@nusantararun.id',
+    category: 'running_event',
+    planId: 'pro_1500k',
+    subscriptionStatus: 'active',
+    postsPublishedThisMonth: 52,
+    monthlyPostQuota: 90,
+    connectedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+    metaAdsConnected: true,
+    activeMetaCampaigns: 2,
+    monthlySubscriptionRevenueIdr: 1_500_000,
+    estimatedMonthlyApiCostIdr: 218_000,
+    grossMarginPct: 85.5,
+  },
+  {
+    workspaceId: 'ws_kopi_senja',
+    businessName: 'Kopi Senja & Artisan Bakery',
+    ownerName: 'Nadia Kusuma',
+    ownerEmail: 'nadia@kopisenja.id',
+    category: 'cafe_fnb',
+    planId: 'growth_1000k',
+    subscriptionStatus: 'active',
+    postsPublishedThisMonth: 34,
+    monthlyPostQuota: 45,
+    connectedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+    metaAdsConnected: true,
+    activeMetaCampaigns: 1,
+    monthlySubscriptionRevenueIdr: 1_000_000,
+    estimatedMonthlyApiCostIdr: 142_000,
+    grossMarginPct: 85.8,
+  },
+  {
+    workspaceId: 'ws_glowderm',
+    businessName: 'GlowDerm Aesthetic & Skin Clinic',
+    ownerName: 'dr. Clarissa Putri',
+    ownerEmail: 'clarissa@glowderm.id',
+    category: 'clinic_beauty',
+    planId: 'pro_1500k',
+    subscriptionStatus: 'active',
+    postsPublishedThisMonth: 61,
+    monthlyPostQuota: 90,
+    connectedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+    metaAdsConnected: true,
+    activeMetaCampaigns: 3,
+    monthlySubscriptionRevenueIdr: 1_500_000,
+    estimatedMonthlyApiCostIdr: 265_000,
+    grossMarginPct: 82.3,
+  },
+  {
+    workspaceId: 'ws_roti_kota',
+    businessName: 'Roti Bakar Kota & Kopi Tiam',
+    ownerName: 'Hendra Wijaya',
+    ownerEmail: 'hendra@rotikota.id',
+    category: 'cafe_fnb',
+    planId: 'starter_500k',
+    subscriptionStatus: 'active',
+    postsPublishedThisMonth: 16,
+    monthlyPostQuota: 20,
+    connectedChannels: ['instagram', 'facebook'],
+    metaAdsConnected: false,
+    activeMetaCampaigns: 0,
+    monthlySubscriptionRevenueIdr: 500_000,
+    estimatedMonthlyApiCostIdr: 68_000,
+    grossMarginPct: 86.4,
+  },
+];
+
+export const INITIAL_CENTRAL_CREDENTIALS: CentralPlatformCredentials = {
+  openAiModelText: 'gpt-4.1',
+  openAiModelImage: 'gpt-image-1',
+  openAiModelVoice: 'gpt-4o-mini-tts',
+  openAiApiKeyConfigured: true,
+  metaAppId: '119402849102948',
+  metaAppReviewStatus: 'advanced_access_ready',
+  tiktokClientKey: 'aw9x82k190veloxa',
+  tiktokDirectPostAuditStatus: 'approved_direct_post',
+  youtubeOAuthClientId: '89102948102-veloxa.apps.googleusercontent.com',
+  youtubeDailyQuotaUnits: 1_000_000,
+  paymentGatewayProvider: 'Midtrans',
+  globalMaxRepairAttemptsPerJob: 8,
+};

@@ -1,0 +1,674 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model — Veloxa AI Multi-Tenant SaaS Platform
+// ===============================================================
+//
+// Roles:
+//   - 'admin': Platform Super Admin (via custom claim `request.auth.token.role == 'admin'`
+//              or verified `users/{uid}.data.role == 'admin'`).
+//   - 'user':  Tenant Workspace Owner or Member.
+//
+// Collection: users/{userId}
+//   - uid: string (optional, immutable, matches userId)
+//   - email: string (optional, immutable on client update, valid email <= 254 chars)
+//   - displayName / name: string (optional, 1..120 chars)
+//   - photoURL / avatarUrl: string (optional, valid http/https URL <= 2048 chars)
+//   - role: string ('user' | 'admin', immutable by non-admin, defaults to 'user')
+//   - activeWorkspaceId: string (optional, 1..128 chars)
+//   - workspaceIds: list<string> (optional, <= 50 items)
+//   - subscriptionPlanId: string (optional, immutable by non-admin)
+//   - quotaLimit: number (optional, >= 0, immutable by non-admin)
+//   - quotaUsed: number (optional, >= 0, immutable by non-admin)
+//   - onboardingCompleted: bool (optional)
+//   - createdAt: timestamp | string (optional, immutable)
+//   - updatedAt: timestamp | string (optional)
+//
+// Collection: workspaces/{workspaceId}
+//   - ownerUid: string (required, immutable by non-admin, 1..128 chars)
+//   - memberUids: list<string> (optional, <= 100 items)
+//   - name: string (required, 1..120 chars)
+//   - category: string (required, 1..80 chars)
+//   - subscriptionPlanId: string (optional, immutable by non-admin, 1..64 chars)
+//   - quotaUsed: number (optional, >= 0, immutable by non-admin)
+//   - quotaLimit: number (optional, >= 0, immutable by non-admin)
+//   - autonomyEnabled: bool (optional)
+//   - createdAt: timestamp | string (optional, immutable)
+//   - updatedAt: timestamp | string (optional)
+//
+// Subcollections under workspaces/{workspaceId}:
+//   1. brand_brain/{docId}          - Brand profile, colors, tone, products/events
+//   2. vault_assets/{assetId}       - Style references and real user photos/videos
+//   3. connections/{channelId}      - Connected social & Meta Ads status metadata (no raw secrets)
+//   4. drafts/{draftId}             - Content Studio drafts (IG, FB, TikTok, YouTube Shorts)
+//   5. autonomy_slots/{slotId}      - Autonomous content schedule slots
+//   6. event_campaigns/{campaignId} - Marketing event countdown campaigns
+//   7. meta_ad_campaigns/{adId}     - AI Meta Ads campaigns, targeting, hard budget caps, logs
+//
+// Collection: platform_configs/{configId}
+//   - Super Admin only global AI, billing, and platform settings.
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user owns the resource (for user-owned documents)
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if user is owner based on document's uid field
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    // Verify UID hasn't been tampered with on create
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) ||
+        request.resource.data.uid == request.auth.uid;
+    }
+
+    // Ensure uid field is not modified on update
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        !('uid' in resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // Check if the caller is a Super Admin via Auth custom claim or user profile document
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.get('role', '') == 'admin' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
+      );
+    }
+
+    // Workspace access helpers
+    function workspaceExists(workspaceId) {
+      return exists(/databases/$(database)/documents/workspaces/$(workspaceId));
+    }
+
+    function getWorkspaceData(workspaceId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)).data;
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return isAuthenticated() &&
+        workspaceExists(workspaceId) &&
+        getWorkspaceData(workspaceId).ownerUid == request.auth.uid;
+    }
+
+    function isWorkspaceMemberOrOwner(workspaceId) {
+      let ws = getWorkspaceData(workspaceId);
+      return isAuthenticated() &&
+        workspaceExists(workspaceId) &&
+        (ws.ownerUid == request.auth.uid ||
+         ('memberUids' in ws && ws.memberUids is list && request.auth.uid in ws.memberUids));
+    }
+
+    function canAccessWorkspace(workspaceId) {
+      return isSuperAdmin() || isWorkspaceMemberOrOwner(workspaceId);
+    }
+
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate that immutable fields have not been modified on update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validate string length on request.resource.data
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Validate optional string (if present and non-null, must be string within length bounds)
+    function isValidOptionalString(data, field, minLen, maxLen) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is string &&
+         data[field].size() >= minLen &&
+         data[field].size() <= maxLen);
+    }
+
+    // Validate optional non-negative number within upper bound
+    function isValidOptionalNumber(data, field, minVal, maxVal) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is number &&
+         data[field] >= minVal &&
+         data[field] <= maxVal);
+    }
+
+    // Validate optional boolean
+    function isValidOptionalBool(data, field) {
+      return !(field in data) || data[field] == null || data[field] is bool;
+    }
+
+    // Validate URL format (must start with https:// or http:// and be bounded)
+    function isValidUrl(url) {
+      return url is string &&
+        url.size() <= 2048 &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Validate optional URL field
+    function isValidOptionalUrl(data, field) {
+      return !(field in data) || data[field] == null || data[field] == '' || isValidUrl(data[field]);
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 3 &&
+        email.size() <= 254 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Validate ISO 8601 date string or Firestore timestamp
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.size() <= 64 &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}.*");
+    }
+
+    function isValidOptionalTimestampOrDate(data, field) {
+      return !(field in data) || data[field] == null ||
+        data[field] is timestamp ||
+        isValidDateString(data[field]);
+    }
+
+    // Validate that a list is a list and enforces size limits
+    function isValidList(list, maxSize) {
+      return list is list && list.size() <= maxSize;
+    }
+
+    function isValidOptionalList(data, field, maxSize) {
+      return !(field in data) || data[field] == null || isValidList(data[field], maxSize);
+    }
+
+    function isValidOptionalMap(data, field, maxKeys) {
+      return !(field in data) || data[field] == null ||
+        (data[field] is map && data[field].keys().size() <= maxKeys);
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update rules)
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 20 &&
+        hasOnlyAllowedFields([
+          'uid', 'id', 'email', 'displayName', 'name', 'photoURL', 'avatarUrl',
+          'role', 'activeWorkspaceId', 'workspaceIds', 'subscriptionPlanId',
+          'quotaLimit', 'quotaUsed', 'onboardingCompleted', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidOptionalString(data, 'uid', 1, 128) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        (!( 'email' in data ) || data.email == null || isValidEmail(data.email)) &&
+        isValidOptionalString(data, 'displayName', 1, 120) &&
+        isValidOptionalString(data, 'name', 1, 120) &&
+        isValidOptionalUrl(data, 'photoURL') &&
+        isValidOptionalUrl(data, 'avatarUrl') &&
+        (!( 'role' in data ) || data.role in ['user', 'admin']) &&
+        isValidOptionalString(data, 'activeWorkspaceId', 1, 128) &&
+        isValidOptionalList(data, 'workspaceIds', 50) &&
+        isValidOptionalString(data, 'subscriptionPlanId', 1, 64) &&
+        isValidOptionalNumber(data, 'quotaLimit', 0, 10000000) &&
+        isValidOptionalNumber(data, 'quotaUsed', 0, 10000000) &&
+        isValidOptionalBool(data, 'onboardingCompleted') &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidWorkspace(data) {
+      return data is map &&
+        hasRequiredFields(['ownerUid', 'name', 'category']) &&
+        hasOnlyAllowedFields([
+          'id', 'ownerUid', 'memberUids', 'name', 'category', 'slug', 'logoUrl',
+          'timezone', 'currency', 'subscriptionPlanId', 'quotaUsed', 'quotaLimit',
+          'autonomyEnabled', 'onboardingStep', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        isValidOptionalList(data, 'memberUids', 100) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 80 &&
+        isValidOptionalString(data, 'slug', 1, 120) &&
+        isValidOptionalUrl(data, 'logoUrl') &&
+        isValidOptionalString(data, 'timezone', 1, 64) &&
+        isValidOptionalString(data, 'currency', 1, 16) &&
+        isValidOptionalString(data, 'subscriptionPlanId', 1, 64) &&
+        isValidOptionalNumber(data, 'quotaUsed', 0, 10000000) &&
+        isValidOptionalNumber(data, 'quotaLimit', 0, 10000000) &&
+        isValidOptionalBool(data, 'autonomyEnabled') &&
+        isValidOptionalNumber(data, 'onboardingStep', 0, 20) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidBrandBrain(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 30 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'brandName', 1, 120) &&
+        isValidOptionalString(data, 'tagline', 0, 300) &&
+        isValidOptionalString(data, 'description', 0, 5000) &&
+        isValidOptionalString(data, 'category', 0, 100) &&
+        isValidOptionalString(data, 'subCategory', 0, 100) &&
+        isValidOptionalString(data, 'targetAudience', 0, 2000) &&
+        isValidOptionalString(data, 'toneOfVoice', 0, 500) &&
+        isValidOptionalString(data, 'brandArchetype', 0, 100) &&
+        isValidOptionalList(data, 'colors', 20) &&
+        isValidOptionalString(data, 'primaryColor', 0, 32) &&
+        isValidOptionalString(data, 'secondaryColor', 0, 32) &&
+        isValidOptionalString(data, 'accentColor', 0, 32) &&
+        isValidOptionalString(data, 'typography', 0, 200) &&
+        isValidOptionalList(data, 'keywords', 50) &&
+        isValidOptionalList(data, 'bannedWords', 50) &&
+        isValidOptionalList(data, 'uniqueSellingPoints', 30) &&
+        isValidOptionalList(data, 'products', 100) &&
+        isValidOptionalList(data, 'events', 100) &&
+        isValidOptionalString(data, 'visualStylePrompt', 0, 3000) &&
+        isValidOptionalUrl(data, 'websiteUrl') &&
+        isValidOptionalString(data, 'instagramHandle', 0, 100) &&
+        isValidOptionalString(data, 'tiktokHandle', 0, 100) &&
+        isValidOptionalString(data, 'updatedBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidVaultAsset(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 30 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'title', 1, 200) &&
+        isValidOptionalString(data, 'name', 1, 200) &&
+        isValidOptionalString(data, 'description', 0, 2000) &&
+        isValidOptionalString(data, 'type', 1, 50) &&
+        isValidOptionalString(data, 'assetType', 1, 50) &&
+        isValidOptionalString(data, 'category', 0, 100) &&
+        isValidOptionalString(data, 'storagePath', 1, 1024) &&
+        isValidOptionalUrl(data, 'url') &&
+        isValidOptionalUrl(data, 'thumbnailUrl') &&
+        isValidOptionalString(data, 'mimeType', 1, 120) &&
+        isValidOptionalNumber(data, 'sizeBytes', 0, 1073741824) &&
+        isValidOptionalNumber(data, 'width', 0, 20000) &&
+        isValidOptionalNumber(data, 'height', 0, 20000) &&
+        isValidOptionalNumber(data, 'durationSec', 0, 86400) &&
+        isValidOptionalList(data, 'tags', 30) &&
+        isValidOptionalString(data, 'aiAnalysis', 0, 5000) &&
+        isValidOptionalString(data, 'styleNotes', 0, 2000) &&
+        isValidOptionalList(data, 'dominantColors', 15) &&
+        isValidOptionalBool(data, 'isStyleReference') &&
+        isValidOptionalBool(data, 'isRealAsset') &&
+        isValidOptionalString(data, 'uploadedBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidConnection(data) {
+      // Raw OAuth secrets MUST NEVER be written or stored in client-readable connection docs
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 25 &&
+        !data.keys().hasAny([
+          'accessToken', 'refreshToken', 'clientSecret',
+          'appSecret', 'privateKey', 'rawOAuthToken', 'oauthTokenSecret'
+        ]) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'platform', 1, 64) &&
+        isValidOptionalString(data, 'channelType', 1, 64) &&
+        isValidOptionalString(data, 'accountName', 0, 200) &&
+        isValidOptionalString(data, 'accountId', 0, 128) &&
+        isValidOptionalString(data, 'pageId', 0, 128) &&
+        isValidOptionalString(data, 'igUserId', 0, 128) &&
+        isValidOptionalString(data, 'adAccountId', 0, 128) &&
+        isValidOptionalString(data, 'pixelId', 0, 128) &&
+        (!( 'status' in data ) || data.status in ['connected', 'disconnected', 'expired', 'error', 'pending']) &&
+        isValidOptionalList(data, 'scopes', 50) &&
+        isValidOptionalTimestampOrDate(data, 'tokenExpiresAt') &&
+        isValidOptionalTimestampOrDate(data, 'lastSyncedAt') &&
+        isValidOptionalString(data, 'connectedBy', 1, 128) &&
+        isValidOptionalString(data, 'errorMessage', 0, 1000) &&
+        isValidOptionalMap(data, 'metadata', 25) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidDraft(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 35 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'title', 0, 250) &&
+        isValidOptionalString(data, 'caption', 0, 5000) &&
+        isValidOptionalList(data, 'hashtags', 50) &&
+        isValidOptionalString(data, 'platform', 1, 64) &&
+        isValidOptionalList(data, 'platforms', 10) &&
+        isValidOptionalString(data, 'format', 1, 64) &&
+        isValidOptionalString(data, 'contentType', 1, 64) &&
+        isValidOptionalList(data, 'mediaUrls', 20) &&
+        isValidOptionalUrl(data, 'thumbnailUrl') &&
+        isValidOptionalList(data, 'vaultAssetIds', 20) &&
+        isValidOptionalString(data, 'aiPrompt', 0, 3000) &&
+        isValidOptionalString(data, 'visualPrompt', 0, 3000) &&
+        isValidOptionalString(data, 'hookText', 0, 500) &&
+        isValidOptionalString(data, 'ctaText', 0, 500) &&
+        (!( 'status' in data ) || data.status in [
+          'draft', 'generating', 'ready', 'scheduled', 'publishing', 'published', 'failed', 'archived'
+        ]) &&
+        isValidOptionalTimestampOrDate(data, 'scheduledFor') &&
+        isValidOptionalTimestampOrDate(data, 'publishedAt') &&
+        isValidOptionalString(data, 'slotId', 0, 128) &&
+        isValidOptionalString(data, 'campaignId', 0, 128) &&
+        isValidOptionalNumber(data, 'complianceScore', 0, 100) &&
+        isValidOptionalNumber(data, 'brandMatchScore', 0, 100) &&
+        isValidOptionalMap(data, 'metrics', 20) &&
+        isValidOptionalString(data, 'createdBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidAutonomySlot(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 25 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'dayOfWeek', 1, 32) &&
+        isValidOptionalString(data, 'timeSlot', 1, 32) &&
+        isValidOptionalTimestampOrDate(data, 'scheduledAt') &&
+        isValidOptionalString(data, 'platform', 1, 64) &&
+        isValidOptionalList(data, 'platforms', 10) &&
+        isValidOptionalString(data, 'format', 1, 64) &&
+        isValidOptionalString(data, 'contentPillar', 0, 200) &&
+        isValidOptionalString(data, 'topicPrompt', 0, 2000) &&
+        isValidOptionalString(data, 'status', 1, 64) &&
+        isValidOptionalBool(data, 'autoPublish') &&
+        isValidOptionalString(data, 'draftId', 0, 128) &&
+        isValidOptionalString(data, 'campaignId', 0, 128) &&
+        isValidOptionalTimestampOrDate(data, 'lastRunAt') &&
+        isValidOptionalTimestampOrDate(data, 'nextRunAt') &&
+        isValidOptionalString(data, 'createdBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidEventCampaign(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 30 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'name', 1, 200) &&
+        isValidOptionalString(data, 'title', 1, 200) &&
+        isValidOptionalString(data, 'description', 0, 3000) &&
+        isValidOptionalString(data, 'eventType', 0, 100) &&
+        isValidOptionalTimestampOrDate(data, 'eventDate') &&
+        isValidOptionalTimestampOrDate(data, 'startDate') &&
+        isValidOptionalTimestampOrDate(data, 'endDate') &&
+        isValidOptionalNumber(data, 'countdownDays', 0, 365) &&
+        isValidOptionalString(data, 'status', 1, 64) &&
+        isValidOptionalList(data, 'targetPlatforms', 10) &&
+        isValidOptionalString(data, 'promoOffer', 0, 1000) &&
+        isValidOptionalUrl(data, 'ctaUrl') &&
+        isValidOptionalNumber(data, 'budgetIdr', 0, 100000000000) &&
+        isValidOptionalList(data, 'generatedDraftIds', 100) &&
+        isValidOptionalString(data, 'createdBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidMetaAdCampaign(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 40 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'workspaceId', 1, 128) &&
+        isValidOptionalString(data, 'name', 1, 200) &&
+        isValidOptionalString(data, 'objective', 1, 80) &&
+        isValidOptionalString(data, 'status', 1, 64) &&
+        isValidOptionalString(data, 'metaCampaignId', 0, 128) &&
+        isValidOptionalString(data, 'metaAdSetId', 0, 128) &&
+        isValidOptionalString(data, 'metaAdId', 0, 128) &&
+        isValidOptionalNumber(data, 'dailyBudgetIdr', 0, 100000000000) &&
+        isValidOptionalNumber(data, 'lifetimeBudgetIdr', 0, 100000000000) &&
+        isValidOptionalNumber(data, 'hardBudgetCapIdr', 0, 100000000000) &&
+        isValidOptionalNumber(data, 'spendToDateIdr', 0, 100000000000) &&
+        isValidOptionalString(data, 'currency', 1, 16) &&
+        isValidOptionalMap(data, 'demographics', 25) &&
+        isValidOptionalList(data, 'interests', 100) &&
+        isValidOptionalList(data, 'locations', 100) &&
+        isValidOptionalNumber(data, 'ageMin', 13, 65) &&
+        isValidOptionalNumber(data, 'ageMax', 13, 65) &&
+        isValidOptionalList(data, 'genders', 5) &&
+        isValidOptionalString(data, 'creativeDraftId', 0, 128) &&
+        isValidOptionalList(data, 'creativeAssetIds', 20) &&
+        isValidOptionalString(data, 'headline', 0, 255) &&
+        isValidOptionalString(data, 'primaryText', 0, 3000) &&
+        isValidOptionalString(data, 'ctaType', 0, 64) &&
+        isValidOptionalUrl(data, 'destinationUrl') &&
+        isValidOptionalNumber(data, 'roas', 0, 100000) &&
+        isValidOptionalNumber(data, 'ctr', 0, 100) &&
+        isValidOptionalNumber(data, 'cpcIdr', 0, 100000000) &&
+        isValidOptionalNumber(data, 'impressions', 0, 10000000000) &&
+        isValidOptionalNumber(data, 'clicks', 0, 10000000000) &&
+        isValidOptionalNumber(data, 'conversions', 0, 10000000000) &&
+        isValidOptionalBool(data, 'aiOptimizationEnabled') &&
+        isValidOptionalList(data, 'optimizationLogs', 200) &&
+        isValidOptionalTimestampOrDate(data, 'startDate') &&
+        isValidOptionalTimestampOrDate(data, 'endDate') &&
+        isValidOptionalString(data, 'createdBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    function isValidPlatformConfig(data) {
+      return data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 50 &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'name', 1, 200) &&
+        isValidOptionalString(data, 'description', 0, 2000) &&
+        isValidOptionalString(data, 'updatedBy', 1, 128) &&
+        isValidOptionalTimestampOrDate(data, 'createdAt') &&
+        isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // 1. Users Collection
+    match /users/{userId} {
+      // Users can read only their own profile; Super Admins can read all user docs
+      allow read: if isOwner(userId) || isSuperAdmin();
+
+      // Users can create their own profile with role 'user' and starter/free defaults;
+      // Super Admins can create any valid user profile.
+      allow create: if isAuthenticated() &&
+        isValidUser(request.resource.data) &&
+        uidUnchanged() && (
+          isSuperAdmin() ||
+          (isOwner(userId) &&
+           request.resource.data.get('role', 'user') == 'user' &&
+           (!('subscriptionPlanId' in request.resource.data) ||
+            request.resource.data.subscriptionPlanId in ['free', 'starter']) &&
+           (!('quotaLimit' in request.resource.data) ||
+            request.resource.data.quotaLimit <= 50) &&
+           (!('quotaUsed' in request.resource.data) ||
+            request.resource.data.quotaUsed == 0))
+        );
+
+      // Users can update their own profile EXCEPT they cannot escalate `role` to 'admin'
+      // or modify `subscriptionPlanId`, `quotaLimit`, `quotaUsed`, `uid`, `email`, or `createdAt`.
+      allow update: if isAuthenticated() &&
+        isValidUser(request.resource.data) &&
+        uidNotModified() && (
+          isSuperAdmin() ||
+          (isOwner(userId) &&
+           areImmutableFieldsUnchanged([
+             'uid', 'id', 'email', 'role', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed', 'createdAt'
+           ]))
+        );
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // 2. Workspaces Collection & Subcollections
+    match /workspaces/{workspaceId} {
+      // Readable by workspace owner, workspace members, or Super Admin
+      allow read: if isSuperAdmin() ||
+        (isAuthenticated() && (
+          resource.data.ownerUid == request.auth.uid ||
+          ('memberUids' in resource.data &&
+           resource.data.memberUids is list &&
+           request.auth.uid in resource.data.memberUids)
+        ));
+
+      // Authenticated user can create a workspace they own (with non-escalated quota/plan), or Super Admin
+      allow create: if isAuthenticated() &&
+        isValidWorkspace(request.resource.data) && (
+          isSuperAdmin() ||
+          (request.resource.data.ownerUid == request.auth.uid &&
+           (!('subscriptionPlanId' in request.resource.data) ||
+            request.resource.data.subscriptionPlanId in ['free', 'starter']) &&
+           (!('quotaLimit' in request.resource.data) ||
+            request.resource.data.quotaLimit <= 50) &&
+           (!('quotaUsed' in request.resource.data) ||
+            request.resource.data.quotaUsed == 0))
+        );
+
+      // Owner can update non-billing brand fields (name, category, updatedAt, memberUids, etc.),
+      // while billing/quota fields (subscriptionPlanId, quotaLimit, quotaUsed) and ownerUid
+      // can ONLY be modified by Super Admin or backend Admin SDK.
+      allow update: if isAuthenticated() &&
+        isValidWorkspace(request.resource.data) && (
+          isSuperAdmin() ||
+          (resource.data.ownerUid == request.auth.uid &&
+           areImmutableFieldsUnchanged([
+             'id', 'ownerUid', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed', 'createdAt'
+           ]))
+        );
+
+      allow delete: if isSuperAdmin();
+
+      // 3.1 Brand Brain Subcollection
+      match /brand_brain/{docId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidBrandBrain(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidBrandBrain(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+
+      // 3.2 Vault Assets Subcollection
+      match /vault_assets/{assetId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidVaultAsset(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidVaultAsset(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'uploadedBy', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+
+      // 3.3 Social & Meta Ads Connections Subcollection (status metadata only; no raw OAuth secrets)
+      match /connections/{channelId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidConnection(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidConnection(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+
+      // 3.4 Content Studio Drafts Subcollection
+      match /drafts/{draftId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidDraft(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidDraft(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdBy', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+
+      // 3.5 Autonomous Content Schedule Slots Subcollection
+      match /autonomy_slots/{slotId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidAutonomySlot(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidAutonomySlot(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdBy', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+
+      // 3.6 Marketing Event Countdown Campaigns Subcollection
+      match /event_campaigns/{campaignId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidEventCampaign(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidEventCampaign(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdBy', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+
+      // 3.7 AI Meta Ads Campaigns Subcollection
+      match /meta_ad_campaigns/{adCampaignId} {
+        allow read: if canAccessWorkspace(workspaceId);
+        allow create: if canAccessWorkspace(workspaceId) &&
+          isValidMetaAdCampaign(request.resource.data);
+        allow update: if canAccessWorkspace(workspaceId) &&
+          isValidMetaAdCampaign(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdBy', 'createdAt']);
+        allow delete: if canAccessWorkspace(workspaceId);
+      }
+    }
+
+    // 4. Platform Configs Collection (Super Admin Only)
+    match /platform_configs/{configId} {
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin() && isValidPlatformConfig(request.resource.data);
+      allow delete: if isSuperAdmin();
+    }
+
+    // 5. Default Deny for all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

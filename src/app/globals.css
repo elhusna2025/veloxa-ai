@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  min-block-size: 100dvh;
+  background-color: #f8fafc;
+  color: #0f172a;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+.veloxa-hero-title {
+  font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.35rem);
+  line-height: 1.15;
+}
+
+/* Responsive table wrapper following modern-web-guidance responsive-table */
+.veloxa-table-region {
+  overflow: auto;
+  max-inline-size: 100%;
+  max-block-size: min(540px, 78dvh);
+  container-type: inline-size;
+}
+
+.veloxa-table-region table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.veloxa-table-region thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+}
+
+.veloxa-table-region tbody th {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background-color: #ffffff;
+}
