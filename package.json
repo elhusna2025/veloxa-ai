@@ -7,9 +7,9 @@
     "node": "20.x || 22.x"
   },
   "scripts": {
-    "dev": "next dev -p 3035",
-    "build": "NODE_ENV=production next build",
-    "build:mobile": "NODE_ENV=production NEXT_OUTPUT_EXPORT=true next build",
+    "dev": "NODE_OPTIONS='--no-experimental-webstorage' next dev -p 3035",
+    "build": "NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production next build",
+    "build:mobile": "NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production NEXT_OUTPUT_EXPORT=true next build",
     "start": "next start -p 3035",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/lib/veloxa-engine.test.ts",
