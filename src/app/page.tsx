@@ -98,6 +98,7 @@ import {
   Bot,
   Camera,
   CheckCircle2,
+  ChevronRight,
   CreditCard,
   Download,
   Flame,
@@ -1229,13 +1230,25 @@ export default function VeloxaAiPlatformPage() {
   const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
   const i18nCopy = VELOXA_I18N_COPY[locale];
 
+  const isUserWorkspaceView = Boolean(
+    authUser && !(authUser.isSuperAdmin && activeRole === 'admin'),
+  );
+
   return (
-    <div className="min-h-dvh bg-white pb-28 text-neutral-900">
-      {/* Top Global Header — 1-Row Sleek Layout on Mobile + Dedicated Page Navigation */}
-      <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
+    <div
+      className={`min-h-dvh pb-28 text-neutral-900 ${
+        isUserWorkspaceView ? 'bg-[#F8F9FC]' : 'bg-white'
+      }`}
+    >
+      {/* Top Global Header — Ditampilkan pada Landing Page, Super Admin, & Mobile (<1024px). Pada Desktop User Workspace, Header menyatu di sisi kanan Sidebar Pink */}
+      <header
+        className={`sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur ${
+          isUserWorkspaceView ? 'lg:hidden' : ''
+        }`}
+      >
         <div
           className={`flex items-center justify-between gap-2 ${
-            authUser && !(authUser.isSuperAdmin && activeRole === 'admin')
+            isUserWorkspaceView
               ? 'w-full flex-wrap px-4 py-3 sm:px-6'
               : `mx-auto max-w-[1480px] px-3.5 py-3 sm:px-8 sm:py-3.5 lg:px-12 ${
                   authUser ? 'flex-wrap' : 'flex-nowrap'
@@ -1790,119 +1803,141 @@ export default function VeloxaAiPlatformPage() {
             </div>
           ) : (
             /* ======================================================================
-               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD (FLUSH LEFT SIDEMENU)
+               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD
+               (FULL-HEIGHT SOLID PINK LEFT SIDEBAR FROM TOP TO BOTTOM + RIGHT HEADER)
                ====================================================================== */
             <div
-              className="relative min-h-[calc(100dvh-61px)] w-full"
+              className="relative min-h-dvh w-full bg-[#F8F9FC]"
               data-testid="user-workspace-dashboard"
             >
               {/* ====================================================================
-                 FLUSH LEFT SIDEMENU NAVIGATION (DOCKED TO LEFT EDGE OF SCREEN)
+                 FULL-HEIGHT SOLID PINK LEFT SIDEMENU (TOP: 0 TO BOTTOM: 0, LEFT: 0)
                  ==================================================================== */}
               <aside
                 data-testid="user-workspace-sidebar"
                 aria-label="Sidebar Navigasi Workspace"
-                className="border-b border-neutral-200/90 bg-white p-4 lg:fixed lg:top-[61px] lg:bottom-0 lg:left-0 lg:z-20 lg:flex lg:w-[276px] lg:flex-col lg:justify-between lg:overflow-y-auto lg:border-b-0 lg:border-r lg:border-neutral-200/90 lg:bg-white lg:px-4 lg:py-5"
+                className="bg-gradient-to-b from-[#E86691] via-[#DF5885] to-[#D14876] p-4 text-white shadow-xl lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex lg:w-[268px] lg:flex-col lg:justify-between lg:overflow-y-auto lg:px-4 lg:py-5"
               >
                 <div className="space-y-5">
-                  {/* 1. Brand Identity Header inside Flush Left Sidemenu */}
-                  <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50/70 via-white to-white p-3.5">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#EC749B] text-sm font-black text-white shadow-xs">
-                        {brand.businessName.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-sm font-black tracking-tight text-neutral-900">
-                            {brand.businessName}
-                          </span>
-                        </div>
-                        <p className="truncate text-[11px] font-bold text-[#D85A88]">
-                          📍 {brand.city} · {currentPlan.name}
-                        </p>
-                      </div>
+                  {/* 1. Top Brand Logo inside Full-Height Pink Sidebar */}
+                  <div className="flex items-center gap-3 px-1.5 pt-0.5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 text-base font-black text-white shadow-xs ring-1 ring-white/35">
+                      V
                     </div>
-
-                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700">
-                        ● Cloud Firestore Synced
-                      </span>
-                      {authUser?.isSuperAdmin ? (
-                        <>
-                          <label htmlFor="workspace-preset-select" className="sr-only">
-                            Pilih Inspeksi Brand
-                          </label>
-                          <select
-                            id="workspace-preset-select"
-                            value={selectedPresetKey}
-                            onChange={(e) =>
-                              handleSelectBrandPreset(
-                                e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
-                              )
-                            }
-                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-neutral-700 focus:outline-hidden"
-                          >
-                            <option value="running_event">🏃 Inspeksi: Nusantara Run</option>
-                            <option value="cafe_fnb">☕ Inspeksi: Kopi Senja</option>
-                            <option value="clinic_beauty">✨ Inspeksi: GlowDerm</option>
-                            <option value="custom">🎨 Brand Aktif</option>
-                          </select>
-                        </>
-                      ) : (
-                        <span
-                          data-testid="real-firestore-workspace-badge"
-                          className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/90 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700"
-                        >
-                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                          <span>Data Asli Cloud Firestore</span>
-                        </span>
-                      )}
+                    <div className="min-w-0">
+                      <p className="truncate text-[9px] font-extrabold uppercase tracking-[0.16em] text-pink-100">
+                        AUTONOMOUS AI STUDIO
+                      </p>
+                      <p className="truncate text-lg font-black tracking-tight text-white leading-tight">
+                        VELOXA AI
+                      </p>
                     </div>
                   </div>
 
-                  {/* 2. Vertical Sidemenu Items */}
+                  {/* 2. RUANG KERJA Frosted Glass Card inside Pink Sidebar */}
+                  <div className="rounded-2xl border border-white/25 bg-white/12 p-3.5 backdrop-blur-xs">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-pink-100">
+                      RUANG KERJA
+                    </p>
+                    <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-white/25 bg-white/15 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-black text-white">
+                          {brand.businessName}
+                        </p>
+                        <p className="truncate text-[10px] font-medium text-pink-100">
+                          {brand.city} · {currentPlan.name}
+                        </p>
+                      </div>
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 rotate-90 text-pink-100" />
+                    </div>
+
+                    {authUser?.isSuperAdmin ? (
+                      <div className="mt-2">
+                        <label htmlFor="workspace-preset-select" className="sr-only">
+                          Pilih Inspeksi Brand
+                        </label>
+                        <select
+                          id="workspace-preset-select"
+                          value={selectedPresetKey}
+                          onChange={(e) =>
+                            handleSelectBrandPreset(
+                              e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
+                            )
+                          }
+                          className="w-full rounded-xl border border-white/30 bg-white/20 px-2.5 py-1.5 text-[11px] font-bold text-white focus:outline-hidden"
+                        >
+                          <option value="running_event" className="text-neutral-900">
+                            🏃 Inspeksi: Nusantara Run
+                          </option>
+                          <option value="cafe_fnb" className="text-neutral-900">
+                            ☕ Inspeksi: Kopi Senja
+                          </option>
+                          <option value="clinic_beauty" className="text-neutral-900">
+                            ✨ Inspeksi: GlowDerm
+                          </option>
+                          <option value="custom" className="text-neutral-900">
+                            🎨 Brand Aktif
+                          </option>
+                        </select>
+                      </div>
+                    ) : null}
+
+                    <p className="mt-2.5 text-[11px] font-semibold text-pink-100">
+                      {activeTab === 'overview'
+                        ? 'Dashboard'
+                        : activeTab === 'brand_vault'
+                          ? 'Brand & Vault'
+                          : activeTab === 'studio'
+                            ? 'Content Studio'
+                            : activeTab === 'autonomy'
+                              ? 'Autonomy Engine'
+                              : 'AI Meta Ads'}
+                    </p>
+                  </div>
+
+                  {/* 3. NAVIGASI Section inside Pink Sidebar */}
                   <div>
-                    <p className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
-                      Menu Utama Workspace
+                    <p className="px-2.5 text-[10px] font-extrabold uppercase tracking-[0.14em] text-pink-100/90">
+                      NAVIGASI
                     </p>
                     <nav
                       aria-label="Menu Utama User Workspace"
                       data-testid="user-workspace-sidebar-nav"
-                      className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-1"
+                      className="mt-2 grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"
                     >
                       {(
                         [
                           {
                             id: 'overview',
-                            label: i18nCopy.workspaceTabs.overview,
-                            sublabel: 'Analitik & 4 Kanal Sosmed',
+                            label: 'Dashboard',
+                            sublabel: i18nCopy.workspaceTabs.overview,
                             badge: `${connections.filter((c) => c.connected).length}/4`,
                             icon: LayoutDashboard,
                           },
                           {
                             id: 'brand_vault',
-                            label: i18nCopy.workspaceTabs.brand_vault,
+                            label: 'Brand & Vault',
                             sublabel: 'Brand Brain & Foto Asli',
                             badge: `${vaultAssets.length}`,
                             icon: Camera,
                           },
                           {
                             id: 'studio',
-                            label: i18nCopy.workspaceTabs.studio,
+                            label: 'Content Studio',
                             sublabel: 'Reels 9:16, Carousel & Poster',
                             badge: `${drafts.length}`,
                             icon: Wand2,
                           },
                           {
                             id: 'autonomy',
-                            label: i18nCopy.workspaceTabs.autonomy,
+                            label: 'Autonomy Engine',
                             sublabel: 'Jadwal Tayang & Mode Event',
                             badge: autonomyConfig.enabled ? 'ON' : 'OFF',
                             icon: Bot,
                           },
                           {
                             id: 'meta_ads',
-                            label: i18nCopy.workspaceTabs.meta_ads,
+                            label: 'AI Meta Ads',
                             sublabel: 'AI Media Buyer & Pagar Budget',
                             badge: `${metaAdCampaigns.filter((c) => c.status === 'active_running').length}`,
                             icon: Megaphone,
@@ -1917,42 +1952,34 @@ export default function VeloxaAiPlatformPage() {
                             type="button"
                             data-testid={`workspace-tab-${tab.id}`}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`group flex w-full items-center justify-between gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${
+                            className={`group flex w-full items-center justify-between gap-2.5 rounded-xl px-3.5 py-2.5 text-left transition ${
                               isActive
-                                ? 'bg-[#EC749B] text-white shadow-xs'
-                                : 'border border-transparent bg-transparent text-neutral-700 hover:bg-pink-50/70 hover:text-neutral-900'
+                                ? 'bg-white text-[#D14876] shadow-md font-black'
+                                : 'text-white/95 hover:bg-white/15 font-bold'
                             }`}
                           >
                             <div className="flex min-w-0 items-center gap-2.5">
+                              <Icon
+                                className={`h-4 w-4 shrink-0 ${
+                                  isActive ? 'text-[#DF5885]' : 'text-white/90'
+                                }`}
+                              />
+                              <span className="truncate text-xs leading-tight">{tab.label}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
                               <span
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition ${
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
                                   isActive
-                                    ? 'bg-white/20 text-white'
-                                    : 'bg-neutral-100 text-[#EC749B] group-hover:bg-pink-100/80'
+                                    ? 'bg-pink-50 text-[#D14876] border border-pink-200'
+                                    : 'bg-white/20 text-white'
                                 }`}
                               >
-                                <Icon className="h-4 w-4 shrink-0" />
+                                {tab.badge}
                               </span>
-                              <div className="min-w-0">
-                                <p className="truncate text-xs font-black leading-tight">{tab.label}</p>
-                                <p
-                                  className={`hidden truncate text-[10px] font-medium lg:block ${
-                                    isActive ? 'text-pink-100' : 'text-neutral-400'
-                                  }`}
-                                >
-                                  {tab.sublabel}
-                                </p>
-                              </div>
+                              {!isActive && (
+                                <ChevronRight className="hidden h-3.5 w-3.5 text-white/70 lg:block" />
+                              )}
                             </div>
-                            <span
-                              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
-                                isActive
-                                  ? 'bg-white/25 text-white'
-                                  : 'bg-pink-50 text-[#D85A88] border border-pink-100'
-                              }`}
-                            >
-                              {tab.badge}
-                            </span>
                           </button>
                         );
                       })}
@@ -1960,19 +1987,19 @@ export default function VeloxaAiPlatformPage() {
                   </div>
                 </div>
 
-                {/* Bottom Section of Flush Left Sidemenu: Quota + Quick Actions */}
-                <div className="mt-5 space-y-3 border-t border-neutral-100 pt-4">
-                  {/* 3. Sidebar Monthly Quota & Autopilot Progress Card */}
-                  <div className="rounded-2xl border border-neutral-200/90 bg-neutral-50/70 p-3">
+                {/* Bottom Section of Full-Height Pink Sidemenu */}
+                <div className="mt-5 space-y-2.5 border-t border-white/20 pt-4">
+                  {/* Monthly Quota & Autopilot Progress Card */}
+                  <div className="rounded-xl border border-white/25 bg-white/12 p-3">
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-extrabold text-neutral-700">Kuota Konten AI</span>
-                      <span className="font-black text-[#D85A88]">
+                      <span className="font-bold text-pink-50">Kuota Konten AI</span>
+                      <span className="font-black text-white">
                         {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} Tayang
                       </span>
                     </div>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-pink-100/80">
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/25">
                       <div
-                        className="h-full rounded-full bg-[#EC749B] transition-all duration-300"
+                        className="h-full rounded-full bg-white transition-all duration-300"
                         style={{
                           width: `${Math.min(
                             100,
@@ -1984,7 +2011,7 @@ export default function VeloxaAiPlatformPage() {
                         }}
                       />
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-neutral-500">
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-pink-100">
                       <span>{connections.filter((c) => c.connected).length}/4 Sosmed Aktif</span>
                       <button
                         type="button"
@@ -1992,19 +2019,19 @@ export default function VeloxaAiPlatformPage() {
                           setSelectedCheckoutPlanId(activePlanId);
                           billingDialogRef.current?.showModal();
                         }}
-                        className="font-black text-[#D85A88] hover:underline"
+                        className="font-black text-white underline-offset-2 hover:underline"
                       >
                         Upgrade Paket →
                       </button>
                     </div>
                   </div>
 
-                  {/* 4. Sidebar Quick Actions */}
+                  {/* Quick Actions in Pink Sidebar */}
                   <div className="space-y-1.5">
                     <button
                       type="button"
                       onClick={() => setActiveTab('studio')}
-                      className="veloxa-luxury-card-pink flex w-full items-center justify-center gap-2 rounded-xl bg-[#EC749B] px-3.5 py-2.5 text-xs font-black text-white shadow-xs hover:bg-[#DF608A] transition"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-xs font-black text-[#D14876] shadow-sm hover:bg-pink-50 transition"
                     >
                       <Wand2 className="h-3.5 w-3.5" />
                       <span>Buat Konten AI Baru</span>
@@ -2014,93 +2041,229 @@ export default function VeloxaAiPlatformPage() {
                       type="button"
                       data-testid="header-connect-social-btn"
                       onClick={() => handleOpenOAuthConfigModal('instagram')}
-                      className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50/80 px-3 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white transition"
+                      className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/30 bg-white/15 px-3 py-2 text-xs font-bold text-white hover:bg-white/25 transition"
                     >
                       <span>🔗 Hubungkan 4 Sosmed</span>
                     </button>
 
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <Link
-                        href="/onboarding?edit=1"
-                        data-testid="open-onboarding-modal-btn"
-                        className="flex items-center justify-center gap-1 rounded-xl border border-neutral-200 bg-white px-2.5 py-2 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
-                      >
-                        <Plus className="h-3 w-3" />
-                        <span>Edit Brand</span>
-                      </Link>
-                      <button
-                        type="button"
-                        data-testid="local-first-sync-btn"
-                        onClick={() => void handleForceCloudSync()}
-                        className="flex items-center justify-center gap-1 rounded-xl border border-neutral-200 bg-white px-2.5 py-2 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
-                      >
-                        <RefreshCw className="h-3 w-3 text-[#EC749B]" />
-                        <span>Sync Cloud</span>
-                      </button>
-                    </div>
+                    <Link
+                      href="/onboarding?edit=1"
+                      data-testid="open-onboarding-modal-btn"
+                      className="flex w-full items-center justify-center gap-1 rounded-xl border border-white/20 bg-transparent px-2.5 py-1.5 text-[11px] font-semibold text-pink-50 hover:bg-white/10 transition"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Edit Profil Brand</span>
+                    </Link>
                   </div>
                 </div>
               </aside>
 
               {/* ====================================================================
-                 RIGHT MAIN WORKSPACE CONTENT COLUMN (OFFSET BY FLUSH 276PX SIDEMENU)
+                 RIGHT MAIN WORKSPACE CONTENT COLUMN (WITH MATCHING TOP HEADER & SUMMARY)
                  ==================================================================== */}
               <div
-                className="min-w-0 lg:pl-[276px]"
+                className="min-w-0 lg:pl-[268px]"
                 data-testid="user-workspace-main"
               >
-                <div className="mx-auto max-w-[1560px] space-y-6 px-4 py-6 sm:px-7 lg:px-9">
-                {/* Compact Contextual Top Bar inside Main Column */}
-                <div className="veloxa-luxury-card flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200/90 bg-white px-5 py-4">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-                        {activeTab === 'overview'
-                          ? '📊 1. Channels & Home'
-                          : activeTab === 'brand_vault'
-                            ? '📸 2. Brand & Vault'
-                            : activeTab === 'studio'
-                              ? '🪄 3. Content Studio'
-                              : activeTab === 'autonomy'
-                                ? '🤖 4. Autonomy Engine'
-                                : '📣 5. AI Meta Ads'}
-                      </span>
-                      <span className="text-[11px] font-bold text-neutral-400">
-                        Workspace ID: {brand.workspaceId}
-                      </span>
+                <div className="mx-auto max-w-[1600px] space-y-5 px-4 py-4 sm:px-6 lg:px-7">
+                  {/* 1. Right Top Header Bar (Matching Reference Image Header) */}
+                  <div
+                    data-testid="workspace-right-header"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200/90 bg-white px-4 py-3 sm:px-5 shadow-2xs"
+                  >
+                    {/* Left: Sidebar Icon Box + WORKSPACE + Active Page Title */}
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50/80 text-neutral-600">
+                        <LayoutDashboard className="h-4 w-4 text-[#D85A88]" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">
+                          WORKSPACE
+                        </p>
+                        <h1 className="text-lg sm:text-xl font-black tracking-tight text-neutral-900 leading-tight">
+                          {activeTab === 'overview'
+                            ? 'Dashboard'
+                            : activeTab === 'brand_vault'
+                              ? 'Brand & Vault'
+                              : activeTab === 'studio'
+                                ? 'Content Studio'
+                                : activeTab === 'autonomy'
+                                  ? 'Autonomy Engine'
+                                  : 'AI Meta Ads'}
+                        </h1>
+                      </div>
                     </div>
-                    <h1 className="mt-1 text-lg sm:text-xl font-black tracking-tight text-neutral-900">
-                      {brand.businessName}{' '}
-                      <span className="text-sm font-bold text-[#D85A88]">· {brand.city}</span>
-                    </h1>
+
+                    {/* Right: Quick Action Pill + Data Siap + Tersinkron + Language + Profile Pill + Keluar */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenOAuthConfigModal('instagram')}
+                        className="hidden xl:inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50/80 px-3.5 py-1.5 text-xs font-semibold text-neutral-500 hover:border-pink-200 hover:text-[#D85A88] transition"
+                      >
+                        <span>🔗 Koneksi 4 Sosmed ({connections.filter((c) => c.connected).length}/4)</span>
+                      </button>
+
+                      <span
+                        data-testid="real-firestore-workspace-badge"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/90 px-3 py-1.5 text-xs font-extrabold text-emerald-700"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>Data siap</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        data-testid="local-first-sync-btn"
+                        onClick={() => void handleForceCloudSync()}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/90 px-3 py-1.5 text-xs font-extrabold text-emerald-700 hover:bg-emerald-100/80 transition"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>Tersinkron</span>
+                      </button>
+
+                      <select
+                        aria-label="Pilih Bahasa Workspace"
+                        value={locale}
+                        onChange={(e) => handleSelectLocale(e.target.value as VeloxaLocale)}
+                        className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-extrabold text-neutral-700 hover:border-pink-200 focus:outline-hidden"
+                      >
+                        {VELOXA_LOCALES.map((loc) => (
+                          <option key={loc.code} value={loc.code}>
+                            {loc.flag} {loc.code.toUpperCase()} ({loc.currencyCode})
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* User Profile Pill (Matching Reference Image: Avatar + Name + Role) */}
+                      <button
+                        type="button"
+                        onClick={() => authDialogRef.current?.showModal()}
+                        className="flex items-center gap-2.5 rounded-full border border-neutral-200 bg-neutral-50/70 py-1 pl-1.5 pr-3.5 text-left hover:border-pink-200 transition"
+                      >
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-[#D14876] shadow-2xs ring-1 ring-neutral-200">
+                          {brand.businessName.slice(0, 2).toUpperCase()}
+                        </span>
+                        <div className="hidden sm:block leading-tight">
+                          <p className="max-w-[140px] truncate text-xs font-black text-neutral-900 uppercase">
+                            {authUser?.displayName || brand.businessName}
+                          </p>
+                          <p className="text-[10px] font-semibold text-neutral-500">
+                            Pemilik / Admin
+                          </p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRequestSignOutClick}
+                        className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88] transition"
+                      >
+                        {i18nCopy.headerLogout}
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Quick Connected Channels Pills */}
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {connections.map((conn) => (
-                      <button
-                        key={conn.channel}
-                        type="button"
-                        onClick={() => handleOpenOAuthConfigModal(conn.channel)}
-                        className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition ${
-                          conn.connected
-                            ? 'border-emerald-200 bg-emerald-50/80 text-emerald-800 hover:border-emerald-300'
-                            : 'border-neutral-200 bg-neutral-50 text-neutral-500 hover:border-pink-200 hover:text-[#D85A88]'
-                        }`}
-                      >
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            conn.connected ? 'bg-emerald-500' : 'bg-neutral-300'
-                          }`}
-                        />
-                        <span>{CHANNEL_META[conn.channel].shortLabel}</span>
-                        {conn.connected && conn.handle ? (
-                          <span className="font-black text-emerald-700">{conn.handle}</span>
-                        ) : null}
-                      </button>
-                    ))}
+                  {/* 2. RINGKASAN HARI INI — Welcome Banner + INSIGHT CEPAT (Matching Reference Image) */}
+                  <div className="flex flex-col justify-between gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs lg:flex-row lg:items-center">
+                    <div className="flex items-start sm:items-center gap-4">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#EC749B] text-lg font-black text-white shadow-sm">
+                        {brand.businessName.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#D85A88]">
+                          RINGKASAN HARI INI
+                        </p>
+                        <h2 className="mt-0.5 text-lg sm:text-xl font-black tracking-tight text-neutral-900">
+                          Selamat Datang di {brand.businessName} ({brand.city})
+                        </h2>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                          <span>
+                            Pemilik:{' '}
+                            <strong className="font-bold text-neutral-800 uppercase">
+                              {authUser?.displayName || brand.businessName}
+                            </strong>
+                          </span>
+                          <span>·</span>
+                          <span>Unit Usaha:</span>
+                          <span className="rounded-md border border-pink-200 bg-pink-50 px-2 py-0.5 text-[11px] font-extrabold text-[#D85A88]">
+                            {brand.businessName} · {brand.city}
+                          </span>
+                          {connections
+                            .filter((c) => c.connected)
+                            .map((conn) => (
+                              <span
+                                key={conn.channel}
+                                className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-extrabold text-emerald-700"
+                              >
+                                ✓ {CHANNEL_META[conn.channel].shortLabel}: {conn.handle}
+                              </span>
+                            ))}
+                        </div>
+                        <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs text-neutral-500">
+                          <span>
+                            Cakupan:{' '}
+                            <strong className="text-neutral-900">
+                              {connections.filter((c) => c.connected).length} dari 4 sosmed aktif
+                            </strong>{' '}
+                            <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-bold text-neutral-600">
+                              {currentPlan.name}
+                            </span>
+                          </span>
+                          <span>•</span>
+                          <span>
+                            Konten Tayang:{' '}
+                            <strong className="text-neutral-900">{postsUsedThisMonth}</strong>
+                          </span>
+                          <span>•</span>
+                          <span>
+                            Kampanye Meta Ads:{' '}
+                            <strong className="text-neutral-900">{metaAdCampaigns.length}</strong>{' '}
+                            <span className="rounded bg-pink-50 px-1.5 py-0.5 text-[9px] font-black text-[#D85A88] uppercase">
+                              BULAN INI
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Side: INSIGHT CEPAT Box (Matching Reference Image) */}
+                    <div className="rounded-2xl border border-pink-200/80 bg-pink-50/50 p-3.5 lg:w-[370px] shrink-0">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#D85A88]">
+                          ⚡ INSIGHT CEPAT
+                        </span>
+                        <span className="rounded-md bg-[#EC749B] px-2 py-0.5 text-[9px] font-black uppercase text-white">
+                          PEMILIK
+                        </span>
+                      </div>
+                      <div className="mt-2.5 grid grid-cols-2 gap-2">
+                        <div className="rounded-xl border border-pink-100 bg-white p-2.5 shadow-2xs">
+                          <p className="text-[9px] font-bold uppercase text-neutral-400">
+                            KANAL SOSMED AKTIF
+                          </p>
+                          <p className="mt-0.5 truncate text-xs font-black text-neutral-900">
+                            {connections.filter((c) => c.connected).length > 0
+                              ? connections
+                                  .filter((c) => c.connected)
+                                  .map((c) => c.handle || CHANNEL_META[c.channel].shortLabel)
+                                  .join(', ')
+                              : 'Belum ada (0/4)'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-pink-100 bg-white p-2.5 shadow-2xs">
+                          <p className="text-[9px] font-bold uppercase text-neutral-400">
+                            PRIORITAS HARI INI
+                          </p>
+                          <p className="mt-0.5 truncate text-xs font-black text-[#D85A88]">
+                            {connections.filter((c) => c.connected).length > 0
+                              ? 'Siap Buat Konten AI'
+                              : 'Hubungkan 4 Sosmed'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
 
               {/* ====================================================================
                  TAB 1: EXECUTIVE ANALYTICS OVERVIEW, CHARTS & 4-CHANNEL COMMAND HUB
