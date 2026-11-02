@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   BRAND_PRESETS,
   SUBSCRIPTION_PLANS,
@@ -46,6 +48,7 @@ import {
 } from '@/lib/veloxa-visual-renderer';
 import {
   SUPER_ADMIN_EMAIL,
+  consumePendingRegistrationBrand,
   getInitialAuthenticatedUser,
   signInQuickRoleSession,
   signInWithEmailPasswordOrRegister,
@@ -145,6 +148,7 @@ function formatIdr(value: number): string {
 }
 
 export default function VeloxaAiPlatformPage() {
+  const router = useRouter();
   const [activeRole, setActiveRole] = useState<VeloxaRole>('user');
   const [activeTab, setActiveTab] = useState<UserTabId>('overview');
   const [selectedPresetKey, setSelectedPresetKey] = useState<'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom'>('running_event');
@@ -259,6 +263,20 @@ export default function VeloxaAiPlatformPage() {
     if (savedSession) {
       setAuthUser(savedSession);
       setActiveRole(savedSession.isSuperAdmin ? 'admin' : 'user');
+    }
+    const pendingReg = consumePendingRegistrationBrand();
+    if (pendingReg) {
+      setActivePlanId(pendingReg.planId);
+      setBrand((prev) => ({
+        ...prev,
+        workspaceId: `ws_${Date.now().toString(36)}`,
+        businessName: pendingReg.businessName,
+        category: pendingReg.category,
+        city: pendingReg.city,
+      }));
+      setStatusBanner(
+        `Selamat datang di Veloxa AI! Workspace "${pendingReg.businessName}" (${pendingReg.city}) telah aktif.`,
+      );
     }
     const unsubAuth = subscribeToFirebaseAuthChanges((fbUser) => {
       if (fbUser) {
@@ -959,15 +977,21 @@ export default function VeloxaAiPlatformPage() {
 
   return (
     <div className="min-h-dvh bg-white pb-28 text-neutral-900">
-      {/* Top Global Header — Dipisah Murni Berdasarkan Status Login + Global Multi-Language Switcher */}
+      {/* Top Global Header — 1-Row Sleek Layout on Mobile + Dedicated Page Navigation */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
-        <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-8 lg:px-12">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-xs">
+        <div
+          className={`mx-auto flex max-w-[1480px] items-center justify-between gap-2 px-3.5 py-3 sm:px-8 sm:py-3.5 lg:px-12 ${
+            authUser ? 'flex-wrap' : 'flex-nowrap'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+            <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-xs shrink-0">
               V
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="text-xl font-black tracking-tight text-neutral-900">VELOXA AI</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-base sm:text-xl font-black tracking-tight text-neutral-900 whitespace-nowrap">
+                VELOXA AI
+              </span>
               {authUser &&
                 (authUser.isSuperAdmin && activeRole === 'admin' ? (
                   <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
@@ -981,8 +1005,8 @@ export default function VeloxaAiPlatformPage() {
             </div>
           </div>
 
-          {/* Right Navigation Actions — Global Language Selector + Clean Auth Separation */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Right Navigation Actions — Global Language Selector + Dedicated Login/Register Pages */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
             <label htmlFor="veloxa-global-lang-select" className="sr-only">
               Select Language
             </label>
@@ -991,7 +1015,7 @@ export default function VeloxaAiPlatformPage() {
               data-testid="header-lang-select"
               value={locale}
               onChange={(e) => handleSelectLocale(e.target.value as VeloxaLocale)}
-              className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-xs font-black text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
+              className="max-w-[136px] sm:max-w-none truncate rounded-xl sm:rounded-2xl border border-neutral-200 bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-[11px] sm:text-xs font-black text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
             >
               {VELOXA_LOCALES.map((loc) => (
                 <option key={loc.code} value={loc.code}>
@@ -1002,22 +1026,20 @@ export default function VeloxaAiPlatformPage() {
 
             {!authUser ? (
               <>
-                <button
-                  type="button"
+                <Link
+                  href="/login"
                   data-testid="open-auth-modal-btn"
-                  onClick={() => authDialogRef.current?.showModal()}
-                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-2 text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
+                  className="rounded-xl sm:rounded-2xl border border-neutral-200 bg-white px-3 py-1.5 sm:px-4 sm:py-2 text-[11px] sm:text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88] whitespace-nowrap"
                 >
                   {i18nCopy.headerSignIn}
-                </button>
-                <button
-                  type="button"
+                </Link>
+                <Link
+                  href="/register"
                   data-testid="open-onboarding-public-btn"
-                  onClick={() => onboardingDialogRef.current?.showModal()}
-                  className="rounded-2xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-[#DF608A]"
+                  className="hidden sm:inline-flex rounded-2xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-[#DF608A] whitespace-nowrap"
                 >
                   {i18nCopy.headerStartFree}
-                </button>
+                </Link>
               </>
             ) : (
               <>
@@ -1107,9 +1129,9 @@ export default function VeloxaAiPlatformPage() {
                 if (defaultPlanId) {
                   setOnboardPlanId(defaultPlanId);
                 }
-                onboardingDialogRef.current?.showModal();
+                router.push('/register');
               }}
-              onOpenAuthModal={() => authDialogRef.current?.showModal()}
+              onOpenAuthModal={() => router.push('/login')}
             />
           ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
             /* ======================================================================
@@ -2967,20 +2989,18 @@ export default function VeloxaAiPlatformPage() {
             data-testid="mobile-public-bottom-bar"
             className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 border-t border-neutral-200/90 bg-white/95 px-4 pt-2.5 shadow-lg backdrop-blur md:hidden"
           >
-            <button
-              type="button"
-              onClick={() => authDialogRef.current?.showModal()}
-              className="flex-1 rounded-2xl border border-neutral-200 bg-white py-2.5 text-xs font-black text-neutral-800"
+            <Link
+              href="/login"
+              className="flex-1 rounded-2xl border border-neutral-200 bg-white py-2.5 text-center text-xs font-black text-neutral-800"
             >
               {i18nCopy.headerSignIn}
-            </button>
-            <button
-              type="button"
-              onClick={() => onboardingDialogRef.current?.showModal()}
-              className="flex-[1.4] rounded-2xl bg-[#EC749B] py-2.5 text-xs font-black text-white shadow-xs"
+            </Link>
+            <Link
+              href="/register"
+              className="flex-[1.4] rounded-2xl bg-[#EC749B] py-2.5 text-center text-xs font-black text-white shadow-xs"
             >
               {i18nCopy.headerStartFree} →
-            </button>
+            </Link>
           </nav>
         ) : (
           activeRole === 'user' && (

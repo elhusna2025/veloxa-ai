@@ -14,6 +14,7 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -22,7 +23,18 @@ import {
   type User,
 } from 'firebase/auth';
 import { loadSavedFirebaseConfig, type VeloxaFirebaseConnectionConfig } from './veloxa-firestore-repo';
-import type { VeloxaRole } from './veloxa-types';
+import type { BusinessCategory, SubscriptionPlanId, VeloxaRole } from './veloxa-types';
+
+export interface VeloxaPendingRegistrationBrand {
+  businessName: string;
+  city: string;
+  category: BusinessCategory;
+  planId: SubscriptionPlanId;
+  ownerName: string;
+  ownerEmail: string;
+}
+
+const PENDING_REGISTRATION_BRAND_KEY = 'veloxa_pending_registration_brand_v1';
 
 export interface VeloxaAuthenticatedUser {
   uid: string;
@@ -243,4 +255,61 @@ export function subscribeToFirebaseAuthChanges(
       callback(mapped);
     }
   });
+}
+
+export async function sendVeloxaPasswordReset(email: string): Promise<{
+  ok: boolean;
+  email: string;
+  deliveredViaFirebase: boolean;
+  resetReferenceCode: string;
+}> {
+  const cleanEmail = email.trim().toLowerCase();
+  const auth = getFirebaseAuthInstance();
+  const resetReferenceCode = `VLX-RST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+  if (auth && cleanEmail.includes('@')) {
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      return {
+        ok: true,
+        email: cleanEmail,
+        deliveredViaFirebase: true,
+        resetReferenceCode,
+      };
+    } catch {
+      // Fallback if user is a local-first demo tenant or email enumeration protection is active
+    }
+  }
+
+  return {
+    ok: true,
+    email: cleanEmail,
+    deliveredViaFirebase: false,
+    resetReferenceCode,
+  };
+}
+
+export function persistPendingRegistrationBrand(brand: VeloxaPendingRegistrationBrand): void {
+  if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
+    try {
+      window.localStorage.setItem(PENDING_REGISTRATION_BRAND_KEY, JSON.stringify(brand));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function consumePendingRegistrationBrand(): VeloxaPendingRegistrationBrand | null {
+  if (typeof window !== 'undefined' && typeof window.localStorage?.getItem === 'function') {
+    try {
+      const raw = window.localStorage.getItem(PENDING_REGISTRATION_BRAND_KEY);
+      if (raw) {
+        window.localStorage.removeItem(PENDING_REGISTRATION_BRAND_KEY);
+        return JSON.parse(raw) as VeloxaPendingRegistrationBrand;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   Bot,
   CheckCircle2,
@@ -723,9 +724,9 @@ export function VeloxaLuxuryLanding({
         <div className="grid items-center gap-10 lg:grid-cols-[1.03fr_0.97fr]">
           {/* Left Column: Dynamic Rotating Hero Headline, Promo Info & Trust Signals */}
           <div className="text-left">
-            {/* 4 Interactive Dynamic Value-Prop & Promo Selector Pills with Live Progress Timer */}
+            {/* 4 Interactive Dynamic Value-Prop & Promo Selector Pills with Live Progress Timer (Symmetrical 2x2 Grid on Mobile, Flex Row on Desktop) */}
             <div
-              className="mb-4 flex flex-wrap items-center gap-2"
+              className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center"
               role="tablist"
               aria-label="Informasi Platform & Promo Utama Veloxa AI"
             >
@@ -739,13 +740,13 @@ export function VeloxaLuxuryLanding({
                     aria-selected={isActive}
                     data-testid={`hero-dynamic-tab-${slide.id}`}
                     onClick={() => setHeroHeadlineIndex(idx)}
-                    className={`relative overflow-hidden rounded-full px-3.5 py-1.5 text-[11px] font-black transition ${
+                    className={`relative flex items-center justify-center sm:justify-start overflow-hidden rounded-2xl sm:rounded-full px-3 py-2 sm:px-3.5 sm:py-1.5 text-[11px] font-black transition text-center sm:text-left ${
                       isActive
                         ? 'border border-pink-300 bg-pink-50/90 text-[#D85A88] shadow-xs'
-                        : 'border border-neutral-200 bg-white text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]'
+                        : 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
                     }`}
                   >
-                    <span>{slide.tabLabel}</span>
+                    <span className="truncate">{slide.tabLabel}</span>
                     {isActive && (
                       <span
                         aria-hidden="true"
@@ -757,37 +758,37 @@ export function VeloxaLuxuryLanding({
               })}
             </div>
 
-            {/* Dynamic Morphing Headline Container (re-triggers smooth slide+fade animation on each slide change) */}
+            {/* Dynamic Morphing Headline Container (Always 100% Crisp Opacity on Mobile & Desktop) */}
             <div
               key={activeHeroSlide.id}
-              className="veloxa-headline-morph min-h-[220px] sm:min-h-[245px]"
+              className="veloxa-headline-morph opacity-100 sm:min-h-[235px]"
               data-testid="hero-dynamic-headline-box"
             >
-              <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-white px-3 py-1 text-[11px] font-black tracking-wide text-[#D85A88] shadow-2xs">
+              <div className="mb-3 inline-flex max-w-full items-center gap-1.5 rounded-2xl sm:rounded-full border border-pink-200 bg-white px-3 py-1.5 sm:py-1 text-[10px] sm:text-[11px] font-black tracking-wide text-[#D85A88] shadow-2xs leading-snug">
                 <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#EC749B]" />
-                <span>{activeHeroSlide.promoBadge}</span>
+                <span className="line-clamp-2 sm:line-clamp-1">{activeHeroSlide.promoBadge}</span>
               </div>
 
-              <h1 className="text-3xl font-black leading-[1.12] tracking-tight text-neutral-900 sm:text-5xl">
+              <h1 className="text-[26px] font-black leading-[1.18] tracking-tight text-neutral-900 opacity-100 sm:text-5xl sm:leading-[1.12]">
                 {activeHeroSlide.titlePre}
-                <span className="inline-block rounded-2xl border border-pink-200 bg-pink-50/80 px-3 py-0.5 text-[#EC749B] shadow-xs">
+                <span className="mt-1 inline-block rounded-xl sm:rounded-2xl border border-pink-200 bg-pink-50/90 px-2.5 py-0.5 sm:px-3 text-[#EC749B] shadow-xs">
                   {activeHeroSlide.titleHighlight}
                 </span>
                 {activeHeroSlide.titlePost || ''}
               </h1>
 
-              <p className="mt-4 max-w-2xl text-sm leading-relaxed text-neutral-600 sm:text-base">
+              <p className="mt-3.5 max-w-2xl text-xs font-medium leading-relaxed text-neutral-700 opacity-100 sm:mt-4 sm:text-base">
                 {activeHeroSlide.subtitle}
               </p>
             </div>
 
-            {/* Primary & Secondary CTAs */}
-            <div className="mt-7 flex flex-wrap items-center gap-3.5">
+            {/* Primary & Secondary CTAs (Full-Width Equal Edges on Mobile, Auto-Width Row on Desktop) */}
+            <div className="mt-6 flex flex-col items-stretch gap-3 sm:mt-7 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3.5">
               <button
                 type="button"
                 data-testid="landing-cta-start-btn"
                 onClick={() => onOpenOnboarding('pro_1500k')}
-                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-6 py-4 text-sm font-black text-white transition hover:bg-[#DF608A]"
+                className="veloxa-luxury-card-pink inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-2xl bg-[#EC749B] px-6 py-4 text-sm font-black text-white transition hover:bg-[#DF608A]"
               >
                 <Rocket className="h-4 w-4 shrink-0" />
                 <span className="veloxa-trim-text">{copy.heroPrimaryCta}</span>
@@ -797,7 +798,7 @@ export function VeloxaLuxuryLanding({
                 type="button"
                 data-testid="landing-open-login-btn"
                 onClick={onOpenAuthModal}
-                className="veloxa-luxury-card inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-6 py-4 text-sm font-bold text-neutral-800 transition hover:border-pink-200 hover:text-[#D85A88]"
+                className="veloxa-luxury-card inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-2xl border border-neutral-200 bg-white px-6 py-4 text-sm font-bold text-neutral-800 transition hover:border-pink-200 hover:text-[#D85A88]"
               >
                 <span className="veloxa-trim-text">{copy.heroSecondaryCta}</span>
               </button>
@@ -1863,16 +1864,51 @@ export function VeloxaLuxuryLanding({
           </div>
         </div>
 
-        {/* Bottom Copyright & Official Compliance Bar */}
+        {/* Bottom Copyright & Official Dedicated Legal/Auth Pages Bar */}
         <div className="border-t border-neutral-100 bg-white py-5 text-[11px] text-neutral-500">
           <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
-            <p className="font-semibold text-neutral-600">{footerCopy.copyright}</p>
-            <div className="flex flex-wrap items-center gap-4 font-semibold">
-              <span>Privacy Policy</span>
-              <span>Terms of Service</span>
-              <span>Meta Marketing API Compliance</span>
+            <p className="font-semibold text-neutral-600 text-center sm:text-left">{footerCopy.copyright}</p>
+            <nav
+              aria-label="Halaman Resmi Veloxa AI"
+              className="flex flex-wrap items-center justify-center gap-4 font-bold"
+            >
+              <Link
+                href="/terms"
+                data-testid="landing-footer-terms-link"
+                className="text-neutral-700 hover:text-[#EC749B] transition"
+              >
+                Terms of Use
+              </Link>
+              <Link
+                href="/privacy"
+                data-testid="landing-footer-privacy-link"
+                className="text-neutral-700 hover:text-[#EC749B] transition"
+              >
+                Privacy Policy
+              </Link>
+              <Link
+                href="/login"
+                data-testid="landing-footer-login-link"
+                className="text-neutral-700 hover:text-[#EC749B] transition"
+              >
+                Halaman Login
+              </Link>
+              <Link
+                href="/register"
+                data-testid="landing-footer-register-link"
+                className="text-neutral-700 hover:text-[#EC749B] transition"
+              >
+                Registrasi Bisnis
+              </Link>
+              <Link
+                href="/forgot-password"
+                data-testid="landing-footer-forgot-link"
+                className="text-neutral-700 hover:text-[#EC749B] transition"
+              >
+                Lupa Password
+              </Link>
               <span className="text-[#D85A88]">ISO/IEC Cloud Security Ready</span>
-            </div>
+            </nav>
           </div>
         </div>
       </footer>

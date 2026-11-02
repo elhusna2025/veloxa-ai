@@ -127,6 +127,57 @@ dialog::backdrop {
 }
 
 /* ============================================================================
+   MODERN FORM VALIDATION AFTER INTERACTION (modern-web-guidance: validate-input-after-interaction & forms)
+   ============================================================================ */
+.veloxa-auth-input {
+  font-size: 1rem;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+@media (pointer: coarse) {
+  .veloxa-auth-input {
+    min-height: 52px;
+  }
+}
+
+.veloxa-auth-input:focus-visible {
+  outline: 3px solid #ec749b;
+  outline-offset: 2px;
+}
+
+.veloxa-auth-input:user-invalid {
+  border-color: #d93025;
+  background-color: #fce8e6;
+}
+
+.veloxa-auth-input:user-valid {
+  border-color: #188038;
+}
+
+.veloxa-error-msg {
+  display: none;
+  color: #d93025;
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 0.35rem;
+}
+
+.veloxa-auth-input:user-invalid + .veloxa-error-msg,
+.veloxa-input-wrap:has(.veloxa-auth-input:user-invalid) + .veloxa-error-msg {
+  display: block;
+}
+
+.veloxa-field-group:has(.veloxa-auth-input:user-invalid) .veloxa-password-rules {
+  color: #d93025;
+  font-weight: 700;
+}
+
+.veloxa-field-group:has(.veloxa-auth-input:user-valid) .veloxa-password-rules {
+  color: #188038;
+}
+
+/* ============================================================================
    KINETIC MOTION & COMPOSITOR ANIMATIONS (modern-web-guidance: motion & scroll-entry-exit-effects)
    Animates transform & opacity on the GPU compositor thread; respects prefers-reduced-motion
    ============================================================================ */
@@ -192,12 +243,12 @@ dialog::backdrop {
 
 @keyframes veloxa-headline-enter {
   0% {
-    opacity: 0;
-    transform: translate3d(0, 14px, 0) scale(0.985);
+    opacity: 1;
+    transform: translate3d(0, 5px, 0);
   }
   100% {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -211,7 +262,8 @@ dialog::backdrop {
 }
 
 .veloxa-headline-morph {
-  animation: veloxa-headline-enter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  opacity: 1 !important;
+  animation: veloxa-headline-enter 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .veloxa-headline-timer-bar {
