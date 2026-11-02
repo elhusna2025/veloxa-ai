@@ -1732,7 +1732,13 @@ export default function VeloxaAiPlatformPage() {
                       </div>
                     </div>
 
-                    <div className="mt-5 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                    <div
+                      className={`mt-5 grid gap-4 text-xs ${
+                        viewportMode === 'mobile_native'
+                          ? 'grid-cols-1'
+                          : 'sm:grid-cols-2 lg:grid-cols-4'
+                      }`}
+                    >
                       <div>
                         <label className="font-bold text-slate-700">Tujuan Kampanye (Objective)</label>
                         <select
@@ -1946,7 +1952,11 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         {/* 3 Pillars of Meta Ads: Demographics, Validated Interests, Budget & Outcome */}
-                        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                        <div
+                          className={`mt-4 grid gap-4 ${
+                            viewportMode === 'mobile_native' ? 'grid-cols-1' : 'lg:grid-cols-3'
+                          }`}
+                        >
                           {/* Column 1: Demografi & Geo */}
                           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs">
                             <p className="font-black uppercase tracking-wider text-slate-400">
@@ -2034,7 +2044,11 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         {/* A/B Creative Performance & Auto-Optimizer Split */}
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div
+                          className={`mt-4 grid gap-3 ${
+                            viewportMode === 'mobile_native' ? 'grid-cols-1' : 'sm:grid-cols-2'
+                          }`}
+                        >
                           {camp.creatives.map((cr) => (
                             <div
                               key={cr.id}
