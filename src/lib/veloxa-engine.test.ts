@@ -357,3 +357,17 @@ test('Local-First Cost Guard FNV-1a fingerprinting and Visual Poster SVG Rendere
   assert.equal(resolveRoleFromEmail('owner@kopisenja.id'), 'user');
 });
 
+test('Global Multi-Language (i18n) and Multi-Currency Pricing support all 6 global markets', async () => {
+  const { VELOXA_I18N_COPY, VELOXA_LOCALES, getPlanLocalizedPrice } = await import('./veloxa-i18n');
+  assert.equal(VELOXA_LOCALES.length, 6);
+  for (const loc of VELOXA_LOCALES) {
+    assert.ok(VELOXA_I18N_COPY[loc.code].heroBadge.length > 5);
+    assert.ok(VELOXA_I18N_COPY[loc.code].galleryTitle.length > 5);
+  }
+  assert.equal(getPlanLocalizedPrice('starter_500k', 'id').amountFormatted, 'Rp500.000');
+  assert.equal(getPlanLocalizedPrice('starter_500k', 'en').amountFormatted, '$35');
+  assert.equal(getPlanLocalizedPrice('pro_1500k', 'ja').amountFormatted, '¥15,500');
+  assert.equal(getPlanLocalizedPrice('pro_1500k', 'ko').amountFormatted, '₩139,000');
+});
+
+

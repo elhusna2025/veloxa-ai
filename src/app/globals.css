@@ -62,3 +62,20 @@ dialog::backdrop {
   backdrop-filter: blur(2px);
 }
 
+/* Defer rendering heavy below-the-fold sections (modern-web-guidance: defer-rendering-heavy-content) */
+.veloxa-deferred-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 620px;
+}
+
+/* Precise text alignment for badges & icon buttons (modern-web-guidance: precise-text-alignment) */
+.veloxa-trim-text {
+  text-box: trim-both cap alphabetic;
+}
+
+/* Native mobile bottom bar safe-area support for iOS & Android */
+.veloxa-native-bottom-nav {
+  padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+}
+
+

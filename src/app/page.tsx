@@ -54,6 +54,14 @@ import {
   subscribeToFirebaseAuthChanges,
   type VeloxaAuthenticatedUser,
 } from '@/lib/veloxa-auth';
+import {
+  VELOXA_I18N_COPY,
+  VELOXA_LOCALES,
+  loadSavedVeloxaLocale,
+  saveVeloxaLocale,
+  type VeloxaLocale,
+} from '@/lib/veloxa-i18n';
+import { VeloxaLuxuryLanding } from '@/components/VeloxaLuxuryLanding';
 import type {
   AutonomyConfig,
   BrandProfile,
@@ -200,10 +208,16 @@ export default function VeloxaAiPlatformPage() {
   const billingDialogRef = useRef<HTMLDialogElement | null>(null);
   const authDialogRef = useRef<HTMLDialogElement | null>(null);
 
-  // Stage 5A & 5B: Production Authentication & Role Separation State
+  // Stage 5A & 5B: Production Authentication, Role Separation & Global i18n State
+  const [locale, setLocale] = useState<VeloxaLocale>('id');
   const [authUser, setAuthUser] = useState<VeloxaAuthenticatedUser | null>(null);
   const [authEmailInput, setAuthEmailInput] = useState<string>(SUPER_ADMIN_EMAIL);
   const [authPasswordInput, setAuthPasswordInput] = useState<string>('VeloxaAdmin2026!');
+
+  const handleSelectLocale = (nextLocale: VeloxaLocale) => {
+    setLocale(nextLocale);
+    saveVeloxaLocale(nextLocale);
+  };
 
   // Stage 1: New Business Onboarding Form State
   const [onboardBusinessName, setOnboardBusinessName] = useState<string>('');
@@ -238,6 +252,7 @@ export default function VeloxaAiPlatformPage() {
   ]);
 
   useEffect(() => {
+    setLocale(loadSavedVeloxaLocale());
     const savedCfg = loadSavedFirebaseConfig();
     setFirebaseCfg(savedCfg);
     const savedSession = getInitialAuthenticatedUser();
@@ -940,10 +955,11 @@ export default function VeloxaAiPlatformPage() {
   };
 
   const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
+  const i18nCopy = VELOXA_I18N_COPY[locale];
 
   return (
-    <div className="min-h-dvh bg-[#FAFAFA] pb-24 text-neutral-900">
-      {/* Top Global Header — Dipisah Murni Berdasarkan Status Login (Tanpa Bar Simulator Prototipe) */}
+    <div className="min-h-dvh bg-[#FAFAFA] pb-28 text-neutral-900">
+      {/* Top Global Header — Dipisah Murni Berdasarkan Status Login + Global Multi-Language Switcher */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <div className="flex items-center gap-3">
@@ -951,11 +967,11 @@ export default function VeloxaAiPlatformPage() {
               V
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-lg font-black tracking-tight text-neutral-900">VELOXA AI</span>
                 {!authUser ? (
                   <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
-                    SaaS Otonom 4 Sosmed & Meta Ads
+                    {i18nCopy.headerBadgePublic}
                   </span>
                 ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
                   <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
@@ -973,75 +989,94 @@ export default function VeloxaAiPlatformPage() {
             </div>
           </div>
 
-          {/* Right Navigation Actions — Clean Separation: Public vs Authenticated */}
-          {!authUser ? (
-            <div className="flex flex-wrap items-center gap-2.5">
-              <button
-                type="button"
-                data-testid="open-auth-modal-btn"
-                onClick={() => authDialogRef.current?.showModal()}
-                className="rounded-2xl border border-neutral-200 bg-white px-4 py-2 text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
-              >
-                Masuk Akun
-              </button>
-              <button
-                type="button"
-                data-testid="open-onboarding-public-btn"
-                onClick={() => onboardingDialogRef.current?.showModal()}
-                className="rounded-2xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-[#DF608A]"
-              >
-                Daftar Bisnis Baru
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              {authUser.isSuperAdmin && activeRole === 'user' && (
+          {/* Right Navigation Actions — Global Language Selector + Clean Auth Separation */}
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="veloxa-global-lang-select" className="sr-only">
+              Select Language
+            </label>
+            <select
+              id="veloxa-global-lang-select"
+              data-testid="header-lang-select"
+              value={locale}
+              onChange={(e) => handleSelectLocale(e.target.value as VeloxaLocale)}
+              className="rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-xs font-black text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
+            >
+              {VELOXA_LOCALES.map((loc) => (
+                <option key={loc.code} value={loc.code}>
+                  {loc.flag} {loc.label} ({loc.currencyCode})
+                </option>
+              ))}
+            </select>
+
+            {!authUser ? (
+              <>
                 <button
                   type="button"
-                  data-testid="back-to-admin-btn"
-                  onClick={() => setActiveRole('admin')}
-                  className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-300 bg-pink-50/80 px-3.5 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                  data-testid="open-auth-modal-btn"
+                  onClick={() => authDialogRef.current?.showModal()}
+                  className="rounded-2xl border border-neutral-200 bg-white px-4 py-2 text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
                 >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  ← Kembali ke Panel Super Admin
+                  {i18nCopy.headerSignIn}
                 </button>
-              )}
-
-              {activeRole === 'user' && (
                 <button
                   type="button"
-                  data-testid="open-billing-modal-btn"
-                  onClick={() => {
-                    setSelectedCheckoutPlanId(activePlanId);
-                    billingDialogRef.current?.showModal();
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-xs font-bold text-[#D85A88] hover:bg-pink-100/70"
+                  data-testid="open-onboarding-public-btn"
+                  onClick={() => onboardingDialogRef.current?.showModal()}
+                  className="rounded-2xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-[#DF608A]"
                 >
-                  <CreditCard className="h-3.5 w-3.5 text-[#EC749B]" />
-                  {currentPlan.name} · Kuota {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} · Upgrade
+                  {i18nCopy.headerStartFree}
                 </button>
-              )}
+              </>
+            ) : (
+              <>
+                {authUser.isSuperAdmin && activeRole === 'user' && (
+                  <button
+                    type="button"
+                    data-testid="back-to-admin-btn"
+                    onClick={() => setActiveRole('admin')}
+                    className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-300 bg-pink-50/80 px-3.5 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    ← Super Admin
+                  </button>
+                )}
 
-              <button
-                type="button"
-                data-testid="open-auth-modal-btn"
-                onClick={() => authDialogRef.current?.showModal()}
-                className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
-              >
-                <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
-                {authUser.email}
-              </button>
+                {activeRole === 'user' && (
+                  <button
+                    type="button"
+                    data-testid="open-billing-modal-btn"
+                    onClick={() => {
+                      setSelectedCheckoutPlanId(activePlanId);
+                      billingDialogRef.current?.showModal();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-xs font-bold text-[#D85A88] hover:bg-pink-100/70"
+                  >
+                    <CreditCard className="h-3.5 w-3.5 text-[#EC749B]" />
+                    {currentPlan.name} · {postsUsedThisMonth}/{currentPlan.monthlyPostQuota}
+                  </button>
+                )}
 
-              <button
-                type="button"
-                data-testid="logout-btn"
-                onClick={() => void handleSignOutClick()}
-                className="rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
-              >
-                Keluar
-              </button>
-            </div>
-          )}
+                <button
+                  type="button"
+                  data-testid="open-auth-modal-btn"
+                  onClick={() => authDialogRef.current?.showModal()}
+                  className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                >
+                  <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
+                  <span className="max-w-[140px] truncate sm:max-w-none">{authUser.email}</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="logout-btn"
+                  onClick={() => void handleSignOutClick()}
+                  className="rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
+                >
+                  {i18nCopy.headerLogout}
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Status Toast Strip — Hanya tampil saat sudah Login ke dalam Aplikasi */}
@@ -1071,154 +1106,19 @@ export default function VeloxaAiPlatformPage() {
         <div>
           {!authUser ? (
             /* ======================================================================
-               KONDISI 1 (BELUM LOGIN): MURNI LANDING PAGE RESMI VELOXA AI
+               KONDISI 1 (BELUM LOGIN): ULTRA-LUXURY GLOBAL MULTI-LANGUAGE LANDING PAGE
                ====================================================================== */
-            <div className="space-y-8" data-testid="veloxa-sales-landing-page">
-              {/* Hero Section */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-8 text-center shadow-2xs sm:p-12">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
-                  <Sparkles className="h-3.5 w-3.5 text-[#EC749B]" /> Platform SaaS Otonom #1 untuk UMKM, Cafe, Klinik & Event di Indonesia
-                </span>
-                <h1 className="mx-auto mt-4 max-w-3xl text-3xl font-black tracking-tight text-neutral-900 sm:text-5xl">
-                  Punya Tim Konten Kreator 4 Sosmed & AI Media Buyer Meta Ads 24/7 Mulai{' '}
-                  <span className="text-[#EC749B]">Rp500.000/Bulan</span>
-                </h1>
-                <p className="mx-auto mt-4 max-w-2xl text-sm text-neutral-600 sm:text-base">
-                  Cukup unggah contoh referensi poster/Reels yang Anda sukai dan stok foto asli bisnis Anda. Veloxa AI memproduksi, memeriksa kualitas hingga 0 kesalahan, memposting otomatis ke <strong>Instagram, Facebook, TikTok, & YouTube Shorts</strong>, serta mengoptimasi iklan <strong>Meta Ads</strong> Anda setiap hari.
-                </p>
-
-                <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    data-testid="landing-cta-start-btn"
-                    onClick={() => onboardingDialogRef.current?.showModal()}
-                    className="rounded-2xl bg-[#EC749B] px-6 py-3.5 text-sm font-black text-white shadow-2xs hover:bg-[#DF608A]"
-                  >
-                    <Rocket className="mr-1.5 inline h-4 w-4" />
-                    Daftarkan Bisnis Anda Sekarang
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="landing-open-login-btn"
-                    onClick={() => authDialogRef.current?.showModal()}
-                    className="rounded-2xl border border-neutral-200 bg-white px-6 py-3.5 text-sm font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
-                  >
-                    Masuk ke Akun / Demo Workspace →
-                  </button>
-                </div>
-
-                <div className="mt-8 grid gap-4 border-t border-neutral-100 pt-6 text-left sm:grid-cols-3">
-                  <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/50 p-4">
-                    <p className="text-xs font-black uppercase text-[#D85A88]">1. Dual Brand Vault</p>
-                    <p className="mt-1 text-sm font-bold text-neutral-900">
-                      Tiru Gaya Referensi + Pakai Foto Produk Asli Anda
-                    </p>
-                    <p className="mt-1 text-xs text-neutral-500">
-                      AI mengekstrak Style DNA dari contoh yang Anda sukai dan memadukannya dengan foto menu/event asli bisnis Anda.
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/50 p-4">
-                    <p className="text-xs font-black uppercase text-[#D85A88]">2. Otonom 4 Kanal Sekaligus</p>
-                    <p className="mt-1 text-sm font-bold text-neutral-900">
-                      IG Reels, FB Page, TikTok, & YouTube Shorts
-                    </p>
-                    <p className="mt-1 text-xs text-neutral-500">
-                      Bebas atur jadwal tayang 1x–4x sehari + Mode Kampanye Event hitung mundur (H-30 s.d. Hari-H).
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/50 p-4">
-                    <p className="text-xs font-black uppercase text-[#D85A88]">3. AI Agent Meta Ads</p>
-                    <p className="mt-1 text-sm font-bold text-neutral-900">
-                      Demografi, Validated Interest, & Auto-Optimizer
-                    </p>
-                    <p className="mt-1 text-xs text-neutral-500">
-                      Mematikan variasi iklan mahal secara otomatis dan mengalihkan 100% budget ke iklan pemenang di bawah Pagar Budget Anda.
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              {/* Cost Comparison Calculator: Agency vs Veloxa AI */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs sm:p-8">
-                <h2 className="text-xl font-black text-neutral-900">
-                  Perbandingan Biaya Bulanan: Sewa Agensi Konvensional vs Veloxa AI
-                </h2>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-5 text-xs">
-                    <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 font-bold text-neutral-500">
-                      Cara Lama (Agensi Sosmed + Freelancer Iklan)
-                    </span>
-                    <p className="mt-3 text-2xl font-black text-neutral-800">Rp6.500.000 – Rp9.000.000 / bln</p>
-                    <ul className="mt-3 space-y-1.5 text-neutral-600">
-                      <li>• Admin & Desainer Feed/Reels: ~Rp4.500.000/bulan</li>
-                      <li>• Jasa Advertiser Meta Ads: ~Rp2.500.000/bulan</li>
-                      <li>• Revisi lama & sering terlambat mengejar momentum event</li>
-                    </ul>
-                  </div>
-                  <div className="rounded-2xl border border-pink-300 bg-white p-5 text-xs ring-2 ring-pink-100">
-                    <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 font-bold text-white">
-                      ★ Cara Baru Bersama Veloxa AI (Hemat hingga 85%)
-                    </span>
-                    <p className="mt-3 text-2xl font-black text-[#D85A88]">Rp500.000 – Rp1.500.000 / bln</p>
-                    <ul className="mt-3 space-y-1.5 text-neutral-700">
-                      <li>• <strong>20 hingga 90 konten/bulan</strong> tayang otomatis di 4 platform</li>
-                      <li>• <strong>Self-Healing Quality Gate</strong> memeriksa kualitas visual & caption</li>
-                      <li>• <strong>AI Agent Meta Ads 24/7</strong> + Aplikasi Web, Android (`.apk`), & iOS</li>
-                    </ul>
-                  </div>
-                </div>
-              </section>
-
-              {/* Pricing Cards on Landing Page */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs sm:p-8">
-                <h2 className="text-xl font-black text-neutral-900">
-                  Pilih Paket Langganan Sesuai Skala Bisnis Anda
-                </h2>
-                <div className="mt-4 grid gap-4 md:grid-cols-3">
-                  {Object.values(SUBSCRIPTION_PLANS).map((plan) => (
-                    <div
-                      key={plan.id}
-                      className={`flex flex-col justify-between rounded-2xl border p-5 ${
-                        plan.id === 'pro_1500k'
-                          ? 'border-pink-300 bg-white ring-2 ring-pink-100'
-                          : 'border-neutral-200 bg-white'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-black text-neutral-900">{plan.name}</span>
-                          {plan.id === 'pro_1500k' && (
-                            <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-bold text-white">
-                              TERLARIS
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-2 text-2xl font-black text-neutral-900">
-                          {formatIdr(plan.priceMonthlyIdr)}
-                          <span className="text-xs font-semibold text-neutral-400">/bulan</span>
-                        </p>
-                        <p className="mt-1 text-xs text-neutral-500">{plan.tagline}</p>
-                        <ul className="mt-3 space-y-1.5 text-xs text-neutral-600">
-                          <li>• Kuota: <strong className="text-neutral-900">{plan.monthlyPostQuota} postingan/bulan</strong></li>
-                          <li>• Kanal: <strong className="text-neutral-900">{plan.allowedChannels.join(', ').toUpperCase()}</strong></li>
-                          <li>• AI Agent Meta Ads: <strong className="text-neutral-900">{plan.includesMetaAdsAgent ? 'Termasuk + Auto-Optimizer' : 'Tidak'}</strong></li>
-                        </ul>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOnboardPlanId(plan.id);
-                          onboardingDialogRef.current?.showModal();
-                        }}
-                        className="mt-5 w-full rounded-xl bg-[#EC749B] py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
-                      >
-                        Mulai dengan {plan.name}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+            <VeloxaLuxuryLanding
+              locale={locale}
+              onSelectLocale={handleSelectLocale}
+              onOpenOnboarding={(defaultPlanId) => {
+                if (defaultPlanId) {
+                  setOnboardPlanId(defaultPlanId);
+                }
+                onboardingDialogRef.current?.showModal();
+              }}
+              onOpenAuthModal={() => authDialogRef.current?.showModal()}
+            />
           ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
             /* ======================================================================
                KONDISI 2 (LOGIN SEBAGAI SUPER ADMIN sosrospg@gmail.com):
@@ -1696,11 +1596,11 @@ export default function VeloxaAiPlatformPage() {
               >
                 {(
                   [
-                    { id: 'overview', label: '1. Beranda & Kanal', icon: LayoutDashboard },
-                    { id: 'brand_vault', label: '2. Brand & Referensi', icon: Camera },
-                    { id: 'studio', label: '3. Studio Konten', icon: Wand2 },
-                    { id: 'autonomy', label: '4. Agent Otonom', icon: Bot },
-                    { id: 'meta_ads', label: '5. AI Meta Ads', icon: Megaphone },
+                    { id: 'overview', label: i18nCopy.workspaceTabs.overview, icon: LayoutDashboard },
+                    { id: 'brand_vault', label: i18nCopy.workspaceTabs.brand_vault, icon: Camera },
+                    { id: 'studio', label: i18nCopy.workspaceTabs.studio, icon: Wand2 },
+                    { id: 'autonomy', label: i18nCopy.workspaceTabs.autonomy, icon: Bot },
+                    { id: 'meta_ads', label: i18nCopy.workspaceTabs.meta_ads, icon: Megaphone },
                   ] as const
                 ).map((tab) => {
                   const Icon = tab.icon;
@@ -3046,37 +2946,65 @@ export default function VeloxaAiPlatformPage() {
           )}
         </div>
 
-        {/* Native Mobile Bottom Navigation Bar — Otomatis Tampil di Layar HP Asli (<768px) */}
-        {authUser && activeRole === 'user' && (
+        {/* Native Mobile Bottom Bar — Otomatis Tampil di Layar HP Asli (<768px) */}
+        {!authUser ? (
           <nav
-            aria-label="Bottom Navigation Android dan iOS"
-            className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-neutral-200 bg-white/95 px-2 py-2.5 backdrop-blur md:hidden"
+            aria-label="Mobile Quick Action Bar"
+            data-testid="mobile-public-bottom-bar"
+            className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 border-t border-neutral-200/90 bg-white/95 px-4 pt-2.5 shadow-lg backdrop-blur md:hidden"
           >
-            {(
-              [
-                { id: 'overview', label: 'Beranda', icon: LayoutDashboard },
-                { id: 'brand_vault', label: 'Vault', icon: Camera },
-                { id: 'studio', label: 'Studio', icon: Wand2 },
-                { id: 'autonomy', label: 'Otonom', icon: Bot },
-                { id: 'meta_ads', label: 'Meta Ads', icon: Megaphone },
-              ] as const
-            ).map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex flex-col items-center gap-1 rounded-xl py-1 text-[10px] font-bold ${
-                    activeTab === tab.id ? 'text-[#EC749B]' : 'text-neutral-400'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
+            <button
+              type="button"
+              onClick={() => authDialogRef.current?.showModal()}
+              className="flex-1 rounded-2xl border border-neutral-200 bg-white py-2.5 text-xs font-black text-neutral-800"
+            >
+              {i18nCopy.headerSignIn}
+            </button>
+            <button
+              type="button"
+              onClick={() => onboardingDialogRef.current?.showModal()}
+              className="flex-[1.4] rounded-2xl bg-[#EC749B] py-2.5 text-xs font-black text-white shadow-xs"
+            >
+              {i18nCopy.headerStartFree} →
+            </button>
           </nav>
+        ) : (
+          activeRole === 'user' && (
+            <nav
+              aria-label="Bottom Navigation Android dan iOS"
+              data-testid="mobile-workspace-bottom-nav"
+              className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t border-neutral-200/90 bg-white/95 px-2.5 pt-2 shadow-lg backdrop-blur md:hidden"
+            >
+              {(
+                [
+                  { id: 'overview', label: i18nCopy.mobileTabs.overview, icon: LayoutDashboard },
+                  { id: 'brand_vault', label: i18nCopy.mobileTabs.brand_vault, icon: Camera },
+                  { id: 'studio', label: i18nCopy.mobileTabs.studio, icon: Wand2 },
+                  { id: 'autonomy', label: i18nCopy.mobileTabs.autonomy, icon: Bot },
+                  { id: 'meta_ads', label: i18nCopy.mobileTabs.meta_ads, icon: Megaphone },
+                ] as const
+              ).map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    data-testid={`mobile-nav-tab-${tab.id}`}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex flex-col items-center gap-1 rounded-2xl py-1.5 text-[10px] font-black transition ${
+                      isActive
+                        ? 'bg-pink-50/90 text-[#EC749B] ring-1 ring-pink-200'
+                        : 'text-neutral-500 hover:text-neutral-900'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span className="truncate">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          )
         )}
       </main>
 
