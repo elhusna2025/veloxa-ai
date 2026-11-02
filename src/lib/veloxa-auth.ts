@@ -3,12 +3,14 @@
  *
  * Implements:
  * 1. Simple, fast Registration (`/register`) -> Creates Firebase Auth user + immediately writes
- *    `users/{uid}` & initial `workspaces/{workspaceId}` in Cloud Firestore (`onboardingCompleted: false`).
+ *    clean 15-key `users/{uid}` & initial `workspaces/{workspaceId}` in Cloud Firestore (`onboardingCompleted: false`).
  * 2. Step-by-Step Onboarding Wizard (`/onboarding`) -> Configures Brand Profile, Target Channels,
- *    and Plan Selection (including Free Trial `free_trial` Rp0) -> Updates `users/{uid}`,
- *    `workspaces/{workspaceId}`, and `workspaces/{workspaceId}/brand_brain/main` in Cloud Firestore.
- * 3. Automatic Firestore Backfill on Login / Session Hydration -> Any user who previously existed
- *    only in Firebase Auth is automatically synced into Cloud Firestore `users/{uid}` & `workspaces/{workspaceId}`.
+ *    and Plan Selection (including Free Trial `free_trial` Rp0) -> Writes `onboardingCompleted: true`
+ *    and real initial workspace snapshot (`snapshotJson`) to `users/{uid}`, `workspaces/{workspaceId}`,
+ *    and `workspaces/{workspaceId}/brand_brain/main` in Cloud Firestore.
+ * 3. Reliable Login Hydration (`/login`) -> Waits for `auth.authStateReady()`, checks both `users/{uid}`
+ *    and `workspaces/{workspaceId}` in Cloud Firestore so any user who completed onboarding NEVER gets
+ *    sent back to `/onboarding` after logging out and logging back in.
  */
 
 import { getApps, initializeApp } from 'firebase/app';
@@ -29,8 +31,10 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { SUBSCRIPTION_PLANS } from './veloxa-engine';
 import {
+  buildRealInitialWorkspaceSnapshot,
   getFirestoreInstance,
   loadSavedFirebaseConfig,
+  syncWorkspaceSnapshotToStore,
   type VeloxaFirebaseConnectionConfig,
 } from './veloxa-firestore-repo';
 import type {
@@ -67,8 +71,10 @@ export interface VeloxaAuthenticatedUser {
   businessName?: string;
   city?: string;
   category?: BusinessCategory;
+  targetAudience?: string;
+  brandTone?: string;
   selectedChannels?: SocialChannelId[];
-   syncedToFirestore?: boolean;
+  syncedToFirestore?: boolean;
 }
 
 const LOCAL_AUTH_SESSION_KEY = 'veloxa_prod_auth_session_v2';
@@ -136,15 +142,18 @@ export function persistAuthenticatedUser(user: VeloxaAuthenticatedUser | null): 
   }
 }
 
-function buildWorkspaceIdForUid(uid: string): string {
+export function buildWorkspaceIdForUid(uid: string): string {
   const clean = uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
   return `ws_${clean || 'tenant'}`;
 }
 
 /**
- * Ensures the authenticated user has both a `users/{uid}` document and an initial
- * `workspaces/{workspaceId}` document in Cloud Firestore (`veloxa-ai-saas`).
- * If the user already completed onboarding in Firestore, hydrates those fields into the session.
+ * Synchronizes `users/{uid}` and `workspaces/{workspaceId}` in Cloud Firestore (`veloxa-ai-saas`).
+ *
+ * Uses a compact <=16-key document payload on `users/{uid}` (preserving immutable `uid`, `id`,
+ * `role`, `createdAt`) so Firestore Security Rules never hit expression evaluation limits,
+ * and cross-checks `workspaces/{workspaceId}.onboardingCompleted` so previously onboarded users
+ * are automatically migrated and never asked to repeat onboarding.
  */
 export async function syncUserProfileToFirestore(
   user: VeloxaAuthenticatedUser,
@@ -153,18 +162,30 @@ export async function syncUserProfileToFirestore(
     businessName?: string;
     city?: string;
     category?: BusinessCategory;
+    targetAudience?: string;
+    brandTone?: string;
     planId?: SubscriptionPlanId;
     selectedChannels?: SocialChannelId[];
   },
 ): Promise<VeloxaAuthenticatedUser> {
-  const db = getFirestoreInstance();
-  const workspaceId = user.activeWorkspaceId || buildWorkspaceIdForUid(user.uid);
+  const auth = getFirebaseAuthInstance();
+  if (auth && typeof auth.authStateReady === 'function') {
+    try {
+      await auth.authStateReady();
+    } catch {
+      // ignore
+    }
+  }
+
+  const activeUid = auth?.currentUser && !auth.currentUser.isAnonymous ? auth.currentUser.uid : user.uid;
+  const workspaceId = user.activeWorkspaceId || buildWorkspaceIdForUid(activeUid);
   const nowIso = new Date().toISOString();
-  const trialEndsIso = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const db = getFirestoreInstance();
 
   if (!db) {
     const updatedLocal: VeloxaAuthenticatedUser = {
       ...user,
+      uid: activeUid,
       activeWorkspaceId: workspaceId,
       onboardingCompleted:
         options?.forceOnboardingCompleted ?? user.onboardingCompleted ?? user.isSuperAdmin,
@@ -172,6 +193,8 @@ export async function syncUserProfileToFirestore(
       businessName: options?.businessName ?? user.businessName,
       city: options?.city ?? user.city,
       category: options?.category ?? user.category,
+      targetAudience: options?.targetAudience ?? user.targetAudience,
+      brandTone: options?.brandTone ?? user.brandTone,
       selectedChannels: options?.selectedChannels ?? user.selectedChannels,
     };
     persistAuthenticatedUser(updatedLocal);
@@ -179,161 +202,184 @@ export async function syncUserProfileToFirestore(
   }
 
   try {
-    const userRef = doc(db, 'users', user.uid);
-    const existingSnap = await getDoc(userRef);
+    const userRef = doc(db, 'users', activeUid);
+    const wsRef = doc(db, 'workspaces', workspaceId);
 
-    if (existingSnap.exists()) {
-      const existingData = existingSnap.data() as Record<string, unknown>;
-      const resolvedOnboarding =
-        options?.forceOnboardingCompleted !== undefined
-          ? options.forceOnboardingCompleted
-          : Boolean(existingData.onboardingCompleted ?? user.onboardingCompleted ?? user.isSuperAdmin);
-      const resolvedPlan = (options?.planId ||
-        (existingData.subscriptionPlanId as SubscriptionPlanId) ||
-        user.subscriptionPlanId ||
-        'free_trial') as SubscriptionPlanId;
-      const resolvedWsId =
-        (existingData.activeWorkspaceId as string) || workspaceId;
-      const resolvedBusinessName =
-        options?.businessName ||
-        (existingData.businessName as string) ||
-        user.businessName ||
-        `${user.displayName} Studio`;
-      const resolvedCity =
-        options?.city || (existingData.city as string) || user.city || 'Jakarta';
-      const resolvedCategory = (options?.category ||
-        (existingData.category as BusinessCategory) ||
-        user.category ||
-        'cafe_fnb') as BusinessCategory;
-      const resolvedChannels = (options?.selectedChannels ||
-        (existingData.selectedChannels as SocialChannelId[]) ||
-        user.selectedChannels || [
-          'instagram',
-          'facebook',
-          'tiktok',
-          'youtube_shorts',
-        ]) as SocialChannelId[];
+    const [existingUserSnap, existingWsSnap] = await Promise.all([
+      getDoc(userRef),
+      getDoc(wsRef).catch(() => null),
+    ]);
 
-      const planSpec = SUBSCRIPTION_PLANS[resolvedPlan] || SUBSCRIPTION_PLANS.free_trial;
+    const existingUserData = existingUserSnap.exists()
+      ? (existingUserSnap.data() as Record<string, unknown>)
+      : null;
+    const existingWsData =
+      existingWsSnap && existingWsSnap.exists()
+        ? (existingWsSnap.data() as Record<string, unknown>)
+        : null;
 
-      await setDoc(
-        userRef,
-        {
-          displayName: user.displayName.slice(0, 110),
-          name: user.displayName.slice(0, 110),
-          activeWorkspaceId: resolvedWsId,
-          workspaceIds: [resolvedWsId],
-          subscriptionPlanId: resolvedPlan,
-          quotaLimit: planSpec.monthlyPostQuota,
-          onboardingCompleted: resolvedOnboarding,
-          businessName: resolvedBusinessName.slice(0, 110),
-          city: resolvedCity.slice(0, 80),
-          category: resolvedCategory,
-          selectedChannels: resolvedChannels,
-          updatedAt: nowIso,
-        },
-        { merge: true },
-      );
+    // Onboarding is completed if forced true, or already true in EITHER users/{uid} OR workspaces/{wsId}, or Super Admin
+    const alreadyOnboardedInCloud =
+      Boolean(existingUserData?.onboardingCompleted) ||
+      Boolean(existingWsData?.onboardingCompleted) ||
+      Boolean(existingWsData?.onboardingStep === 3);
 
-      const hydrated: VeloxaAuthenticatedUser = {
-        ...user,
-        activeWorkspaceId: resolvedWsId,
-        onboardingCompleted: resolvedOnboarding,
-        subscriptionPlanId: resolvedPlan,
-        businessName: resolvedBusinessName,
-        city: resolvedCity,
-        category: resolvedCategory,
-        selectedChannels: resolvedChannels,
-        syncedToFirestore: true,
-      };
-      persistAuthenticatedUser(hydrated);
-      return hydrated;
-    }
+    const resolvedOnboarding =
+      options?.forceOnboardingCompleted === true
+        ? true
+        : alreadyOnboardedInCloud
+          ? true
+          : options?.forceOnboardingCompleted === false
+            ? false
+            : Boolean(user.onboardingCompleted ?? user.isSuperAdmin);
 
-    // Create brand-new `users/{uid}` and `workspaces/{workspaceId}` documents in Cloud Firestore
-    const initialOnboardingCompleted =
-      options?.forceOnboardingCompleted ?? user.onboardingCompleted ?? user.isSuperAdmin;
-    const initialPlan: SubscriptionPlanId = options?.planId || user.subscriptionPlanId || 'free_trial';
-    const planSpec = SUBSCRIPTION_PLANS[initialPlan] || SUBSCRIPTION_PLANS.free_trial;
-    const initialBusinessName = (
+    const resolvedWsId =
+      (existingUserData?.activeWorkspaceId as string) || workspaceId;
+
+    const resolvedPlan = (options?.planId ||
+      (existingWsData?.subscriptionPlanId as SubscriptionPlanId) ||
+      (existingUserData?.subscriptionPlanId as SubscriptionPlanId) ||
+      user.subscriptionPlanId ||
+      'free_trial') as SubscriptionPlanId;
+
+    const resolvedBusinessName = (
       options?.businessName ||
+      (existingWsData?.name as string) ||
+      (existingUserData?.businessName as string) ||
       user.businessName ||
       `${user.displayName} Brand`
     ).slice(0, 110);
-    const initialCity = (options?.city || user.city || 'Jakarta').slice(0, 80);
-    const initialCategory: BusinessCategory = options?.category || user.category || 'cafe_fnb';
-    const initialChannels: SocialChannelId[] = options?.selectedChannels ||
-      user.selectedChannels || ['instagram', 'facebook', 'tiktok', 'youtube_shorts'];
 
-    await setDoc(userRef, {
-      uid: user.uid,
-      id: user.uid,
-      email: user.email,
-      displayName: user.displayName.slice(0, 110),
-      name: user.displayName.slice(0, 110),
-      role: user.isSuperAdmin ? 'admin' : 'user',
-      provider: user.provider,
-      activeWorkspaceId: workspaceId,
-      workspaceIds: [workspaceId],
-      subscriptionPlanId: initialPlan,
-      quotaLimit: planSpec.monthlyPostQuota,
-      quotaUsed: 0,
-      onboardingCompleted: initialOnboardingCompleted,
-      businessName: initialBusinessName,
-      city: initialCity,
-      category: initialCategory,
-      selectedChannels: initialChannels,
-      trialEndsAt: trialEndsIso,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    });
+    const resolvedCity = (
+      options?.city ||
+      (existingWsData?.city as string) ||
+      (existingUserData?.city as string) ||
+      user.city ||
+      'Jakarta'
+    ).slice(0, 80);
 
-    const wsRef = doc(db, 'workspaces', workspaceId);
-    await setDoc(
-      wsRef,
-      {
-        id: workspaceId,
-        ownerUid: user.uid,
-        memberUids: [user.uid],
-        name: initialBusinessName,
-        category: initialCategory,
-        city: initialCity,
-        timezone: 'Asia/Jakarta',
-        currency: 'IDR',
-        subscriptionPlanId: initialPlan,
-        quotaLimit: planSpec.monthlyPostQuota,
-        quotaUsed: 0,
-        autonomyEnabled: true,
-        onboardingCompleted: initialOnboardingCompleted,
-        onboardingStep: initialOnboardingCompleted ? 3 : 1,
-        selectedChannels: initialChannels,
-        trialEndsAt: trialEndsIso,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      },
-      { merge: true },
+    const resolvedCategory = (options?.category ||
+      (existingWsData?.category as BusinessCategory) ||
+      (existingUserData?.category as BusinessCategory) ||
+      user.category ||
+      'cafe_fnb') as BusinessCategory;
+
+    const resolvedAudience = (
+      options?.targetAudience ||
+      (existingWsData?.targetAudience as string) ||
+      user.targetAudience ||
+      `Pelanggan potensial ${resolvedBusinessName} di ${resolvedCity}`
+    ).slice(0, 400);
+
+    const resolvedTone = (
+      options?.brandTone ||
+      (existingWsData?.toneOfVoice as string) ||
+      user.brandTone ||
+      'Profesional, autentik, dekat dengan pelanggan, dan persuasif'
+    ).slice(0, 250);
+
+    const resolvedChannels = (options?.selectedChannels ||
+      (existingWsData?.selectedChannels as SocialChannelId[]) ||
+      (existingUserData?.selectedChannels as SocialChannelId[]) ||
+      user.selectedChannels || [
+        'instagram',
+        'facebook',
+        'tiktok',
+        'youtube_shorts',
+      ]) as SocialChannelId[];
+
+    const planSpec = SUBSCRIPTION_PLANS[resolvedPlan] || SUBSCRIPTION_PLANS.free_trial;
+    const immutableRole =
+      (existingUserData?.role as VeloxaRole) || (user.isSuperAdmin ? 'admin' : 'user');
+    const immutableCreatedAt = (existingUserData?.createdAt as string) || nowIso;
+    const existingQuotaUsed = Number(
+      existingWsData?.quotaUsed ?? existingUserData?.quotaUsed ?? (resolvedOnboarding ? 1 : 0),
     );
 
-    const createdUser: VeloxaAuthenticatedUser = {
+    // Compact 15-16 key document payload for `users/{uid}` (avoids 19+ key rule limit and preserves immutable fields)
+    const cleanUserDoc: Record<string, unknown> = {
+      uid: activeUid,
+      ...(existingUserData && 'id' in existingUserData ? { id: existingUserData.id } : {}),
+      email: user.email,
+      displayName: user.displayName.slice(0, 110),
+      role: immutableRole,
+      provider: user.provider,
+      activeWorkspaceId: resolvedWsId,
+      subscriptionPlanId: resolvedPlan,
+      quotaLimit: planSpec.monthlyPostQuota,
+      quotaUsed: existingQuotaUsed,
+      onboardingCompleted: resolvedOnboarding,
+      businessName: resolvedBusinessName,
+      city: resolvedCity,
+      category: resolvedCategory,
+      selectedChannels: resolvedChannels,
+      createdAt: immutableCreatedAt,
+      updatedAt: nowIso,
+    };
+
+    await setDoc(userRef, cleanUserDoc);
+
+    // Ensure `workspaces/{resolvedWsId}` exists and is up to date in Cloud Firestore
+    if (!existingWsData || options?.forceOnboardingCompleted !== undefined || options?.businessName) {
+      const targetWsRef = doc(db, 'workspaces', resolvedWsId);
+      const wsCreatedAt = (existingWsData?.createdAt as string) || nowIso;
+      const wsOwnerUid = (existingWsData?.ownerUid as string) || activeUid;
+      const wsPayload: Record<string, unknown> = {
+        id: resolvedWsId,
+        ownerUid: wsOwnerUid,
+        memberUids: [wsOwnerUid],
+        name: resolvedBusinessName,
+        category: resolvedCategory,
+        city: resolvedCity,
+        targetAudience: resolvedAudience,
+        toneOfVoice: resolvedTone,
+        subscriptionPlanId: resolvedPlan,
+        quotaLimit: planSpec.monthlyPostQuota,
+        quotaUsed: existingQuotaUsed,
+        autonomyEnabled: true,
+        onboardingCompleted: resolvedOnboarding,
+        onboardingStep: resolvedOnboarding ? 3 : 1,
+        selectedChannels: resolvedChannels,
+        ...(typeof existingWsData?.snapshotJson === 'string'
+          ? { snapshotJson: existingWsData.snapshotJson }
+          : {}),
+        createdAt: wsCreatedAt,
+        updatedAt: nowIso,
+      };
+      await setDoc(targetWsRef, wsPayload);
+    }
+
+    const hydrated: VeloxaAuthenticatedUser = {
       ...user,
-      activeWorkspaceId: workspaceId,
-      onboardingCompleted: initialOnboardingCompleted,
-      subscriptionPlanId: initialPlan,
-      businessName: initialBusinessName,
-      city: initialCity,
-      category: initialCategory,
-      selectedChannels: initialChannels,
+      uid: activeUid,
+      role: immutableRole,
+      activeWorkspaceId: resolvedWsId,
+      onboardingCompleted: resolvedOnboarding,
+      subscriptionPlanId: resolvedPlan,
+      businessName: resolvedBusinessName,
+      city: resolvedCity,
+      category: resolvedCategory,
+      targetAudience: resolvedAudience,
+      brandTone: resolvedTone,
+      selectedChannels: resolvedChannels,
       syncedToFirestore: true,
     };
-    persistAuthenticatedUser(createdUser);
-    return createdUser;
+    persistAuthenticatedUser(hydrated);
+    return hydrated;
   } catch {
     const fallbackUser: VeloxaAuthenticatedUser = {
       ...user,
+      uid: activeUid,
       activeWorkspaceId: workspaceId,
       onboardingCompleted:
         options?.forceOnboardingCompleted ?? user.onboardingCompleted ?? user.isSuperAdmin,
       subscriptionPlanId: options?.planId ?? user.subscriptionPlanId ?? 'free_trial',
+      businessName: options?.businessName ?? user.businessName,
+      city: options?.city ?? user.city,
+      category: options?.category ?? user.category,
+      targetAudience: options?.targetAudience ?? user.targetAudience,
+      brandTone: options?.brandTone ?? user.brandTone,
+      selectedChannels: options?.selectedChannels ?? user.selectedChannels,
     };
     persistAuthenticatedUser(fallbackUser);
     return fallbackUser;
@@ -361,7 +407,7 @@ function mapFirebaseUser(user: User, fallbackEmail?: string, customName?: string
 /**
  * Simple Account Registration (`/register`):
  * Creates the account in Firebase Auth + writes `users/{uid}` and `workspaces/{workspaceId}`
- * in Cloud Firestore with `onboardingCompleted: false` and `subscriptionPlanId: 'free_trial'`.
+ * in Cloud Firestore with `onboardingCompleted: false` (unless existing user already completed onboarding).
  */
 export async function registerNewVeloxaAccount(params: {
   name: string;
@@ -388,8 +434,6 @@ export async function registerNewVeloxaAccount(params: {
       });
       return { user: synced, isNewRegistration: true };
     } catch {
-      // If email already exists in Firebase Auth (e.g., user registered earlier when Firestore wasn't synced),
-      // sign them in and immediately backfill their Firestore `users/{uid}` & `workspaces/{workspaceId}`!
       const signedIn = await signInWithEmailAndPassword(auth, cleanEmail, params.password);
       if (cleanName && !signedIn.user.displayName) {
         try {
@@ -399,11 +443,8 @@ export async function registerNewVeloxaAccount(params: {
         }
       }
       const mapped = mapFirebaseUser(signedIn.user, cleanEmail, cleanName);
-      const synced = await syncUserProfileToFirestore(mapped, {
-        forceOnboardingCompleted: isSuper ? true : false,
-        planId: 'free_trial',
-      });
-      return { user: synced, isNewRegistration: true };
+      const synced = await syncUserProfileToFirestore(mapped);
+      return { user: synced, isNewRegistration: !synced.onboardingCompleted };
     }
   }
 
@@ -424,9 +465,10 @@ export async function registerNewVeloxaAccount(params: {
 }
 
 /**
- * Completes the 3-step Onboarding Wizard (`/onboarding`) and writes the full
- * brand profile, selected channels, and chosen plan (including `free_trial`)
- * to Cloud Firestore (`users/{uid}`, `workspaces/{workspaceId}`, and `workspaces/{workspaceId}/brand_brain/main`).
+ * Completes the 3-step Onboarding Wizard (`/onboarding`) and writes:
+ * 1. `users/{uid}` with `onboardingCompleted: true`
+ * 2. `workspaces/{workspaceId}` with `onboardingCompleted: true` and full real `snapshotJson`
+ * 3. `workspaces/{workspaceId}/brand_brain/main` with the user's real Brand Brain configuration
  */
 export async function completeVeloxaOnboarding(params: {
   businessName: string;
@@ -437,21 +479,33 @@ export async function completeVeloxaOnboarding(params: {
   selectedChannels: SocialChannelId[];
   planId: SubscriptionPlanId;
 }): Promise<VeloxaAuthenticatedUser> {
-  const current = getInitialAuthenticatedUser();
   const auth = getFirebaseAuthInstance();
+  if (auth && typeof auth.authStateReady === 'function') {
+    try {
+      await auth.authStateReady();
+    } catch {
+      // ignore
+    }
+  }
   const fbUser = auth?.currentUser;
+  const current = getInitialAuthenticatedUser();
 
-  const baseUser: VeloxaAuthenticatedUser = current || {
-    uid: fbUser?.uid || `usr_${Date.now().toString(36)}`,
-    email: fbUser?.email || 'founder@bisnisanda.id',
-    displayName: fbUser?.displayName || params.businessName,
-    role: 'user',
-    provider: 'email_password',
-    isSuperAdmin: false,
+  const resolvedUid =
+    fbUser && !fbUser.isAnonymous
+      ? fbUser.uid
+      : current?.uid || `usr_${Date.now().toString(36)}`;
+
+  const baseUser: VeloxaAuthenticatedUser = {
+    uid: resolvedUid,
+    email: fbUser?.email || current?.email || 'founder@bisnisanda.id',
+    displayName: fbUser?.displayName || current?.displayName || params.businessName.trim(),
+    role: current?.role || 'user',
+    provider: current?.provider || 'email_password',
+    isSuperAdmin: Boolean(current?.isSuperAdmin),
+    activeWorkspaceId: current?.activeWorkspaceId || buildWorkspaceIdForUid(resolvedUid),
   };
 
   const workspaceId = baseUser.activeWorkspaceId || buildWorkspaceIdForUid(baseUser.uid);
-  const planSpec = SUBSCRIPTION_PLANS[params.planId] || SUBSCRIPTION_PLANS.free_trial;
   const nowIso = new Date().toISOString();
 
   // Persist pending brand for instant Workspace hydration on `/`
@@ -467,66 +521,60 @@ export async function completeVeloxaOnboarding(params: {
     selectedChannels: params.selectedChannels,
   });
 
+  // 1. Update `users/{uid}` and `workspaces/{workspaceId}` in Cloud Firestore with `onboardingCompleted: true`
   const syncedUser = await syncUserProfileToFirestore(baseUser, {
     forceOnboardingCompleted: true,
     businessName: params.businessName.trim(),
     city: params.city.trim(),
     category: params.category,
+    targetAudience: params.targetAudience.trim(),
+    brandTone: params.brandTone.trim(),
     planId: params.planId,
     selectedChannels: params.selectedChannels,
   });
 
+  // 2. Build 100% real initial workspace snapshot for this user's brand and push to Cloud Firestore (`workspaces/{workspaceId}`)
+  const realSnapshot = buildRealInitialWorkspaceSnapshot({
+    workspaceId: syncedUser.activeWorkspaceId || workspaceId,
+    businessName: params.businessName.trim(),
+    city: params.city.trim(),
+    category: params.category,
+    targetAudience: params.targetAudience.trim(),
+    brandTone: params.brandTone.trim(),
+    selectedChannels: params.selectedChannels,
+    planId: params.planId,
+    ownerName: syncedUser.displayName,
+    ownerEmail: syncedUser.email,
+  });
+
+  await syncWorkspaceSnapshotToStore(realSnapshot, undefined, { forceCloudPush: true });
+
+  // 3. Write `workspaces/{workspaceId}/brand_brain/main` in Cloud Firestore
   const db = getFirestoreInstance();
   if (db) {
     try {
-      const wsRef = doc(db, 'workspaces', workspaceId);
-      await setDoc(
-        wsRef,
-        {
-          id: workspaceId,
-          ownerUid: syncedUser.uid,
-          memberUids: [syncedUser.uid],
-          name: params.businessName.trim().slice(0, 110),
-          category: params.category,
-          city: params.city.trim().slice(0, 80),
-          targetAudience: params.targetAudience.trim().slice(0, 500),
-          toneOfVoice: params.brandTone.trim().slice(0, 250),
-          primaryColor: '#EC749B',
-          accentColor: '#171717',
-          timezone: 'Asia/Jakarta',
-          currency: 'IDR',
-          subscriptionPlanId: params.planId,
-          quotaLimit: planSpec.monthlyPostQuota,
-          quotaUsed: 0,
-          autonomyEnabled: true,
-          onboardingCompleted: true,
-          onboardingStep: 3,
-          selectedChannels: params.selectedChannels,
-          updatedAt: nowIso,
-        },
-        { merge: true },
+      const brandBrainRef = doc(
+        db,
+        'workspaces',
+        syncedUser.activeWorkspaceId || workspaceId,
+        'brand_brain',
+        'main',
       );
-
-      const brandBrainRef = doc(db, 'workspaces', workspaceId, 'brand_brain', 'main');
-      await setDoc(
-        brandBrainRef,
-        {
-          id: 'main',
-          workspaceId,
-          brandName: params.businessName.trim().slice(0, 110),
-          tagline: `Studio Otonom ${params.businessName.trim()} (${params.city.trim()})`,
-          description: `Profil Brand Brain AI untuk ${params.businessName.trim()} di ${params.city.trim()}.`,
-          category: params.category,
-          targetAudience: params.targetAudience.trim().slice(0, 1000),
-          toneOfVoice: params.brandTone.trim().slice(0, 400),
-          primaryColor: '#EC749B',
-          accentColor: '#171717',
-          updatedBy: syncedUser.uid,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        },
-        { merge: true },
-      );
+      await setDoc(brandBrainRef, {
+        id: 'main',
+        workspaceId: syncedUser.activeWorkspaceId || workspaceId,
+        brandName: params.businessName.trim().slice(0, 110),
+        tagline: `Studio Otonom ${params.businessName.trim()} (${params.city.trim()})`,
+        description: `Profil Brand Brain AI untuk ${params.businessName.trim()} di ${params.city.trim()}.`,
+        category: params.category,
+        targetAudience: params.targetAudience.trim().slice(0, 1000),
+        toneOfVoice: params.brandTone.trim().slice(0, 400),
+        primaryColor: '#EC749B',
+        accentColor: '#171717',
+        updatedBy: syncedUser.uid,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
     } catch {
       // non-blocking if offline
     }
@@ -548,7 +596,6 @@ export async function signInWithEmailPasswordOrRegister(params: {
     try {
       const cred = await signInWithEmailAndPassword(auth, cleanEmail, params.password);
       const mapped = mapFirebaseUser(cred.user, cleanEmail, params.displayName);
-      // Automatically sync or backfill `users/{uid}` & `workspaces/{workspaceId}` in Cloud Firestore!
       const synced = await syncUserProfileToFirestore(mapped);
       return synced;
     } catch {
@@ -701,7 +748,6 @@ export function subscribeToFirebaseAuthChanges(
   return onAuthStateChanged(auth, (fbUser) => {
     if (fbUser && !fbUser.isAnonymous) {
       const mapped = mapFirebaseUser(fbUser);
-      // Immediately backfill/sync the Firebase Auth user into Cloud Firestore `users/{uid}` & `workspaces/{workspaceId}`
       void syncUserProfileToFirestore(mapped).then((synced) => {
         callback(synced);
       });

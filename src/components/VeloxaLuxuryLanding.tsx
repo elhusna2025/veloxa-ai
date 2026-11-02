@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Bot,
@@ -693,17 +693,52 @@ export function VeloxaLuxuryLanding({
   const galleryCurrentSlide =
     activeIndustry.carousel.slides[galleryCarouselIndex % activeIndustry.carousel.slides.length];
 
-  // Auto-cycle Dynamic Hero Headline + Promo every 3.8 seconds
+  // Pause heavy periodic React state updates during active scrolling and resume on scrollend
+  // (modern-web-guidance: defer-work-until-scroll-ends)
+  const isScrollingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    const supportsScrollEnd = 'onscrollend' in globalThis;
+    const handleScrollStart = () => {
+      isScrollingRef.current = true;
+      if (!supportsScrollEnd) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = setTimeout(() => {
+          isScrollingRef.current = false;
+        }, 120);
+      }
+    };
+    const handleScrollEnd = () => {
+      isScrollingRef.current = false;
+    };
+
+    window.addEventListener('scroll', handleScrollStart, { passive: true });
+    if (supportsScrollEnd) {
+      window.addEventListener('scrollend', handleScrollEnd, { passive: true } as AddEventListenerOptions);
+    }
+    return () => {
+      window.removeEventListener('scroll', handleScrollStart);
+      if (supportsScrollEnd) {
+        window.removeEventListener('scrollend', handleScrollEnd);
+      }
+      clearTimeout(fallbackTimer);
+    };
+  }, []);
+
+  // Auto-cycle Dynamic Hero Headline + Promo every 3.8 seconds (paused while scrolling)
   useEffect(() => {
     const headlineTimer = window.setInterval(() => {
+      if (isScrollingRef.current) return;
       setHeroHeadlineIndex((prev) => (prev + 1) % heroSlides.length);
     }, 3800);
     return () => window.clearInterval(headlineTimer);
   }, [heroSlides.length]);
 
-  // Auto-cycle Hero 4:5 Carousel slides every 3.5 seconds when live motion is active
+  // Auto-cycle Hero 4:5 Carousel slides every 3.5 seconds (paused while scrolling)
   useEffect(() => {
     const timer = window.setInterval(() => {
+      if (isScrollingRef.current) return;
       setHeroCarouselIndex((prev) => (prev + 1) % heroIndustry.carousel.slides.length);
     }, 3500);
     return () => window.clearInterval(timer);
@@ -1683,7 +1718,7 @@ export function VeloxaLuxuryLanding({
          ============================================================================ */}
       <footer
         data-testid="veloxa-global-footer"
-        className="veloxa-deferred-section border-t border-neutral-200/80 bg-white pt-10"
+        className="veloxa-deferred-footer border-t border-neutral-200/80 bg-white pt-10"
       >
         {/* Top Conversion Banner inside Footer (Elevated Card with Strong Luxury Shadow) */}
         <div className="veloxa-luxury-card-pink rounded-3xl border border-pink-200/90 bg-white p-6 ring-1 ring-pink-100 sm:p-10">

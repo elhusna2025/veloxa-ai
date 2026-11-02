@@ -20,6 +20,7 @@ import { VeloxaDedicatedPageShell } from '@/components/VeloxaDedicatedPageShell'
 import {
   completeVeloxaOnboarding,
   getInitialAuthenticatedUser,
+  subscribeToFirebaseAuthChanges,
 } from '@/lib/veloxa-auth';
 import { SUBSCRIPTION_PLANS } from '@/lib/veloxa-engine';
 import { getPlanLocalizedPrice, type VeloxaLocale } from '@/lib/veloxa-i18n';
@@ -94,15 +95,33 @@ export default function VeloxaOnboardingWizardPage() {
   const [selectedPlanId, setSelectedPlanId] = useState<SubscriptionPlanId>('free_trial');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [userEmail, setUserEmail] = useState<string>('');
+  const [alreadyOnboarded, setAlreadyOnboarded] = useState<boolean>(false);
 
   useEffect(() => {
-    const u = getInitialAuthenticatedUser();
-    if (u) {
+    const applyUser = (u: ReturnType<typeof getInitialAuthenticatedUser>) => {
+      if (!u) return;
       setUserEmail(u.email);
       if (u.businessName) setBusinessName(u.businessName);
       if (u.city) setCity(u.city);
       if (u.category) setCategory(u.category);
-    }
+      if (u.targetAudience) setTargetAudience(u.targetAudience);
+      if (u.brandTone) setBrandTone(u.brandTone);
+      if (u.selectedChannels && u.selectedChannels.length > 0) {
+        setSelectedChannels(u.selectedChannels);
+      }
+      if (u.subscriptionPlanId) {
+        setSelectedPlanId(u.subscriptionPlanId);
+      }
+      if (u.onboardingCompleted) {
+        setAlreadyOnboarded(true);
+      }
+    };
+
+    applyUser(getInitialAuthenticatedUser());
+    const unsub = subscribeToFirebaseAuthChanges((syncedUser) => {
+      applyUser(syncedUser);
+    });
+    return () => unsub();
   }, []);
 
   const toggleChannel = (ch: SocialChannelId) => {
@@ -166,6 +185,25 @@ export default function VeloxaOnboardingWizardPage() {
             Konfigurasi profil brand Anda agar 5 Agen OpenAI memahami gaya visual dan bahasa bisnis Anda, lalu pilih{' '}
             <strong className="text-[#EC749B]">Paket Free Trial (Rp0)</strong> untuk mencoba semua fitur secara gratis.
           </p>
+
+          {alreadyOnboarded && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-xs">
+              <div className="flex items-center gap-2 font-bold text-emerald-800">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                <span>
+                  Profil brand <strong>{businessName}</strong> sudah tersimpan di Cloud Firestore. Anda dapat memperbaruinya di bawah atau langsung masuk ke Dashboard.
+                </span>
+              </div>
+              <button
+                type="button"
+                data-testid="onboarding-skip-to-dashboard-btn"
+                onClick={() => router.push('/')}
+                className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-black text-white hover:bg-emerald-700 transition"
+              >
+                Langsung ke Dashboard →
+              </button>
+            </div>
+          )}
 
           {/* 3-Step Interactive Stepper */}
           <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">

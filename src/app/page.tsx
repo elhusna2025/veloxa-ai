@@ -22,7 +22,9 @@ import {
 } from '@/lib/veloxa-local-first';
 import { VELOXA_OPENAI_AGENTS } from '@/lib/veloxa-openai-agents';
 import {
+  buildRealInitialWorkspaceSnapshot,
   getDefaultFirebaseConnectionConfig,
+  loadAllRealTenantsFromFirestore,
   loadSavedFirebaseConfig,
   loadWorkspaceSnapshotFromStore,
   saveFirebaseConnectionConfig,
@@ -213,6 +215,8 @@ export default function VeloxaAiPlatformPage() {
   const oauthDialogRef = useRef<HTMLDialogElement | null>(null);
   const billingDialogRef = useRef<HTMLDialogElement | null>(null);
   const authDialogRef = useRef<HTMLDialogElement | null>(null);
+  const logoutConfirmDialogRef = useRef<HTMLDialogElement | null>(null);
+  const hasHydratedCloudWorkspaceRef = useRef<string | null>(null);
 
   // Stage 5A & 5B: Production Authentication, Role Separation & Global i18n State
   const [locale, setLocale] = useState<VeloxaLocale>('id');
@@ -261,72 +265,102 @@ export default function VeloxaAiPlatformPage() {
     setLocale(loadSavedVeloxaLocale());
     const savedCfg = loadSavedFirebaseConfig();
     setFirebaseCfg(savedCfg);
+
+    const applySnapshotToState = (snap: NonNullable<Awaited<ReturnType<typeof loadWorkspaceSnapshotFromStore>>['snapshot']>) => {
+      setBrand(snap.brand);
+      setActivePlanId(snap.activePlanId);
+      setPostsUsedThisMonth(snap.postsUsedThisMonth);
+      setConnections(snap.connections);
+      setMetaAccount(snap.metaAccount);
+      setVaultAssets(snap.vaultAssets);
+      setAutonomyConfig(snap.autonomyConfig);
+      setEventCampaigns(snap.eventCampaigns);
+      setDrafts(snap.drafts);
+      setMetaAdCampaigns(snap.metaAdCampaigns);
+      if (snap.tenants && snap.tenants.length > 0) {
+        setTenants(snap.tenants);
+      }
+      setAdCity(snap.brand.city);
+      setAdPromoTitle(`Kampanye ${snap.brand.businessName} (${snap.brand.city})`);
+      hasHydratedCloudWorkspaceRef.current = snap.brand.workspaceId;
+    };
+
+    const hydrateForAuthenticatedUser = async (user: VeloxaAuthenticatedUser) => {
+      if (!user.isSuperAdmin && user.onboardingCompleted === false) {
+        router.push('/onboarding');
+        return;
+      }
+
+      const targetWsId =
+        user.activeWorkspaceId || `ws_${user.uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`;
+
+      const { snapshot: cloudSnap, telemetry } = await loadWorkspaceSnapshotFromStore(
+        targetWsId,
+        savedCfg,
+        { forceCloudPull: true },
+      );
+      setLocalTelemetry(telemetry);
+
+      if (cloudSnap) {
+        applySnapshotToState(cloudSnap);
+      } else if (!user.isSuperAdmin) {
+        const builtSnap = buildRealInitialWorkspaceSnapshot({
+          workspaceId: targetWsId,
+          businessName: user.businessName || user.displayName || 'Bisnis Anda',
+          city: user.city || 'Jakarta',
+          category: user.category || 'cafe_fnb',
+          targetAudience: user.targetAudience,
+          brandTone: user.brandTone,
+          selectedChannels: user.selectedChannels,
+          planId: user.subscriptionPlanId || 'free_trial',
+          ownerName: user.displayName,
+          ownerEmail: user.email,
+        });
+        applySnapshotToState(builtSnap);
+        void syncWorkspaceSnapshotToStore(builtSnap, savedCfg, { forceCloudPush: true });
+      }
+
+      if (user.isSuperAdmin) {
+        const realTenants = await loadAllRealTenantsFromFirestore(savedCfg);
+        if (realTenants.length > 0) {
+          setTenants(realTenants);
+        }
+      }
+    };
+
+    const pendingReg = consumePendingRegistrationBrand();
     const savedSession = getInitialAuthenticatedUser();
+
     if (savedSession) {
       setAuthUser(savedSession);
       setActiveRole(savedSession.isSuperAdmin ? 'admin' : 'user');
-      if (savedSession.subscriptionPlanId) {
-        setActivePlanId(savedSession.subscriptionPlanId);
-      }
-      if (savedSession.businessName) {
-        setBrand((prev) => ({
-          ...prev,
-          workspaceId: savedSession.activeWorkspaceId || prev.workspaceId,
-          businessName: savedSession.businessName || prev.businessName,
-          city: savedSession.city || prev.city,
-          category: savedSession.category || prev.category,
-        }));
-      }
       void syncUserProfileToFirestore(savedSession).then((hydrated) => {
         setAuthUser(hydrated);
+        void hydrateForAuthenticatedUser(hydrated);
       });
     }
-    const pendingReg = consumePendingRegistrationBrand();
+
     if (pendingReg) {
-      setActivePlanId(pendingReg.planId);
-      if (pendingReg.planId === 'free_trial') {
-        setPostsUsedThisMonth(2);
-      }
-      setBrand((prev) => ({
-        ...prev,
-        workspaceId: savedSession?.activeWorkspaceId || `ws_${Date.now().toString(36)}`,
-        businessName: pendingReg.businessName,
-        category: pendingReg.category,
-        city: pendingReg.city,
-        targetAudience: pendingReg.targetAudience || prev.targetAudience,
-        brandTone: pendingReg.brandTone || prev.brandTone,
-      }));
       setStatusBanner(
         `Selamat datang di Veloxa AI! Workspace "${pendingReg.businessName}" (${pendingReg.city}) telah tersimpan ke Cloud Firestore.`,
       );
     }
+
     const unsubAuth = subscribeToFirebaseAuthChanges((fbUser) => {
       if (fbUser) {
         setAuthUser(fbUser);
         setActiveRole(fbUser.isSuperAdmin ? 'admin' : 'user');
+        void hydrateForAuthenticatedUser(fbUser);
       }
     });
-    void loadWorkspaceSnapshotFromStore(BRAND_PRESETS.running_event.workspaceId, savedCfg).then(
-      ({ snapshot: snap, telemetry }) => {
-        setLocalTelemetry(telemetry);
-        if (!snap) return;
-        setBrand(snap.brand);
-        setActivePlanId(snap.activePlanId);
-        setPostsUsedThisMonth(snap.postsUsedThisMonth);
-        setConnections(snap.connections);
-        setMetaAccount(snap.metaAccount);
-        setVaultAssets(snap.vaultAssets);
-        setAutonomyConfig(snap.autonomyConfig);
-        setEventCampaigns(snap.eventCampaigns);
-        setDrafts(snap.drafts);
-        setMetaAdCampaigns(snap.metaAdCampaigns);
-        setTenants(snap.tenants);
-      },
-    );
+
     return () => unsubAuth();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
+    if (!authUser || hasHydratedCloudWorkspaceRef.current !== brand.workspaceId) {
+      return;
+    }
     void syncWorkspaceSnapshotToStore(
       {
         brand,
@@ -343,10 +377,12 @@ export default function VeloxaAiPlatformPage() {
         updatedAtIso: new Date().toISOString(),
       },
       firebaseCfg,
+      { forceCloudPush: true },
     ).then((res) => {
       setLocalTelemetry(res.telemetry);
     });
   }, [
+    authUser,
     brand,
     activePlanId,
     postsUsedThisMonth,
@@ -666,8 +702,14 @@ export default function VeloxaAiPlatformPage() {
     );
   };
 
-  const handleSignOutClick = async () => {
+  const handleRequestSignOutClick = () => {
+    logoutConfirmDialogRef.current?.showModal();
+  };
+
+  const handleConfirmSignOut = async () => {
+    logoutConfirmDialogRef.current?.close();
     await signOutVeloxaUser();
+    hasHydratedCloudWorkspaceRef.current = null;
     setAuthUser(null);
     setActiveRole('user');
     authDialogRef.current?.close();
@@ -1105,7 +1147,7 @@ export default function VeloxaAiPlatformPage() {
                 <button
                   type="button"
                   data-testid="logout-btn"
-                  onClick={() => void handleSignOutClick()}
+                  onClick={handleRequestSignOutClick}
                   className="rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
                 >
                   {i18nCopy.headerLogout}
@@ -1597,34 +1639,46 @@ export default function VeloxaAiPlatformPage() {
                   </div>
                 </div>
 
-                {/* Clean Executive Actions + Quick Industry Switcher */}
+                {/* Clean Executive Actions (Preset Switcher only shown for Super Admin inspection) */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <label htmlFor="workspace-preset-select" className="sr-only">
-                    Pilih Simulasi Brand
-                  </label>
-                  <select
-                    id="workspace-preset-select"
-                    value={selectedPresetKey}
-                    onChange={(e) =>
-                      handleSelectBrandPreset(
-                        e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
-                      )
-                    }
-                    className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs font-bold text-neutral-700 hover:border-pink-200 focus:outline-hidden"
-                  >
-                    <option value="running_event">🏃 Brand: Nusantara Run</option>
-                    <option value="cafe_fnb">☕ Brand: Kopi Senja</option>
-                    <option value="clinic_beauty">✨ Brand: GlowDerm</option>
-                    <option value="custom">🎨 Brand Kustom Saya</option>
-                  </select>
+                  {authUser?.isSuperAdmin ? (
+                    <>
+                      <label htmlFor="workspace-preset-select" className="sr-only">
+                        Pilih Inspeksi Brand
+                      </label>
+                      <select
+                        id="workspace-preset-select"
+                        value={selectedPresetKey}
+                        onChange={(e) =>
+                          handleSelectBrandPreset(
+                            e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
+                          )
+                        }
+                        className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs font-bold text-neutral-700 hover:border-pink-200 focus:outline-hidden"
+                      >
+                        <option value="running_event">🏃 Inspeksi: Nusantara Run</option>
+                        <option value="cafe_fnb">☕ Inspeksi: Kopi Senja</option>
+                        <option value="clinic_beauty">✨ Inspeksi: GlowDerm</option>
+                        <option value="custom">🎨 Brand Aktif</option>
+                      </select>
+                    </>
+                  ) : (
+                    <span
+                      data-testid="real-firestore-workspace-badge"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2.5 text-xs font-extrabold text-emerald-700"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>Data Asli Cloud Firestore</span>
+                    </span>
+                  )}
 
                   <Link
-                    href="/onboarding"
+                    href="/onboarding?edit=1"
                     data-testid="open-onboarding-modal-btn"
                     className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-white px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-pink-50 transition"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    <span>Onboarding / Atur Brand</span>
+                    <span>Edit Profil Brand</span>
                   </Link>
 
                   <button
@@ -3383,6 +3437,81 @@ export default function VeloxaAiPlatformPage() {
                 </span>
               </button>
             </div>
+          </div>
+        </div>
+      </dialog>
+
+      {/* ========================================================================
+         MODAL 5: LOGOUT CONFIRMATION DIALOG (modern-web-guidance: dialog)
+         Native <dialog> without redundant role="dialog"/aria-modal, autoFocus on safe Cancel action
+         ======================================================================== */}
+      <dialog
+        ref={logoutConfirmDialogRef}
+        data-testid="logout-confirm-dialog"
+        aria-labelledby="logout-confirm-title"
+        aria-describedby="logout-confirm-desc"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            logoutConfirmDialogRef.current?.close();
+          }
+        }}
+        className="m-auto w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-2xl"
+      >
+        <div className="space-y-4 p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-3 py-1 text-[11px] font-black text-[#D85A88]">
+                <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
+                KONFIRMASI KEAMANAN SESI
+              </span>
+              <h2 id="logout-confirm-title" className="mt-2 text-lg font-black text-neutral-900">
+                Konfirmasi Keluar Akun (Logout)
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => logoutConfirmDialogRef.current?.close()}
+              aria-label="Tutup dialog konfirmasi keluar"
+              className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
+            >
+              ✕
+            </button>
+          </div>
+
+          <p id="logout-confirm-desc" className="text-xs leading-relaxed text-neutral-600">
+            Apakah Anda yakin ingin keluar dari sesi akun{' '}
+            <strong className="text-neutral-900">{authUser?.email || 'Veloxa AI'}</strong>? Seluruh data profil brand{' '}
+            <strong className="text-[#EC749B]">{brand.businessName}</strong>, progres onboarding, serta aset studio Anda telah tersimpan aman di Cloud Firestore (<code>veloxa-ai-saas</code>).
+          </p>
+
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs text-emerald-800">
+            <div className="flex items-center gap-2 font-black">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>Status Onboarding & Data Cloud Tersinkron</span>
+            </div>
+            <p className="mt-1 text-[11px] text-emerald-700">
+              Saat Anda login kembali nanti, Anda akan langsung masuk ke Dashboard Workspace ini tanpa perlu mengisi ulang form Onboarding.
+            </p>
+          </div>
+
+          <div className="flex flex-col-reverse gap-2.5 pt-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              autoFocus
+              data-testid="cancel-logout-btn"
+              onClick={() => logoutConfirmDialogRef.current?.close()}
+              className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-xs font-black text-neutral-800 hover:border-pink-200 hover:text-[#D85A88] transition"
+            >
+              Batal, Tetap di Dashboard
+            </button>
+            <button
+              type="button"
+              data-testid="confirm-logout-submit-btn"
+              onClick={() => void handleConfirmSignOut()}
+              className="veloxa-luxury-card-pink rounded-2xl bg-[#EC749B] px-5 py-3 text-xs font-black text-white hover:bg-[#DF608A] transition"
+            >
+              Ya, Keluar Akun Sekarang
+            </button>
           </div>
         </div>
       </dialog>

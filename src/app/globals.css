@@ -36,9 +36,8 @@ body {
     0 6px 14px -4px rgba(15, 23, 42, 0.08),
     0 1px 4px 0 rgba(15, 23, 42, 0.05);
   transition:
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.28s ease,
-    border-color 0.28s ease;
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.22s ease;
 }
 
 .veloxa-luxury-card-pink {
@@ -47,24 +46,17 @@ body {
     0 8px 20px -4px rgba(15, 23, 42, 0.11),
     0 2px 5px 0 rgba(15, 23, 42, 0.05);
   transition:
-    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.28s ease,
-    border-color 0.28s ease;
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.22s ease;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .veloxa-luxury-card:hover {
-    transform: translate3d(0, -5px, 0);
-    box-shadow:
-      0 24px 48px -10px rgba(15, 23, 42, 0.18),
-      0 10px 22px -6px rgba(236, 116, 155, 0.15);
+    transform: translate3d(0, -3px, 0);
   }
 
   .veloxa-luxury-card-pink:hover {
-    transform: translate3d(0, -5px, 0);
-    box-shadow:
-      0 26px 52px -10px rgba(236, 116, 155, 0.32),
-      0 12px 24px -6px rgba(15, 23, 42, 0.14);
+    transform: translate3d(0, -3px, 0);
   }
 }
 
@@ -120,18 +112,16 @@ dialog::backdrop {
   backdrop-filter: blur(2px);
 }
 
-/* Defer rendering heavy below-the-fold sections & isolate dashboard reflows (modern-web-guidance: interactions-in-complex-layouts) */
-.veloxa-deferred-section,
-.veloxa-dashboard-panel {
+/* Defer rendering only far below-the-fold footer (modern-web-guidance: defer-rendering-heavy-content)
+   DO NOT apply content-visibility: auto to above-the-fold or actively scrolled mid-page sections */
+.veloxa-deferred-footer {
   content-visibility: auto;
-  contain-intrinsic-size: auto 300px auto 800px;
+  contain-intrinsic-size: auto none auto 480px;
 }
 
-@supports not (content-visibility: auto) {
-  .veloxa-deferred-section,
-  .veloxa-dashboard-panel {
-    contain: layout style paint;
-  }
+.veloxa-deferred-section,
+.veloxa-dashboard-panel {
+  transform: translateZ(0);
 }
 
 /* Precise text alignment for badges & icon buttons (modern-web-guidance: precise-text-alignment) */
@@ -290,19 +280,10 @@ dialog::backdrop {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .veloxa-motion-active .veloxa-float-slow {
-    animation: veloxa-float-y 5.5s ease-in-out infinite;
-    will-change: transform;
-  }
-
-  .veloxa-motion-active .veloxa-float-delayed {
-    animation: veloxa-float-y 6.2s ease-in-out 1.4s infinite;
-    will-change: transform;
-  }
-
+  .veloxa-motion-active .veloxa-float-slow,
+  .veloxa-motion-active .veloxa-float-delayed,
   .veloxa-motion-active .veloxa-ken-burns {
-    animation: veloxa-ken-burns-zoom 14s ease-in-out infinite;
-    will-change: transform;
+    transform: translate3d(0, 0, 0);
   }
 
   .veloxa-motion-active .veloxa-eq-bar {
@@ -314,7 +295,6 @@ dialog::backdrop {
     display: flex;
     width: max-content;
     animation: veloxa-marquee-scroll 34s linear infinite;
-    will-change: transform;
   }
 
   .veloxa-motion-active .veloxa-marquee-track:hover {
@@ -335,33 +315,19 @@ dialog::backdrop {
     animation: veloxa-pulse-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
 
-  @supports ((animation-timeline: view()) and (animation-range: entry)) {
-    @keyframes veloxa-scroll-entry {
-      from {
-        opacity: 0.25;
-        transform: translate3d(0, 24px, 0) scale(0.985);
-      }
-      to {
-        opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1);
-      }
-    }
-
-    .veloxa-motion-active .veloxa-scroll-reveal {
-      animation: veloxa-scroll-entry auto ease-out backwards;
-      animation-timeline: view(block);
-      animation-range: entry 5% cover 22%;
-    }
+  .veloxa-motion-active .veloxa-scroll-reveal {
+    opacity: 1;
+    transform: none;
   }
 }
 
 .veloxa-card-hover {
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.28s ease, border-color 0.28s ease;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease;
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .veloxa-card-hover:hover {
-    transform: translate3d(0, -4px, 0);
+    transform: translate3d(0, -3px, 0);
   }
 }
 
