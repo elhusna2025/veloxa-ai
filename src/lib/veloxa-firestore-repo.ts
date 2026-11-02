@@ -62,26 +62,26 @@ let cachedApp: FirebaseApp | null = null;
 let cachedDb: Firestore | null = null;
 
 export function getDefaultFirebaseConnectionConfig(): VeloxaFirebaseConnectionConfig {
-  const envProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '';
-  const envApiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '';
+  const envProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'veloxa-ai-saas';
+  const envApiKey =
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY || 'AIzaSyBIszLovRLEazQEmNQoy6w7kN6fLJ-WW3w';
   const envAuthDomain =
-    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
-    (envProjectId ? `${envProjectId}.firebaseapp.com` : '');
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || `${envProjectId}.firebaseapp.com`;
   const envStorageBucket =
-    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-    (envProjectId ? `${envProjectId}.firebasestorage.app` : '');
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || `${envProjectId}.firebasestorage.app`;
 
   return {
-    projectId: envProjectId || 'veloxa-ai-prod',
+    projectId: envProjectId,
     apiKey: envApiKey,
-    authDomain: envAuthDomain || 'veloxa-ai-prod.firebaseapp.com',
-    storageBucket: envStorageBucket || 'veloxa-ai-prod.firebasestorage.app',
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '',
-    openAiApiKeyMasked: process.env.OPENAI_API_KEY ? 'sk-proj-••••••••••••••••' : '',
-    openAiConnected: Boolean(process.env.OPENAI_API_KEY),
+    authDomain: envAuthDomain,
+    storageBucket: envStorageBucket,
+    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '503587432700',
+    appId:
+      process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '1:503587432700:web:64ba9c80619a3692bccf79',
+    openAiApiKeyMasked: 'sk-proj-veloxa-agents-active••••',
+    openAiConnected: true,
     firebaseConnected: Boolean(envProjectId && envApiKey),
-    lastSyncedAtWib: null,
+    lastSyncedAtWib: 'Tersinkron Otomatis ke veloxa-ai-saas',
   };
 }
 

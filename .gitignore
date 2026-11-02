@@ -1,8 +1,20 @@
-node_modules
+# Dependencies
+/node_modules
 /functions/node_modules
-/functions/lib
-/.next
-/out
+
+# Next.js build output
+/.next/
+/out/
+
+# Environment variables
+.env*.local
+
+# Logs & OS files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+firestore-debug.log*
 .DS_Store
-*.log
-.env.local
+*.tsbuildinfo
+next-env.d.ts

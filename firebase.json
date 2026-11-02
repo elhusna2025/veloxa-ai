@@ -1,8 +1,16 @@
 {
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json",
+    "location": "asia-southeast2"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "functions": [
     {
       "source": "functions",
-      "codebase": "default",
+      "codebase": "veloxa-functions",
       "ignore": [
         "node_modules",
         ".git",
@@ -10,11 +18,5 @@
         "firebase-debug.*.log"
       ]
     }
-  ],
-  "firestore": {
-    "rules": "firestore.rules"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  }
+  ]
 }

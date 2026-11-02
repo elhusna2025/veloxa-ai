@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "503587432700",
+    "project_id": "veloxa-ai-saas",
+    "storage_bucket": "veloxa-ai-saas.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:503587432700:android:62d39c82ef982409bccf79",
+        "android_client_info": {
+          "package_name": "com.veloxa.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDw5jWrDPR11wY6kwuuqgm7vZgrEQswymk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
