@@ -6,6 +6,7 @@
  * body copy, and CTA, plus downloadable SVG/PNG export and Indonesian TTS preview.
  */
 
+import { BRAND_PRESETS } from './veloxa-engine';
 import type { BrandProfile, ContentDraft } from './veloxa-types';
 
 function escapeXml(str: string): string {
@@ -43,7 +44,14 @@ export function buildRenderedVisualSvg(params: {
   draft: ContentDraft;
   slideIndex?: number;
 }): string {
-  const { brand, draft, slideIndex = 0 } = params;
+  const { draft, slideIndex = 0 } = params;
+  const matchedPreset = Object.values(BRAND_PRESETS).find(
+    (p) => p.workspaceId === draft.workspaceId,
+  );
+  const brand =
+    params.brand.workspaceId === draft.workspaceId
+      ? params.brand
+      : matchedPreset || params.brand;
   const isVertical916 = draft.format === 'short_video';
   const width = 1080;
   const height = isVertical916 ? 1920 : 1350;
