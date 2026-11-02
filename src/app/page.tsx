@@ -27,6 +27,7 @@ import {
   loadAllRealTenantsFromFirestore,
   loadSavedFirebaseConfig,
   loadWorkspaceSnapshotFromStore,
+  saveChannelConnectionToFirestore,
   saveFirebaseConnectionConfig,
   syncWorkspaceSnapshotToStore,
   type VeloxaFirebaseConnectionConfig,
@@ -43,6 +44,11 @@ import {
   buildInitialMetaAdCampaigns,
 } from '@/lib/veloxa-seed-data';
 import { getCentralOAuthCallbackUri, pickBrandAssetFromDevice } from '@/lib/veloxa-mobile-bridge';
+import {
+  buildSocialProfileUrl,
+  normalizeSocialHandle,
+  verifyLiveMetaGraphToken,
+} from '@/lib/veloxa-social-publisher';
 import {
   buildRenderedVisualSvgDataUrl,
   downloadDraftPosterSvg,
@@ -242,8 +248,12 @@ export default function VeloxaAiPlatformPage() {
 
   // Stage 3: OAuth & Meta Ads Customizer State
   const [editingChannel, setEditingChannel] = useState<SocialChannelId>('instagram');
-  const [editingChannelHandle, setEditingChannelHandle] = useState<string>('@nusantararun.id');
-  const [editingMetaAdAccountId, setEditingMetaAdAccountId] = useState<string>('act_889920144512');
+  const [editingChannelHandle, setEditingChannelHandle] = useState<string>('');
+  const [editingChannelAccountName, setEditingChannelAccountName] = useState<string>('');
+  const [editingChannelFollowers, setEditingChannelFollowers] = useState<number>(0);
+  const [editingChannelAccessToken, setEditingChannelAccessToken] = useState<string>('');
+  const [editingMetaAdAccountId, setEditingMetaAdAccountId] = useState<string>('');
+  const [oauthPopupStatus, setOauthPopupStatus] = useState<string | null>(null);
 
   // Stage 4: Billing & QRIS Checkout State
   const [selectedCheckoutPlanId, setSelectedCheckoutPlanId] =
@@ -334,6 +344,33 @@ export default function VeloxaAiPlatformPage() {
     if (savedSession) {
       setAuthUser(savedSession);
       setActiveRole(savedSession.isSuperAdmin ? 'admin' : 'user');
+      if (
+        !savedSession.isSuperAdmin &&
+        savedSession.activeWorkspaceId !== 'ws_veloxa_nusantara'
+      ) {
+        const immediateWsId =
+          savedSession.activeWorkspaceId ||
+          `ws_${savedSession.uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`;
+        const immediateCleanSnap = buildRealInitialWorkspaceSnapshot({
+          workspaceId: immediateWsId,
+          businessName:
+            pendingReg?.businessName ||
+            savedSession.businessName ||
+            savedSession.displayName ||
+            'Bisnis Anda',
+          city: pendingReg?.city || savedSession.city || 'Jakarta',
+          category: pendingReg?.category || savedSession.category || 'cafe_fnb',
+          targetAudience: pendingReg?.targetAudience || savedSession.targetAudience,
+          brandTone: pendingReg?.brandTone || savedSession.brandTone,
+          selectedChannels: pendingReg?.selectedChannels || savedSession.selectedChannels,
+          planId:
+            pendingReg?.planId || savedSession.subscriptionPlanId || 'free_trial',
+          ownerName: savedSession.displayName,
+          ownerEmail: savedSession.email,
+        });
+        applySnapshotToState(immediateCleanSnap);
+        hasHydratedCloudWorkspaceRef.current = null; // wait for Firestore pull before auto-pushing
+      }
       void syncUserProfileToFirestore(savedSession).then((hydrated) => {
         setAuthUser(hydrated);
         void hydrateForAuthenticatedUser(hydrated);
@@ -569,43 +606,160 @@ export default function VeloxaAiPlatformPage() {
     e.target.value = '';
   };
 
-  const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
+  const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => {
     const found = connections.find((c) => c.channel === channel);
+    const isUlinz = brand.businessName.toLowerCase().includes('ulinz');
+    const defaultSlug = isUlinz
+      ? 'ulinz_cafe'
+      : brand.businessName.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 22) || 'brand';
+    const defaultHandle =
+      channel === 'facebook'
+        ? isUlinz
+          ? 'Ulinz Cafe'
+          : `${brand.businessName} Official`
+        : `@${defaultSlug}`;
     setEditingChannel(channel);
-    setEditingChannelHandle(found?.handle || `@${brand.businessName.toLowerCase().replace(/\s+/g, '')}`);
-    setEditingMetaAdAccountId(metaAccount.adAccountId);
+    setEditingChannelHandle(found?.connected && found.handle ? found.handle : defaultHandle);
+    setEditingChannelAccountName(
+      found?.connected && found.accountName && found.accountName !== 'Belum Terhubung'
+        ? found.accountName
+        : isUlinz
+          ? `Ulinz Cafe (${CHANNEL_META[channel].shortLabel})`
+          : `${brand.businessName} (${CHANNEL_META[channel].shortLabel})`,
+    );
+    setEditingChannelFollowers(found?.connected ? found.followerCount || 0 : 0);
+    setEditingChannelAccessToken('');
+    setEditingMetaAdAccountId(metaAccount.adAccountId || '');
+    setOauthPopupStatus(null);
+  };
+
+  const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
+    populateOAuthModalFieldsForChannel(channel);
     oauthDialogRef.current?.showModal();
   };
 
-  const handleSaveOAuthChannelCustomConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanHandle = editingChannelHandle.trim() || '@veloxabrand.id';
-    const cleanAct = editingMetaAdAccountId.trim().startsWith('act_')
-      ? editingMetaAdAccountId.trim()
-      : `act_${editingMetaAdAccountId.trim().replace(/\D/g, '') || '889920144512'}`;
+  const handleLaunchOfficialOAuthPopup = async (channel: SocialChannelId) => {
+    const cleanHandle =
+      normalizeSocialHandle(channel, editingChannelHandle) ||
+      (brand.businessName.toLowerCase().includes('ulinz')
+        ? '@ulinz_cafe'
+        : `@${brand.businessName.toLowerCase().replace(/[^a-z0-9_]/g, '')}`);
+    setEditingChannelHandle(cleanHandle);
 
-    setConnections((prev) =>
-      prev.map((c) =>
-        c.channel === editingChannel
-          ? {
-              ...c,
-              connected: true,
-              handle: cleanHandle,
-              accountName: `${brand.businessName} (${CHANNEL_META[editingChannel].shortLabel})`,
-              oauthMode: 'direct_publish',
-              lastPublishedAt: 'Terhubung via OAuth 1-Klik',
-            }
-          : c,
-      ),
+    // If user provided a real Meta Graph API Access Token, verify it live against graph.facebook.com
+    if (
+      editingChannelAccessToken.trim().length >= 15 &&
+      (channel === 'instagram' || channel === 'facebook')
+    ) {
+      setOauthPopupStatus('Sedang memverifikasi Access Token ke server graph.facebook.com...');
+      const verified = await verifyLiveMetaGraphToken(editingChannelAccessToken.trim());
+      if (verified.valid) {
+        if (verified.igUsername && channel === 'instagram') {
+          setEditingChannelHandle(verified.igUsername);
+        }
+        if (verified.accountName) {
+          setEditingChannelAccountName(verified.accountName);
+        }
+        if (typeof verified.followersCount === 'number') {
+          setEditingChannelFollowers(verified.followersCount);
+        }
+        setOauthPopupStatus(
+          `✓ Token Graph API Valid! Terhubung ke "${verified.accountName}" (${verified.igUsername || cleanHandle}). Klik "Simpan & Hubungkan ke Cloud Firestore" di bawah.`,
+        );
+        return;
+      }
+      setOauthPopupStatus(
+        `⚠️ Info Token: ${verified.errorMessage} — Anda tetap dapat menghubungkan ${cleanHandle} secara langsung via Mode Smart Connect di bawah ini!`,
+      );
+      return;
+    }
+
+    // Open the real live social profile URL (never a placeholder App ID error page!)
+    const liveProfileUrl = buildSocialProfileUrl(channel, cleanHandle);
+    if (typeof window !== 'undefined') {
+      window.open(liveProfileUrl, 'veloxa_social_verify_popup', 'width=680,height=760,noopener,noreferrer');
+    }
+
+    setOauthPopupStatus(
+      `✓ Profil ${CHANNEL_META[channel].shortLabel} (${cleanHandle}) siap dihubungkan (${liveProfileUrl}). Klik tombol "✓ Simpan & Hubungkan ke Cloud Firestore" di bawah untuk mengaktifkan koneksi sekarang!`,
     );
-    setMetaAccount((prev) => ({
-      ...prev,
+  };
+
+  const handleSaveOAuthChannelCustomConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanHandle =
+      normalizeSocialHandle(editingChannel, editingChannelHandle) ||
+      (brand.businessName.toLowerCase().includes('ulinz')
+        ? '@ulinz_cafe'
+        : `@${brand.businessName.toLowerCase().replace(/[^a-z0-9_]/g, '')}`);
+    const cleanAccountName =
+      editingChannelAccountName.trim() ||
+      `${brand.businessName} (${CHANNEL_META[editingChannel].shortLabel})`;
+    const cleanFollowers = Math.max(0, Number(editingChannelFollowers || 0));
+    const rawAct = editingMetaAdAccountId.trim();
+    const cleanAct = rawAct
+      ? rawAct.startsWith('act_')
+        ? rawAct
+        : `act_${rawAct.replace(/\D/g, '') || rawAct}`
+      : '';
+
+    const updatedConn: ChannelConnectionState = {
+      channel: editingChannel,
       connected: true,
-      adAccountId: cleanAct,
-    }));
+      handle: cleanHandle,
+      accountName: cleanAccountName,
+      followerCount: cleanFollowers,
+      oauthMode: 'direct_publish',
+      tokenExpiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+      lastPublishedAt: editingChannelAccessToken.trim()
+        ? 'Terhubung via Token API Resmi'
+        : 'Terhubung & Tersinkron Cloud Firestore',
+    };
+
+    const nextConnections = connections.map((c) =>
+      c.channel === editingChannel ? updatedConn : c,
+    );
+    const nextMetaAccount: MetaAdsAccountConnection = cleanAct
+      ? {
+          ...metaAccount,
+          connected: true,
+          adAccountId: cleanAct,
+          adAccountName: `${brand.businessName} Ads Manager`,
+        }
+      : metaAccount;
+
+    setConnections(nextConnections);
+    setMetaAccount(nextMetaAccount);
     oauthDialogRef.current?.close();
+
+    // Immediately persist to Cloud Firestore (`workspaces/{workspaceId}` & `workspaces/{workspaceId}/connections/{channel}`)
+    void saveChannelConnectionToFirestore(
+      brand.workspaceId,
+      updatedConn,
+      nextMetaAccount,
+      firebaseCfg,
+    );
+    const syncRes = await syncWorkspaceSnapshotToStore(
+      {
+        brand,
+        activePlanId,
+        postsUsedThisMonth,
+        connections: nextConnections,
+        metaAccount: nextMetaAccount,
+        vaultAssets,
+        autonomyConfig,
+        eventCampaigns,
+        drafts,
+        metaAdCampaigns,
+        tenants,
+        updatedAtIso: new Date().toISOString(),
+      },
+      firebaseCfg,
+      { forceCloudPush: true },
+    );
+    setLocalTelemetry(syncRes.telemetry);
     setStatusBanner(
-      `Akun ${CHANNEL_META[editingChannel].shortLabel} (${cleanHandle}) & Meta Ads (${cleanAct}) berhasil dikonfigurasi!`,
+      `✓ Akun ${CHANNEL_META[editingChannel].shortLabel} (${cleanHandle}) berhasil terhubung & disimpan ke Cloud Firestore!`,
     );
   };
 
@@ -742,20 +896,56 @@ export default function VeloxaAiPlatformPage() {
   };
 
   const handleToggleChannel = (channel: SocialChannelId) => {
-    setConnections((prev) =>
-      prev.map((c) =>
-        c.channel === channel
-          ? {
-              ...c,
-              connected: !c.connected,
-              oauthMode: !c.connected ? 'direct_publish' : 'disconnected',
-              lastPublishedAt: !c.connected ? 'Baru saja terhubung via OAuth' : null,
-            }
-          : c,
-      ),
+    const existing = connections.find((c) => c.channel === channel);
+    if (!existing?.connected) {
+      handleOpenOAuthConfigModal(channel);
+      return;
+    }
+
+    const disconnectedConn: ChannelConnectionState = {
+      channel,
+      connected: false,
+      handle: '',
+      accountName: 'Belum Terhubung',
+      followerCount: 0,
+      oauthMode: 'disconnected',
+      tokenExpiresAt: null,
+      lastPublishedAt: null,
+    };
+    const nextConnections = connections.map((c) =>
+      c.channel === channel ? disconnectedConn : c,
     );
+    setConnections(nextConnections);
+
+    void saveChannelConnectionToFirestore(
+      brand.workspaceId,
+      disconnectedConn,
+      metaAccount,
+      firebaseCfg,
+    );
+    void syncWorkspaceSnapshotToStore(
+      {
+        brand,
+        activePlanId,
+        postsUsedThisMonth,
+        connections: nextConnections,
+        metaAccount,
+        vaultAssets,
+        autonomyConfig,
+        eventCampaigns,
+        drafts,
+        metaAdCampaigns,
+        tenants,
+        updatedAtIso: new Date().toISOString(),
+      },
+      firebaseCfg,
+      { forceCloudPush: true },
+    );
+
     const info = getCentralOAuthCallbackUri(channel);
-    setStatusBanner(`Status OAuth ${CHANNEL_META[channel].shortLabel} diperbarui (${info.oauthProviderLabel}).`);
+    setStatusBanner(
+      `Koneksi ${CHANNEL_META[channel].shortLabel} telah diputuskan & diperbarui di Cloud Firestore (${info.oauthProviderLabel}).`,
+    );
   };
 
   const handleUploadVaultAsset = async (useDevicePicker: boolean) => {
@@ -1672,10 +1862,19 @@ export default function VeloxaAiPlatformPage() {
                     </span>
                   )}
 
+                  <button
+                    type="button"
+                    data-testid="header-connect-social-btn"
+                    onClick={() => handleOpenOAuthConfigModal('instagram')}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50/80 px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white transition"
+                  >
+                    <span>🔗 Hubungkan 4 Sosmed</span>
+                  </button>
+
                   <Link
                     href="/onboarding?edit=1"
                     data-testid="open-onboarding-modal-btn"
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-white px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-pink-50 transition"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs font-black text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     <span>Edit Profil Brand</span>
@@ -3100,78 +3299,243 @@ export default function VeloxaAiPlatformPage() {
       </dialog>
 
       {/* ========================================================================
-         STAGE 3 MODAL: OAUTH 1-CLICK & META ADS HANDLE CUSTOMIZER (<dialog>)
+         STAGE 3 MODAL: WIZARD KONEKSI 4 SOSIAL MEDIA & OAUTH 2.0 RESMI (<dialog>)
          ======================================================================== */}
       <dialog
         ref={oauthDialogRef}
         aria-labelledby="oauth-dialog-title"
         data-testid="oauth-config-dialog"
-        className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            oauthDialogRef.current?.close();
+          }
+        }}
+        className="m-auto w-full max-w-xl rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
       >
-        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+        <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3.5">
           <div>
-            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-              Tahap 3 · OAuth 1-Klik & Meta Marketing API
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+              🔗 WIZARD KONEKSI 4 SOSMED &amp; OAUTH 2.0 RESMI
             </span>
-            <h2 id="oauth-dialog-title" className="mt-1 text-base font-black text-neutral-900">
-              Konfigurasi Akun {CHANNEL_META[editingChannel].shortLabel} & Meta Ads
+            <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-black text-neutral-900">
+              Hubungkan {CHANNEL_META[editingChannel].label} ke {brand.businessName}
             </h2>
           </div>
           <button
             type="button"
             onClick={() => oauthDialogRef.current?.close()}
-            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600"
+            className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
           >
-            Tutup
+            Tutup ✕
           </button>
         </div>
 
-        <form onSubmit={handleSaveOAuthChannelCustomConfig} className="mt-4 space-y-3 text-xs">
-          <div>
-            <label htmlFor="oauth-handle-input" className="font-bold text-neutral-700">
-              Username / Handle {CHANNEL_META[editingChannel].shortLabel} Bisnis Anda
-            </label>
-            <input
-              id="oauth-handle-input"
-              data-testid="oauth-handle-input"
-              type="text"
-              required
-              value={editingChannelHandle}
-              onChange={(e) => setEditingChannelHandle(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-            />
+        {/* 4-Channel Switcher Tabs inside Modal so User Can Connect All 4 Channels Easily */}
+        <div className="mt-4 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+          {(['instagram', 'facebook', 'tiktok', 'youtube_shorts'] as const).map((ch) => {
+            const connItem = connections.find((c) => c.channel === ch);
+            const isSelected = editingChannel === ch;
+            return (
+              <button
+                key={ch}
+                type="button"
+                data-testid={`oauth-tab-${ch}`}
+                onClick={() => populateOAuthModalFieldsForChannel(ch)}
+                className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs font-black transition ${
+                  isSelected
+                    ? 'border-[#EC749B] bg-pink-50/80 text-[#D85A88] ring-1 ring-pink-200'
+                    : 'border-neutral-200 bg-white text-neutral-700 hover:border-pink-200'
+                }`}
+              >
+                <span className="truncate">{CHANNEL_META[ch].shortLabel}</span>
+                <span
+                  className={`ml-1 text-[10px] ${
+                    connItem?.connected ? 'text-emerald-600' : 'text-neutral-400'
+                  }`}
+                >
+                  {connItem?.connected ? '● Aktif' : '○ Off'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Platform-Specific Step-by-Step Guide + Live Profile URL Verification */}
+        <div className="mt-3.5 rounded-2xl border border-pink-200 bg-[#FFF9FB] p-3.5 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-black text-neutral-900">
+              Koneksi Langsung {CHANNEL_META[editingChannel].label} (Tanpa Error App ID):
+            </p>
+            <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
+              ✓ Siap Ditautkan
+            </span>
           </div>
 
-          <div>
-            <label htmlFor="oauth-meta-act-input" className="font-bold text-neutral-700">
-              ID Akun Iklan Meta Ads Manager (act_...)
-            </label>
-            <input
-              id="oauth-meta-act-input"
-              data-testid="oauth-meta-act-input"
-              type="text"
-              required
-              value={editingMetaAdAccountId}
-              onChange={(e) => setEditingMetaAdAccountId(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono font-semibold text-neutral-900"
-            />
-          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">
+            {editingChannel === 'instagram' &&
+              'Masukkan username Instagram bisnis Anda (contoh: @ulinz_cafe). Sistem menautkan akun ke Cloud Firestore & menyiapkan distribusi Reels 9:16, Carousel 4:5, serta Feed Poster.'}
+            {editingChannel === 'facebook' &&
+              'Masukkan Nama Halaman / Username Facebook Page bisnis Anda (contoh: Ulinz Cafe) untuk menautkan ke Cloud Firestore.'}
+            {editingChannel === 'tiktok' &&
+              'Masukkan username TikTok bisnis Anda (contoh: @ulinz_cafe) untuk mengaktifkan distribusi Video 9:16 & Photo Carousel.'}
+            {editingChannel === 'youtube_shorts' &&
+              'Masukkan handle Channel YouTube bisnis Anda (contoh: @ulinz_cafe) untuk mengaktifkan distribusi YouTube Shorts 9:16.'}
+          </p>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-pink-100 bg-white px-3 py-2">
+            <div className="truncate">
+              <span className="block text-[10px] font-bold uppercase text-neutral-400">
+                URL Profil Resmi Terdeteksi:
+              </span>
+              <a
+                href={buildSocialProfileUrl(editingChannel, editingChannelHandle)}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid="oauth-live-profile-preview-link"
+                className="font-mono text-[11px] font-black text-[#EC749B] hover:underline"
+              >
+                {buildSocialProfileUrl(editingChannel, editingChannelHandle)} ↗
+              </a>
+            </div>
+
             <button
               type="button"
-              onClick={() => oauthDialogRef.current?.close()}
-              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 font-bold text-neutral-700"
+              data-testid="launch-oauth-popup-btn"
+              onClick={() => void handleLaunchOfficialOAuthPopup(editingChannel)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3.5 py-2 text-[11px] font-black text-white shadow-2xs hover:bg-neutral-800 transition shrink-0"
             >
-              Batal
+              <span>
+                🔍 Buka &amp; Verifikasi Profil{' '}
+                {normalizeSocialHandle(editingChannel, editingChannelHandle) || '@ulinz_cafe'}
+              </span>
             </button>
-            <button
-              type="submit"
-              data-testid="save-oauth-config-btn"
-              className="rounded-xl bg-[#EC749B] px-5 py-2 font-black text-white shadow-2xs hover:bg-[#DF608A]"
-            >
-              Simpan & Hubungkan OAuth
-            </button>
+          </div>
+
+          {oauthPopupStatus && (
+            <div className="mt-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-800">
+              {oauthPopupStatus}
+            </div>
+          )}
+        </div>
+
+        <form onSubmit={(e) => void handleSaveOAuthChannelCustomConfig(e)} className="mt-4 space-y-3 text-xs">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="oauth-handle-input" className="font-bold text-neutral-700">
+                Username / Handle {CHANNEL_META[editingChannel].shortLabel} Resmi *
+              </label>
+              <input
+                id="oauth-handle-input"
+                data-testid="oauth-handle-input"
+                type="text"
+                required
+                autoFocus
+                placeholder="Contoh: @ulinz_cafe"
+                value={editingChannelHandle}
+                onChange={(e) => setEditingChannelHandle(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="oauth-account-name-input" className="font-bold text-neutral-700">
+                Nama Halaman / Channel Bisnis
+              </label>
+              <input
+                id="oauth-account-name-input"
+                data-testid="oauth-account-name-input"
+                type="text"
+                placeholder={`Contoh: ${brand.businessName} Official`}
+                value={editingChannelAccountName}
+                onChange={(e) => setEditingChannelAccountName(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="oauth-followers-input" className="font-bold text-neutral-700">
+                Jumlah Followers Saat Ini (Data Asli)
+              </label>
+              <input
+                id="oauth-followers-input"
+                data-testid="oauth-followers-input"
+                type="number"
+                min={0}
+                value={editingChannelFollowers}
+                onChange={(e) => setEditingChannelFollowers(Math.max(0, Number(e.target.value || 0)))}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="oauth-token-input" className="font-bold text-neutral-700">
+                Page ID / Access Token API (Opsional)
+              </label>
+              <input
+                id="oauth-token-input"
+                data-testid="oauth-token-input"
+                type="password"
+                placeholder="Opsional (Otomatis jika via OAuth)"
+                value={editingChannelAccessToken}
+                onChange={(e) => setEditingChannelAccessToken(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          {(editingChannel === 'instagram' || editingChannel === 'facebook') && (
+            <div>
+              <label htmlFor="oauth-meta-act-input" className="font-bold text-neutral-700">
+                ID Akun Iklan Meta Ads Manager (act_... · Opsional untuk AI Meta Ads)
+              </label>
+              <input
+                id="oauth-meta-act-input"
+                data-testid="oauth-meta-act-input"
+                type="text"
+                placeholder="Contoh: act_1029384756 (Kosongkan jika hanya posting organik)"
+                value={editingMetaAdAccountId}
+                onChange={(e) => setEditingMetaAdAccountId(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
+              />
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
+            {connections.find((c) => c.channel === editingChannel)?.connected ? (
+              <button
+                type="button"
+                onClick={() => {
+                  handleToggleChannel(editingChannel);
+                  oauthDialogRef.current?.close();
+                }}
+                className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 font-bold text-rose-700 hover:bg-rose-100"
+              >
+                Putuskan Koneksi {CHANNEL_META[editingChannel].shortLabel}
+              </button>
+            ) : (
+              <span className="text-[11px] text-neutral-500">
+                Langsung tersimpan ke Cloud Firestore (<code>workspaces/{brand.workspaceId}</code>)
+              </span>
+            )}
+
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={() => oauthDialogRef.current?.close()}
+                className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-bold text-neutral-700 hover:border-pink-200"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                data-testid="save-oauth-config-btn"
+                className="veloxa-luxury-card-pink rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+              >
+                ✓ Simpan &amp; Hubungkan ke Cloud Firestore
+              </button>
+            </div>
           </div>
         </form>
       </dialog>

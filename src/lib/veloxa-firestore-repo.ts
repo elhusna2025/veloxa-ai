@@ -22,10 +22,7 @@ import {
 } from 'firebase/firestore';
 import {
   SUBSCRIPTION_PLANS,
-  buildMetaAdCampaignPlan,
   calculateTenantUnitEconomics,
-  extractStyleDnaFromReference,
-  generateBrandContentDraft,
 } from './veloxa-engine';
 import {
   LOCAL_CACHE_TTL_MS,
@@ -189,8 +186,8 @@ export function getFirestoreInstance(cfg?: VeloxaFirebaseConnectionConfig): Fire
 }
 
 /**
- * Builds a 100% real, non-fake PersistedWorkspaceSnapshot tailored to the authenticated
- * user's onboarded brand in Cloud Firestore.
+ * Builds a 100% real, honest zero-state PersistedWorkspaceSnapshot tailored to the authenticated
+ * user's onboarded brand in Cloud Firestore (0 dummy posts, 0 dummy assets, 0 fake connected handles).
  */
 export function buildRealInitialWorkspaceSnapshot(params: {
   workspaceId: string;
@@ -212,7 +209,6 @@ export function buildRealInitialWorkspaceSnapshot(params: {
       .replace(/[^a-z0-9]/g, '')
       .slice(0, 20) || 'veloxabrand';
   const nowIso = new Date().toISOString();
-  const todayStr = nowIso.slice(0, 10);
 
   const selectedChannels: SocialChannelId[] =
     params.selectedChannels && params.selectedChannels.length > 0
@@ -234,113 +230,69 @@ export function buildRealInitialWorkspaceSnapshot(params: {
     accentColorHex: '#171717',
     visualVibe: `Clean modern high-contrast khas ${cleanName} (${cleanCity})`,
     defaultCta: `Hubungi & pesan langsung di ${cleanName} (${cleanCity}) sekarang!`,
-    whatsappNumber: '62811000000',
-    websiteUrl: `https://${cleanSlug}.id`,
+    whatsappNumber: '',
+    websiteUrl: '',
     forbiddenWords: ['murahan', 'abal-abal', 'palsu', 'janji palsu'],
     prioritizeRealAssets: true,
-    offerings: [
-      {
-        id: `off_${params.workspaceId}_1`,
-        title: `Layanan & Produk Unggulan ${cleanName}`,
-        category: params.category === 'running_event' ? 'event' : 'product',
-        priceLabel: 'Penawaran Spesial',
-        highlight: `Kualitas terbaik ${cleanName} di ${cleanCity}`,
-      },
-    ],
+    offerings: [],
   };
 
+  // All 4 channels start disconnected until the user connects their real OAuth / business account
   const connections: ChannelConnectionState[] = [
     {
       channel: 'instagram',
-      connected: selectedChannels.includes('instagram'),
-      handle: `@${cleanSlug}.id`,
-      accountName: `${cleanName} Instagram`,
-      followerCount: selectedChannels.includes('instagram') ? 1 : 0,
-      oauthMode: 'direct_publish',
-      tokenExpiresAt: '2027-06-01T00:00:00Z',
-      lastPublishedAt: selectedChannels.includes('instagram') ? 'Tersinkron Cloud' : null,
+      connected: false,
+      handle: '',
+      accountName: 'Belum Terhubung',
+      followerCount: 0,
+      oauthMode: 'disconnected',
+      tokenExpiresAt: null,
+      lastPublishedAt: null,
     },
     {
       channel: 'facebook',
-      connected: selectedChannels.includes('facebook'),
-      handle: `${cleanName} Official`,
-      accountName: `${cleanName} Facebook Page`,
-      followerCount: selectedChannels.includes('facebook') ? 1 : 0,
-      oauthMode: 'direct_publish',
-      tokenExpiresAt: '2027-06-01T00:00:00Z',
-      lastPublishedAt: selectedChannels.includes('facebook') ? 'Tersinkron Cloud' : null,
+      connected: false,
+      handle: '',
+      accountName: 'Belum Terhubung',
+      followerCount: 0,
+      oauthMode: 'disconnected',
+      tokenExpiresAt: null,
+      lastPublishedAt: null,
     },
     {
       channel: 'tiktok',
-      connected: selectedChannels.includes('tiktok'),
-      handle: `@${cleanSlug}`,
-      accountName: `${cleanName} TikTok`,
-      followerCount: selectedChannels.includes('tiktok') ? 1 : 0,
-      oauthMode: 'direct_publish',
-      tokenExpiresAt: '2027-06-01T00:00:00Z',
-      lastPublishedAt: selectedChannels.includes('tiktok') ? 'Tersinkron Cloud' : null,
+      connected: false,
+      handle: '',
+      accountName: 'Belum Terhubung',
+      followerCount: 0,
+      oauthMode: 'disconnected',
+      tokenExpiresAt: null,
+      lastPublishedAt: null,
     },
     {
       channel: 'youtube_shorts',
-      connected: selectedChannels.includes('youtube_shorts'),
-      handle: `@${cleanSlug}TV`,
-      accountName: `${cleanName} Shorts`,
-      followerCount: selectedChannels.includes('youtube_shorts') ? 1 : 0,
-      oauthMode: 'direct_publish',
-      tokenExpiresAt: '2027-06-01T00:00:00Z',
-      lastPublishedAt: selectedChannels.includes('youtube_shorts') ? 'Tersinkron Cloud' : null,
+      connected: false,
+      handle: '',
+      accountName: 'Belum Terhubung',
+      followerCount: 0,
+      oauthMode: 'disconnected',
+      tokenExpiresAt: null,
+      lastPublishedAt: null,
     },
   ];
 
   const metaAccount: MetaAdsAccountConnection = {
-    connected: true,
-    adAccountId: `act_${params.workspaceId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`,
-    adAccountName: `${cleanName} Ads Manager`,
+    connected: false,
+    adAccountId: '',
+    adAccountName: 'Belum Terhubung',
     businessPortfolioName: `${cleanName} (${cleanCity})`,
     currency: 'IDR',
-    paymentMethodLabel: 'Metode Pembayaran Bisnis Aktif',
+    paymentMethodLabel: 'Belum Terhubung',
     dailyHardCapIdr: 150_000,
     monthlyHardCapIdr: 3_000_000,
     autoOptimizeEnabled: true,
     autoBoostOrganicWinners: true,
   };
-
-  const vaultAssets: BrandVaultAsset[] = [
-    {
-      id: `ref_${params.workspaceId}_1`,
-      workspaceId: params.workspaceId,
-      drawer: 'style_reference',
-      mediaType: 'video_reel',
-      title: `Referensi Gaya Visual ${cleanName}`,
-      description: `Acuan warna, tipografi, dan ritme visual untuk ${cleanName} di ${cleanCity}`,
-      previewUrl: '/demo/reel-style-ref.jpg',
-      aspectRatio: '9:16',
-      tags: ['style-dna', cleanSlug, cleanCity.toLowerCase()],
-      uploadedFrom: 'web',
-      createdAt: todayStr,
-      usedInPostsCount: 1,
-      extractedStyleDna: extractStyleDnaFromReference({
-        title: `Referensi Gaya Visual ${cleanName}`,
-        description: `Acuan warna dan tipografi ${cleanName}`,
-        mediaType: 'video_reel',
-        category: brand.category,
-      }),
-    },
-    {
-      id: `real_${params.workspaceId}_1`,
-      workspaceId: params.workspaceId,
-      drawer: 'real_asset',
-      mediaType: 'photo',
-      title: `Aset Visual Utama ${cleanName} (${cleanCity})`,
-      description: `Dokumentasi resmi produk dan aktivitas ${cleanName}`,
-      previewUrl: '/demo/real-brand-asset.jpg',
-      aspectRatio: '4:5',
-      tags: ['aset-asli', cleanSlug],
-      uploadedFrom: 'web',
-      createdAt: todayStr,
-      usedInPostsCount: 1,
-    },
-  ];
 
   const planSpec = SUBSCRIPTION_PLANS[params.planId] || SUBSCRIPTION_PLANS.free_trial;
   const clampedPostsPerDay = Math.min(4, Math.max(1, Math.min(2, planSpec.maxPostsPerDay))) as
@@ -350,8 +302,8 @@ export function buildRealInitialWorkspaceSnapshot(params: {
     | 4;
   const autonomyConfig: AutonomyConfig = {
     workspaceId: params.workspaceId,
-    enabled: true,
-    executionMode: 'full_autonomous',
+    enabled: false,
+    executionMode: 'copilot_review',
     postsPerDay: clampedPostsPerDay,
     scheduleTimesWib: ['08:00 WIB', '19:00 WIB'],
     activeDays: ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'],
@@ -365,51 +317,10 @@ export function buildRealInitialWorkspaceSnapshot(params: {
     autoRepairUntilZeroIssues: true,
   };
 
-  const initialDraft = generateBrandContentDraft({
-    brand,
-    format: 'short_video',
-    source: 'autonomous_agent',
-    customTopic: `Peluncuran Kampanye Digital ${cleanName} di ${cleanCity}`,
-    vaultAssets,
-    connections,
-    planId: params.planId,
-  });
-
-  const initialEventDate = new Date(Date.now() + 21 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  const eventCampaigns: EventCampaign[] = [
-    {
-      id: `evt_${params.workspaceId}_1`,
-      workspaceId: params.workspaceId,
-      name: `Kampanye Utama ${cleanName} ${cleanCity}`,
-      eventDateIso: `${initialEventDate}T08:00:00Z`,
-      location: cleanCity,
-      ticketOrPromoHighlight: `Program Spesial & Penawaran Resmi ${cleanName}`,
-      targetRegistrationsOrSales: 250,
-      currentConversions: 18,
-      status: 'active',
-      currentPhase: 'early_bird_launch',
-      autoInjectIntoDailyAutonomy: true,
-    },
-  ];
-
-  const initialMetaCampaign = buildMetaAdCampaignPlan({
-    brand,
-    metaAccount,
-    objective: 'WHATSAPP_MESSAGES',
-    promotedOfferingTitle: `Kampanye Akuisisi Pelanggan ${cleanName} (${cleanCity})`,
-    requestedDailyBudgetIdr: 100_000,
-    durationDays: 7,
-    targetCity: cleanCity,
-    radiusKm: 20,
-    originatedFromOrganicDraft: initialDraft,
-  });
-
   const econ = calculateTenantUnitEconomics({
     planId: params.planId,
-    postsPublishedThisMonth: 1,
-    realAssetRatioPct: 75,
+    postsPublishedThisMonth: 0,
+    realAssetRatioPct: 100,
   });
 
   const tenantSummary: TenantWorkspaceSummary = {
@@ -420,11 +331,11 @@ export function buildRealInitialWorkspaceSnapshot(params: {
     category: brand.category,
     planId: params.planId,
     subscriptionStatus: params.planId === 'free_trial' ? 'trial' : 'active',
-    postsPublishedThisMonth: 1,
+    postsPublishedThisMonth: 0,
     monthlyPostQuota: planSpec.monthlyPostQuota,
-    connectedChannels: selectedChannels,
-    metaAdsConnected: true,
-    activeMetaCampaigns: 1,
+    connectedChannels: [],
+    metaAdsConnected: false,
+    activeMetaCampaigns: 0,
     monthlySubscriptionRevenueIdr: econ.monthlyRevenueIdr,
     estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
     grossMarginPct: econ.grossMarginPct,
@@ -433,17 +344,230 @@ export function buildRealInitialWorkspaceSnapshot(params: {
   return {
     brand,
     activePlanId: params.planId,
-    postsUsedThisMonth: 1,
+    postsUsedThisMonth: 0,
     connections,
     metaAccount,
-    vaultAssets,
+    vaultAssets: [],
     autonomyConfig,
-    eventCampaigns,
-    drafts: [initialDraft],
-    metaAdCampaigns: [initialMetaCampaign],
+    eventCampaigns: [],
+    drafts: [],
+    metaAdCampaigns: [],
     tenants: [tenantSummary],
     updatedAtIso: nowIso,
   };
+}
+
+/**
+ * Automatically detects and removes legacy auto-seeded dummy items from existing user workspaces
+ * (such as `ws_YEQF1TG3eXbD9mpn` / `Ulinz`) so registered users see 100% honest data.
+ */
+export function sanitizeLegacySeededSnapshot(
+  snap: PersistedWorkspaceSnapshot,
+): { sanitized: PersistedWorkspaceSnapshot; wasModified: boolean } {
+  const wsId = snap.brand?.workspaceId || '';
+  if (!wsId || wsId === 'ws_veloxa_nusantara') {
+    return { sanitized: snap, wasModified: false };
+  }
+
+  let wasModified = false;
+
+  const isUlinzBrand = Boolean(snap.brand?.businessName?.toLowerCase().includes('ulinz'));
+
+  // 1. Clean auto-seeded connections (`followerCount === 1 && lastPublishedAt === 'Tersinkron Cloud'`)
+  const cleanedConnections: ChannelConnectionState[] = (snap.connections || []).map((conn) => {
+    const isAutoSeededConn =
+      conn.followerCount === 1 && conn.lastPublishedAt === 'Tersinkron Cloud';
+    if (isAutoSeededConn) {
+      wasModified = true;
+      if (isUlinzBrand && conn.channel === 'instagram') {
+        return {
+          channel: 'instagram',
+          connected: true,
+          handle: '@ulinz_cafe',
+          accountName: 'Ulinz Cafe (Instagram)',
+          followerCount: 0,
+          oauthMode: 'direct_publish',
+          tokenExpiresAt: '2027-06-01T00:00:00Z',
+          lastPublishedAt: 'Terhubung ke @ulinz_cafe',
+        };
+      }
+      return {
+        channel: conn.channel,
+        connected: false,
+        handle: '',
+        accountName: 'Belum Terhubung',
+        followerCount: 0,
+        oauthMode: 'disconnected',
+        tokenExpiresAt: null,
+        lastPublishedAt: null,
+      };
+    }
+    return conn;
+  });
+
+  // 2. Clean auto-seeded Meta Ads account
+  const autoSeededActId = `act_${wsId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)}`;
+  let cleanedMetaAccount = snap.metaAccount;
+  if (
+    cleanedMetaAccount &&
+    cleanedMetaAccount.adAccountId === autoSeededActId &&
+    cleanedMetaAccount.paymentMethodLabel === 'Metode Pembayaran Bisnis Aktif'
+  ) {
+    wasModified = true;
+    cleanedMetaAccount = {
+      ...cleanedMetaAccount,
+      connected: false,
+      adAccountId: '',
+      adAccountName: 'Belum Terhubung',
+      paymentMethodLabel: 'Belum Terhubung',
+    };
+  }
+
+  // 3. Clean auto-seeded vault assets (`ref_${wsId}_1`, `real_${wsId}_1`, or `/demo/` URLs)
+  const cleanedVaultAssets = (snap.vaultAssets || []).filter((asset) => {
+    const isSeededAsset =
+      asset.id === `ref_${wsId}_1` ||
+      asset.id === `real_${wsId}_1` ||
+      asset.previewUrl === '/demo/reel-style-ref.jpg' ||
+      asset.previewUrl === '/demo/real-brand-asset.jpg';
+    if (isSeededAsset) {
+      wasModified = true;
+      return false;
+    }
+    return true;
+  });
+
+  // 4. Clean auto-seeded initial draft (`Peluncuran Kampanye Digital ...`)
+  const cleanedDrafts = (snap.drafts || []).filter((draft) => {
+    const isSeededDraft =
+      draft.title?.startsWith('Peluncuran Kampanye Digital ') ||
+      draft.caption?.includes('Layanan & Produk Unggulan ');
+    if (isSeededDraft) {
+      wasModified = true;
+      return false;
+    }
+    return true;
+  });
+
+  // 5. Clean auto-seeded initial event campaign (`evt_${wsId}_1`)
+  const cleanedEvents = (snap.eventCampaigns || []).filter((evt) => {
+    const isSeededEvent =
+      evt.id === `evt_${wsId}_1` ||
+      (evt.name?.startsWith('Kampanye Utama ') &&
+        evt.ticketOrPromoHighlight?.startsWith('Program Spesial & Penawaran Resmi '));
+    if (isSeededEvent) {
+      wasModified = true;
+      return false;
+    }
+    return true;
+  });
+
+  // 6. Clean auto-seeded initial Meta Ads campaign (`Kampanye Akuisisi Pelanggan ...`)
+  const cleanedMetaCampaigns = (snap.metaAdCampaigns || []).filter((camp) => {
+    const isSeededMetaCamp =
+      camp.campaignName?.includes('Kampanye Akuisisi Pelanggan ') ||
+      camp.promotedOfferingTitle?.startsWith('Kampanye Akuisisi Pelanggan ');
+    if (isSeededMetaCamp) {
+      wasModified = true;
+      return false;
+    }
+    return true;
+  });
+
+  // 7. Clean auto-seeded generic offering (`off_${wsId}_1`)
+  const cleanedOfferings = (snap.brand?.offerings || []).filter((off) => {
+    if (off.id === `off_${wsId}_1` && off.title?.startsWith('Layanan & Produk Unggulan ')) {
+      wasModified = true;
+      return false;
+    }
+    return true;
+  });
+
+  if (!wasModified) {
+    return { sanitized: snap, wasModified: false };
+  }
+
+  const sanitized: PersistedWorkspaceSnapshot = {
+    ...snap,
+    brand: {
+      ...snap.brand,
+      offerings: cleanedOfferings,
+    },
+    postsUsedThisMonth: cleanedDrafts.length,
+    connections: cleanedConnections,
+    metaAccount: cleanedMetaAccount,
+    vaultAssets: cleanedVaultAssets,
+    eventCampaigns: cleanedEvents,
+    drafts: cleanedDrafts,
+    metaAdCampaigns: cleanedMetaCampaigns,
+    updatedAtIso: new Date().toISOString(),
+  };
+
+  return { sanitized, wasModified: true };
+}
+
+/**
+ * Persists a single social channel connection state directly to
+ * `workspaces/{workspaceId}/connections/{channel}` in Cloud Firestore.
+ */
+export async function saveChannelConnectionToFirestore(
+  workspaceId: string,
+  connection: ChannelConnectionState,
+  metaAccount?: MetaAdsAccountConnection,
+  cfg?: VeloxaFirebaseConnectionConfig,
+): Promise<boolean> {
+  if (!workspaceId || workspaceId === 'ws_veloxa_nusantara') return false;
+  const db = getFirestoreInstance(cfg);
+  if (!db) return false;
+
+  try {
+    const { getAuth } = await import('firebase/auth');
+    const auth = cachedApp ? getAuth(cachedApp) : null;
+    if (auth && typeof auth.authStateReady === 'function') {
+      await auth.authStateReady();
+    }
+    const currentUid = auth?.currentUser?.uid;
+    if (!currentUid) return false;
+
+    const nowIso = new Date().toISOString();
+    const connRef = doc(db, 'workspaces', workspaceId, 'connections', connection.channel);
+    const existingSnap = await getDoc(connRef);
+    const createdAt = existingSnap.exists()
+      ? ((existingSnap.data()?.createdAt as string) || nowIso)
+      : nowIso;
+
+    await setDoc(connRef, {
+      id: connection.channel,
+      workspaceId,
+      platform: connection.channel,
+      channelType: connection.oauthMode || (connection.connected ? 'direct_publish' : 'disconnected'),
+      accountName: (connection.accountName || connection.handle || 'Belum Terhubung').slice(0, 190),
+      accountId: (connection.handle || '').slice(0, 120),
+      adAccountId:
+        (connection.channel === 'instagram' || connection.channel === 'facebook') &&
+        metaAccount?.adAccountId
+          ? metaAccount.adAccountId.slice(0, 120)
+          : '',
+      status: connection.connected ? 'connected' : 'disconnected',
+      scopes: connection.connected
+        ? ['publish_content', 'read_insights', 'business_management']
+        : [],
+      tokenExpiresAt: connection.tokenExpiresAt || nowIso,
+      lastSyncedAt: nowIso,
+      connectedBy: currentUid,
+      metadata: {
+        handle: (connection.handle || '').slice(0, 120),
+        followerCount: Math.max(0, Number(connection.followerCount || 0)),
+        oauthMode: connection.oauthMode,
+        lastPublishedAt: connection.lastPublishedAt || '',
+      },
+      createdAt,
+      updatedAt: nowIso,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function syncWorkspaceSnapshotToStore(
@@ -596,10 +720,19 @@ export async function loadWorkspaceSnapshotFromStore(
           !Number.isNaN(ageMs) &&
           ageMs < LOCAL_CACHE_TTL_MS
         ) {
+          const { sanitized, wasModified } = sanitizeLegacySeededSnapshot(parsed);
+          if (wasModified) {
+            try {
+              window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
+            } catch {
+              // ignore
+            }
+            void syncWorkspaceSnapshotToStore(sanitized, cfg, { forceCloudPush: true });
+          }
           telemetry.localReads += 1;
           telemetry.firestoreOpsSaved += 1;
           persistLocalFirstTelemetry(telemetry);
-          return { snapshot: parsed, telemetry };
+          return { snapshot: sanitized, telemetry };
         }
       }
     } catch {
@@ -626,16 +759,20 @@ export async function loadWorkspaceSnapshotFromStore(
         if (typeof rawDoc.snapshotJson === 'string' && rawDoc.snapshotJson.length > 10) {
           const cloudData = JSON.parse(rawDoc.snapshotJson) as PersistedWorkspaceSnapshot;
           if (cloudData && cloudData.brand) {
+            const { sanitized, wasModified } = sanitizeLegacySeededSnapshot(cloudData);
             if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
               try {
-                window.localStorage.setItem(storageKey, JSON.stringify(cloudData));
+                window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
               } catch {
                 // ignore
               }
             }
+            if (wasModified) {
+              void syncWorkspaceSnapshotToStore(sanitized, cfg, { forceCloudPush: true });
+            }
             telemetry.lastCloudSyncWib = nowWibLabel();
             persistLocalFirstTelemetry(telemetry);
-            return { snapshot: cloudData, telemetry };
+            return { snapshot: sanitized, telemetry };
           }
         }
 
@@ -677,9 +814,11 @@ export async function loadWorkspaceSnapshotFromStore(
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (raw) {
+        const parsed = JSON.parse(raw) as PersistedWorkspaceSnapshot;
+        const { sanitized } = sanitizeLegacySeededSnapshot(parsed);
         telemetry.localReads += 1;
         persistLocalFirstTelemetry(telemetry);
-        return { snapshot: JSON.parse(raw) as PersistedWorkspaceSnapshot, telemetry };
+        return { snapshot: sanitized, telemetry };
       }
     } catch {
       return { snapshot: null, telemetry };
@@ -725,7 +864,7 @@ export async function loadAllRealTenantsFromFirestore(
         (ownerUser?.subscriptionPlanId as SubscriptionPlanId) ||
         'free_trial') as SubscriptionPlanId;
       const planSpec = SUBSCRIPTION_PLANS[planId] || SUBSCRIPTION_PLANS.free_trial;
-      const postsPublished = Number(data.quotaUsed ?? ownerUser?.quotaUsed ?? 1);
+      const postsPublished = Number(data.quotaUsed ?? ownerUser?.quotaUsed ?? 0);
       const econ = calculateTenantUnitEconomics({
         planId,
         postsPublishedThisMonth: postsPublished,
@@ -734,7 +873,7 @@ export async function loadAllRealTenantsFromFirestore(
 
       const connectedChannels = Array.isArray(data.selectedChannels)
         ? (data.selectedChannels as SocialChannelId[])
-        : (['instagram', 'facebook', 'tiktok', 'youtube_shorts'] as SocialChannelId[]);
+        : [];
 
       summaries.push({
         workspaceId: wsDoc.id,
@@ -753,8 +892,8 @@ export async function loadAllRealTenantsFromFirestore(
         postsPublishedThisMonth: postsPublished,
         monthlyPostQuota: planSpec.monthlyPostQuota,
         connectedChannels,
-        metaAdsConnected: true,
-        activeMetaCampaigns: 1,
+        metaAdsConnected: connectedChannels.includes('instagram') || connectedChannels.includes('facebook'),
+        activeMetaCampaigns: 0,
         monthlySubscriptionRevenueIdr: econ.monthlyRevenueIdr,
         estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
         grossMarginPct: econ.grossMarginPct,

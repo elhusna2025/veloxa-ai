@@ -293,7 +293,7 @@ export async function syncUserProfileToFirestore(
       (existingUserData?.role as VeloxaRole) || (user.isSuperAdmin ? 'admin' : 'user');
     const immutableCreatedAt = (existingUserData?.createdAt as string) || nowIso;
     const existingQuotaUsed = Number(
-      existingWsData?.quotaUsed ?? existingUserData?.quotaUsed ?? (resolvedOnboarding ? 1 : 0),
+      existingWsData?.quotaUsed ?? existingUserData?.quotaUsed ?? 0,
     );
 
     // Compact 15-16 key document payload for `users/{uid}` (avoids 19+ key rule limit and preserves immutable fields)
