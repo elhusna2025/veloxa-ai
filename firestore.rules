@@ -85,9 +85,16 @@ service cloud.firestore {
         request.resource.data.uid == resource.data.uid;
     }
 
-    // Check if the caller is a Super Admin via Auth custom claim or user profile document
+    // Check if the caller is the bootstrapped Super Admin email
+    function isSuperAdminEmail() {
+      return isAuthenticated() &&
+        request.auth.token.get('email', '') == 'sosrospg@gmail.com';
+    }
+
+    // Check if the caller is a Super Admin via Auth custom claim, bootstrap email, or user profile document
     function isSuperAdmin() {
       return isAuthenticated() && (
+        isSuperAdminEmail() ||
         request.auth.token.get('role', '') == 'admin' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
@@ -218,17 +225,19 @@ service cloud.firestore {
     function isValidUser(data) {
       return data is map &&
         data.keys().size() >= 1 &&
-        data.keys().size() <= 20 &&
+        data.keys().size() <= 30 &&
         hasOnlyAllowedFields([
           'uid', 'id', 'email', 'displayName', 'name', 'photoURL', 'avatarUrl',
           'role', 'activeWorkspaceId', 'workspaceIds', 'subscriptionPlanId',
-          'quotaLimit', 'quotaUsed', 'onboardingCompleted', 'createdAt', 'updatedAt'
+          'quotaLimit', 'quotaUsed', 'onboardingCompleted', 'city', 'businessName',
+          'category', 'phone', 'provider', 'selectedChannels', 'trialEndsAt',
+          'createdAt', 'updatedAt'
         ]) &&
         isValidOptionalString(data, 'uid', 1, 128) &&
         isValidOptionalString(data, 'id', 1, 128) &&
         (!( 'email' in data ) || data.email == null || isValidEmail(data.email)) &&
-        isValidOptionalString(data, 'displayName', 1, 120) &&
-        isValidOptionalString(data, 'name', 1, 120) &&
+        isValidOptionalString(data, 'displayName', 0, 120) &&
+        isValidOptionalString(data, 'name', 0, 120) &&
         isValidOptionalUrl(data, 'photoURL') &&
         isValidOptionalUrl(data, 'avatarUrl') &&
         (!( 'role' in data ) || data.role in ['user', 'admin']) &&
@@ -238,6 +247,13 @@ service cloud.firestore {
         isValidOptionalNumber(data, 'quotaLimit', 0, 10000000) &&
         isValidOptionalNumber(data, 'quotaUsed', 0, 10000000) &&
         isValidOptionalBool(data, 'onboardingCompleted') &&
+        isValidOptionalString(data, 'city', 0, 120) &&
+        isValidOptionalString(data, 'businessName', 0, 150) &&
+        isValidOptionalString(data, 'category', 0, 100) &&
+        isValidOptionalString(data, 'phone', 0, 40) &&
+        isValidOptionalString(data, 'provider', 0, 50) &&
+        isValidOptionalList(data, 'selectedChannels', 20) &&
+        isValidOptionalTimestampOrDate(data, 'trialEndsAt') &&
         isValidOptionalTimestampOrDate(data, 'createdAt') &&
         isValidOptionalTimestampOrDate(data, 'updatedAt');
     }
@@ -248,7 +264,9 @@ service cloud.firestore {
         hasOnlyAllowedFields([
           'id', 'ownerUid', 'memberUids', 'name', 'category', 'slug', 'logoUrl',
           'timezone', 'currency', 'subscriptionPlanId', 'quotaUsed', 'quotaLimit',
-          'autonomyEnabled', 'onboardingStep', 'createdAt', 'updatedAt'
+          'autonomyEnabled', 'onboardingStep', 'onboardingCompleted', 'city',
+          'targetAudience', 'toneOfVoice', 'primaryColor', 'accentColor',
+          'selectedChannels', 'snapshotJson', 'trialEndsAt', 'createdAt', 'updatedAt'
         ]) &&
         isValidOptionalString(data, 'id', 1, 128) &&
         data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
@@ -264,6 +282,15 @@ service cloud.firestore {
         isValidOptionalNumber(data, 'quotaLimit', 0, 10000000) &&
         isValidOptionalBool(data, 'autonomyEnabled') &&
         isValidOptionalNumber(data, 'onboardingStep', 0, 20) &&
+        isValidOptionalBool(data, 'onboardingCompleted') &&
+        isValidOptionalString(data, 'city', 0, 120) &&
+        isValidOptionalString(data, 'targetAudience', 0, 2000) &&
+        isValidOptionalString(data, 'toneOfVoice', 0, 500) &&
+        isValidOptionalString(data, 'primaryColor', 0, 32) &&
+        isValidOptionalString(data, 'accentColor', 0, 32) &&
+        isValidOptionalList(data, 'selectedChannels', 20) &&
+        isValidOptionalString(data, 'snapshotJson', 0, 500000) &&
+        isValidOptionalTimestampOrDate(data, 'trialEndsAt') &&
         isValidOptionalTimestampOrDate(data, 'createdAt') &&
         isValidOptionalTimestampOrDate(data, 'updatedAt');
     }
@@ -512,7 +539,7 @@ service cloud.firestore {
       // Users can read only their own profile; Super Admins can read all user docs
       allow read: if isOwner(userId) || isSuperAdmin();
 
-      // Users can create their own profile with role 'user' and starter/free defaults;
+      // Users can create their own profile with role 'user' and onboarding plan/quota bounds;
       // Super Admins can create any valid user profile.
       allow create: if isAuthenticated() &&
         isValidUser(request.resource.data) &&
@@ -521,23 +548,32 @@ service cloud.firestore {
           (isOwner(userId) &&
            request.resource.data.get('role', 'user') == 'user' &&
            (!('subscriptionPlanId' in request.resource.data) ||
-            request.resource.data.subscriptionPlanId in ['free', 'starter']) &&
+            request.resource.data.subscriptionPlanId in [
+              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
+            ]) &&
            (!('quotaLimit' in request.resource.data) ||
-            request.resource.data.quotaLimit <= 50) &&
+            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
            (!('quotaUsed' in request.resource.data) ||
-            request.resource.data.quotaUsed == 0))
+            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
         );
 
-      // Users can update their own profile EXCEPT they cannot escalate `role` to 'admin'
-      // or modify `subscriptionPlanId`, `quotaLimit`, `quotaUsed`, `uid`, `email`, or `createdAt`.
+      // Users can update their own profile (including completing onboarding) EXCEPT they cannot
+      // escalate `role` to 'admin' or exceed plan/quota bounds (`quotaLimit <= 500`).
       allow update: if isAuthenticated() &&
         isValidUser(request.resource.data) &&
         uidNotModified() && (
           isSuperAdmin() ||
           (isOwner(userId) &&
-           areImmutableFieldsUnchanged([
-             'uid', 'id', 'email', 'role', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed', 'createdAt'
-           ]))
+           request.resource.data.get('role', 'user') == 'user' &&
+           areImmutableFieldsUnchanged(['uid', 'id', 'role', 'createdAt']) &&
+           (!('subscriptionPlanId' in request.resource.data) ||
+            request.resource.data.subscriptionPlanId in [
+              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
+            ]) &&
+           (!('quotaLimit' in request.resource.data) ||
+            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
+           (!('quotaUsed' in request.resource.data) ||
+            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
         );
 
       allow delete: if isSuperAdmin();
@@ -554,29 +590,36 @@ service cloud.firestore {
            request.auth.uid in resource.data.memberUids)
         ));
 
-      // Authenticated user can create a workspace they own (with non-escalated quota/plan), or Super Admin
+      // Authenticated user can create a workspace they own (with bounded plan/quota), or Super Admin
       allow create: if isAuthenticated() &&
         isValidWorkspace(request.resource.data) && (
           isSuperAdmin() ||
           (request.resource.data.ownerUid == request.auth.uid &&
            (!('subscriptionPlanId' in request.resource.data) ||
-            request.resource.data.subscriptionPlanId in ['free', 'starter']) &&
+            request.resource.data.subscriptionPlanId in [
+              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
+            ]) &&
            (!('quotaLimit' in request.resource.data) ||
-            request.resource.data.quotaLimit <= 50) &&
+            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
            (!('quotaUsed' in request.resource.data) ||
-            request.resource.data.quotaUsed == 0))
+            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
         );
 
-      // Owner can update non-billing brand fields (name, category, updatedAt, memberUids, etc.),
-      // while billing/quota fields (subscriptionPlanId, quotaLimit, quotaUsed) and ownerUid
-      // can ONLY be modified by Super Admin or backend Admin SDK.
+      // Owner can update workspace fields and snapshotJson within plan/quota bounds,
+      // while ownerUid and createdAt remain immutable.
       allow update: if isAuthenticated() &&
         isValidWorkspace(request.resource.data) && (
           isSuperAdmin() ||
           (resource.data.ownerUid == request.auth.uid &&
-           areImmutableFieldsUnchanged([
-             'id', 'ownerUid', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed', 'createdAt'
-           ]))
+           areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt']) &&
+           (!('subscriptionPlanId' in request.resource.data) ||
+            request.resource.data.subscriptionPlanId in [
+              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
+            ]) &&
+           (!('quotaLimit' in request.resource.data) ||
+            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
+           (!('quotaUsed' in request.resource.data) ||
+            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
         );
 
       allow delete: if isSuperAdmin();

@@ -14,7 +14,7 @@ export type BusinessCategory =
   | 'education'
   | 'custom';
 
-export type SubscriptionPlanId = 'starter_500k' | 'growth_1000k' | 'pro_1500k';
+export type SubscriptionPlanId = 'free_trial' | 'starter_500k' | 'growth_1000k' | 'pro_1500k';
 
 export interface SubscriptionPlanSpec {
   id: SubscriptionPlanId;

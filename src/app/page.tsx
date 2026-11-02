@@ -55,6 +55,7 @@ import {
   signInWithGooglePopup,
   signOutVeloxaUser,
   subscribeToFirebaseAuthChanges,
+  syncUserProfileToFirestore,
   type VeloxaAuthenticatedUser,
 } from '@/lib/veloxa-auth';
 import {
@@ -65,6 +66,7 @@ import {
   type VeloxaLocale,
 } from '@/lib/veloxa-i18n';
 import { VeloxaLuxuryLanding } from '@/components/VeloxaLuxuryLanding';
+import { VeloxaExecutiveDashboardOverview } from '@/components/VeloxaExecutiveDashboardOverview';
 import type {
   AutonomyConfig,
   BrandProfile,
@@ -263,19 +265,39 @@ export default function VeloxaAiPlatformPage() {
     if (savedSession) {
       setAuthUser(savedSession);
       setActiveRole(savedSession.isSuperAdmin ? 'admin' : 'user');
+      if (savedSession.subscriptionPlanId) {
+        setActivePlanId(savedSession.subscriptionPlanId);
+      }
+      if (savedSession.businessName) {
+        setBrand((prev) => ({
+          ...prev,
+          workspaceId: savedSession.activeWorkspaceId || prev.workspaceId,
+          businessName: savedSession.businessName || prev.businessName,
+          city: savedSession.city || prev.city,
+          category: savedSession.category || prev.category,
+        }));
+      }
+      void syncUserProfileToFirestore(savedSession).then((hydrated) => {
+        setAuthUser(hydrated);
+      });
     }
     const pendingReg = consumePendingRegistrationBrand();
     if (pendingReg) {
       setActivePlanId(pendingReg.planId);
+      if (pendingReg.planId === 'free_trial') {
+        setPostsUsedThisMonth(2);
+      }
       setBrand((prev) => ({
         ...prev,
-        workspaceId: `ws_${Date.now().toString(36)}`,
+        workspaceId: savedSession?.activeWorkspaceId || `ws_${Date.now().toString(36)}`,
         businessName: pendingReg.businessName,
         category: pendingReg.category,
         city: pendingReg.city,
+        targetAudience: pendingReg.targetAudience || prev.targetAudience,
+        brandTone: pendingReg.brandTone || prev.brandTone,
       }));
       setStatusBanner(
-        `Selamat datang di Veloxa AI! Workspace "${pendingReg.businessName}" (${pendingReg.city}) telah aktif.`,
+        `Selamat datang di Veloxa AI! Workspace "${pendingReg.businessName}" (${pendingReg.city}) telah tersimpan ke Cloud Firestore.`,
       );
     }
     const unsubAuth = subscribeToFirebaseAuthChanges((fbUser) => {
@@ -1201,7 +1223,7 @@ export default function VeloxaAiPlatformPage() {
               </div>
 
               {/* Subscription Pricing Tiers Overview */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                 <h2 className="text-lg font-black text-neutral-900">
                   Katalog Paket Langganan Veloxa AI (Rp500rb – Rp1,5 Juta)
                 </h2>
@@ -1243,7 +1265,7 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Accessible Sticky Responsive Tenant Table (modern-web-guidance responsive-table) */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h2 id="tenant-table-caption" className="text-lg font-black text-neutral-900">
@@ -1352,7 +1374,7 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Central API & OAuth Vault (1 App Developer for All Users) */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                 <div className="flex items-center gap-2">
                   <Lock className="h-5 w-5 text-[#EC749B]" />
                   <h2 className="text-lg font-black text-neutral-900">
@@ -1395,7 +1417,7 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Cloud Firebase Database & 5 OpenAI Agents Configuration Panel (Cendekia-Style Architecture) */}
-              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
@@ -1547,66 +1569,79 @@ export default function VeloxaAiPlatformPage() {
             </div>
           ) : (
             /* ======================================================================
-               ROLE 2: USER WORKSPACE — DOMINAN PUTIH BERSIH + BUTTON/AKSEN SOFT PINK
+               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD
                ====================================================================== */
             <div className="space-y-6" data-testid="user-workspace-dashboard">
-              {/* Industry Preset Switcher Bar + New Business Onboarding Wizard Trigger */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200/80 bg-white p-4 shadow-2xs">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-2xs">
+              {/* Executive Workspace Command Header */}
+              <div className="veloxa-luxury-card-pink flex flex-col justify-between gap-4 rounded-[2rem] border border-pink-200 bg-white p-5 sm:p-7 lg:flex-row lg:items-center">
+                <div className="flex items-start sm:items-center gap-4">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#EC749B] text-lg font-black text-white shadow-md">
                     {brand.businessName.slice(0, 2).toUpperCase()}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h1 className="text-lg font-black text-neutral-900">{brand.businessName}</h1>
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
-                        {brand.city}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                        ● Cloud Firestore Synced ({brand.workspaceId})
+                      </span>
+                      <span className="rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+                        {currentPlan.name}
                       </span>
                     </div>
-                    <p className="text-xs text-neutral-500">
-                      Contoh Workspace Pelanggan · Pilih simulasi jenis bisnis atau daftarkan brand baru:
+                    <h1 className="mt-1.5 text-xl sm:text-2xl font-black tracking-tight text-neutral-900">
+                      {brand.businessName}{' '}
+                      <span className="text-sm font-bold text-[#D85A88]">· {brand.city}</span>
+                    </h1>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      Studio AI Otonom 4 Kanal (IG, FB, TikTok, Shorts) & AI Media Buyer Meta Ads 24/7
                     </p>
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {(
-                    [
-                      { key: 'running_event', label: '🏃‍♂️ Event Lari (Nusantara Run)' },
-                      { key: 'cafe_fnb', label: '☕ Cafe & F&B (Kopi Senja)' },
-                      { key: 'clinic_beauty', label: '✨ Klinik (GlowDerm)' },
-                      { key: 'custom', label: '🎨 Bisnis Kustom' },
-                    ] as const
-                  ).map((item) => (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => handleSelectBrandPreset(item.key)}
-                      className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
-                        selectedPresetKey === item.key
-                          ? 'bg-[#EC749B] text-white shadow-2xs'
-                          : 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
-                      }`}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
+                {/* Clean Executive Actions + Quick Industry Switcher */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <label htmlFor="workspace-preset-select" className="sr-only">
+                    Pilih Simulasi Brand
+                  </label>
+                  <select
+                    id="workspace-preset-select"
+                    value={selectedPresetKey}
+                    onChange={(e) =>
+                      handleSelectBrandPreset(
+                        e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
+                      )
+                    }
+                    className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs font-bold text-neutral-700 hover:border-pink-200 focus:outline-hidden"
+                  >
+                    <option value="running_event">🏃 Brand: Nusantara Run</option>
+                    <option value="cafe_fnb">☕ Brand: Kopi Senja</option>
+                    <option value="clinic_beauty">✨ Brand: GlowDerm</option>
+                    <option value="custom">🎨 Brand Kustom Saya</option>
+                  </select>
+
+                  <Link
+                    href="/onboarding"
                     data-testid="open-onboarding-modal-btn"
-                    onClick={() => onboardingDialogRef.current?.showModal()}
-                    className="inline-flex items-center gap-1 rounded-xl border border-pink-300 bg-pink-50/80 px-3 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-white px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-pink-50 transition"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Bisnis Baru
+                    <span>Onboarding / Atur Brand</span>
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('studio')}
+                    className="veloxa-luxury-card-pink inline-flex items-center gap-1.5 rounded-xl bg-[#EC749B] px-4 py-2.5 text-xs font-black text-white hover:bg-[#DF608A]"
+                  >
+                    <Wand2 className="h-3.5 w-3.5" />
+                    <span>Buat Konten AI</span>
                   </button>
                 </div>
               </div>
 
-              {/* Desktop Horizontal Navigation Tabs */}
+              {/* Desktop Horizontal Navigation Tabs with Strong Elevation */}
               <nav
                 aria-label="Menu Utama User Workspace"
-                className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-2 shadow-2xs sm:grid-cols-5"
+                className="veloxa-luxury-card grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/90 bg-white p-2 sm:grid-cols-5"
               >
                 {(
                   [
@@ -1622,11 +1657,12 @@ export default function VeloxaAiPlatformPage() {
                     <button
                       key={tab.id}
                       type="button"
+                      data-testid={`workspace-tab-${tab.id}`}
                       onClick={() => setActiveTab(tab.id)}
                       className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-xs font-black transition ${
                         activeTab === tab.id
-                          ? 'bg-[#EC749B] text-white shadow-2xs'
-                          : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
+                          ? 'bg-[#EC749B] text-white shadow-sm'
+                          : 'text-neutral-600 hover:bg-pink-50/50 hover:text-neutral-900'
                       }`}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
@@ -1637,204 +1673,29 @@ export default function VeloxaAiPlatformPage() {
               </nav>
 
               {/* ====================================================================
-                 TAB 1: BERANDA & KONEKSI 4 KANAL SOSMED + META ADS
+                 TAB 1: EXECUTIVE ANALYTICS OVERVIEW, CHARTS & 4-CHANNEL COMMAND HUB
                  ==================================================================== */}
               {activeTab === 'overview' && (
-                <div className="space-y-6">
-                  {/* Organic Winner Auto-Boost Alert Banner — Pure White Card + Soft Pink CTA */}
-                  {organicWinnerDraft && (
-                    <div className="flex flex-col justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-5 shadow-2xs sm:flex-row sm:items-center">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-pink-50 text-[#EC749B] border border-pink-100">
-                          <Flame className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black uppercase text-[#D85A88]">
-                            ★ Rekomendasi Pintar AI Marketing
-                          </span>
-                          <h2 className="mt-1 text-base font-black text-neutral-900">
-                            Konten Organik Sedang Ramai! ({organicWinnerDraft.organicMetrics?.reach.toLocaleString('id-ID')} Reach · Engagement {organicWinnerDraft.organicMetrics?.engagementRatePct}%)
-                          </h2>
-                          <p className="mt-0.5 text-xs text-neutral-600">
-                            Reels <strong className="text-neutral-900">&ldquo;{organicWinnerDraft.title}&rdquo;</strong> punya performa organik sangat tinggi. Ubah menjadi kampanye Meta Ads ({formatIdr(organicWinnerDraft.organicMetrics?.recommendedAdDailyBudgetIdr || 150_000)}/hari) untuk menjangkau ribuan calon pembeli baru di {brand.city}!
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDesignMetaAdsWithAi(organicWinnerDraft)}
-                        className="shrink-0 rounded-2xl bg-[#EC749B] px-4 py-3 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
-                      >
-                        <Rocket className="mr-1.5 inline h-4 w-4 text-white" />
-                        Boost Jadi Meta Ads 1-Klik
-                      </button>
-                    </div>
-                  )}
-
-                  {/* 4 Social Channels OAuth Connection Cards — Pure White Cards */}
-                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h2 className="text-lg font-black text-neutral-900">
-                          Hubungkan Akun Media Sosial Anda (OAuth 1-Klik)
-                        </h2>
-                        <p className="text-xs text-neutral-500">
-                          Tidak perlu membuat API Key sendiri—cukup klik Hubungkan dan login ke akun medsos bisnis Anda.
-                        </p>
-                      </div>
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                        ✓ {connections.filter((c) => c.connected).length} dari 4 Platform Terhubung
-                      </span>
-                    </div>
-
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                      {connections.map((conn) => {
-                        const meta = CHANNEL_META[conn.channel];
-                        return (
-                          <div
-                            key={conn.channel}
-                            className="flex flex-col justify-between rounded-2xl border border-neutral-200/90 bg-white p-4 transition hover:border-pink-200"
-                          >
-                            <div>
-                              <div className="flex items-center justify-between gap-2">
-                                <span
-                                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${meta.badgeClass}`}
-                                >
-                                  {meta.shortLabel}
-                                </span>
-                                <span
-                                  className={`text-[11px] font-bold ${
-                                    conn.connected ? 'text-[#D85A88]' : 'text-neutral-400'
-                                  }`}
-                                >
-                                  {conn.connected ? '● Terhubung' : '○ Terputus'}
-                                </span>
-                              </div>
-                              <p className="mt-3 text-sm font-black text-neutral-900">{meta.label}</p>
-                              <p className="mt-1 text-xs font-semibold text-neutral-700">
-                                {conn.connected ? `${conn.handle} · ${conn.followerCount.toLocaleString('id-ID')} pengikut` : 'Belum ditautkan'}
-                              </p>
-                              <p className="mt-1 text-[11px] text-neutral-500">
-                                {conn.connected
-                                  ? `Tayang terakhir: ${conn.lastPublishedAt}`
-                                  : 'Mendukung jadwal otomatis & publikasi instan'}
-                              </p>
-                            </div>
-
-                            <div className="mt-4 flex gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleToggleChannel(conn.channel)}
-                                className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${
-                                  conn.connected
-                                    ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
-                                    : 'bg-[#EC749B] text-white shadow-2xs hover:bg-[#DF608A]'
-                                }`}
-                              >
-                                {conn.connected ? 'Putuskan' : `Hubungkan ${meta.shortLabel}`}
-                              </button>
-                              <button
-                                type="button"
-                                data-testid={`oauth-config-btn-${conn.channel}`}
-                                onClick={() => handleOpenOAuthConfigModal(conn.channel)}
-                                className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
-                              >
-                                Atur OAuth
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-
-                  {/* Meta Ads Account Connection & Quick Summary */}
-                  <div className="grid gap-5 lg:grid-cols-2">
-                    <div className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
-                          Meta Marketing API · Ads Manager
-                        </span>
-                        <span className="text-xs font-bold text-[#D85A88]">
-                          ✓ Terhubung ({metaAccount.adAccountId})
-                        </span>
-                      </div>
-                      <h3 className="mt-3 text-base font-black text-neutral-900">
-                        {metaAccount.adAccountName}
-                      </h3>
-                      <p className="mt-1 text-xs text-neutral-500">
-                        Tagihan iklan dibayar langsung oleh metode pembayaran Anda di Meta ({metaAccount.paymentMethodLabel}).
-                      </p>
-                      <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl border border-neutral-100 bg-neutral-50/70 p-3.5 text-xs">
-                        <div>
-                          <span className="text-neutral-500">Pagar Budget Harian Maks:</span>
-                          <p className="text-sm font-black text-neutral-900">
-                            {formatIdr(metaAccount.dailyHardCapIdr)}/hari
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-neutral-500">AI Media Buyer Optimizer:</span>
-                          <p className="text-sm font-black text-[#D85A88]">
-                            {metaAccount.autoOptimizeEnabled ? '✓ Aktif Otomatis 24/7' : 'Manual'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('meta_ads')}
-                        className="mt-4 w-full rounded-xl bg-[#EC749B] py-2.5 text-xs font-bold text-white shadow-2xs hover:bg-[#DF608A]"
-                      >
-                        Buka AI Agent Marketing (Meta Ads) →
-                      </button>
-                    </div>
-
-                    <div className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
-                          Ringkasan Kuota & Otonomi
-                        </span>
-                        <span className="text-xs font-bold text-neutral-600">
-                          {currentPlan.name} ({formatIdr(currentPlan.priceMonthlyIdr)}/bln)
-                        </span>
-                      </div>
-                      <h3 className="mt-3 text-base font-black text-neutral-900">
-                        Terpakai {postsUsedThisMonth} dari {currentPlan.monthlyPostQuota} Kuota Postingan Bulan Ini
-                      </h3>
-                      <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-neutral-100">
-                        <div
-                          className="h-full rounded-full bg-[#EC749B]"
-                          style={{
-                            width: `${Math.min(100, Math.round((postsUsedThisMonth / currentPlan.monthlyPostQuota) * 100))}%`,
-                          }}
-                        />
-                      </div>
-                      <p className="mt-2 text-xs text-neutral-500">
-                        Jadwal Otonom aktif: <strong className="text-neutral-900">{autonomyConfig.postsPerDay}x sehari</strong> ({autonomyConfig.scheduleTimesWib.join(' & ')} WIB) · Mode{' '}
-                        <strong className="text-neutral-900">
-                          {autonomyConfig.executionMode === 'full_autonomous'
-                            ? '100% Full Otonom'
-                            : 'Co-Pilot Tinjau H-1'}
-                        </strong>
-                      </p>
-                      <div className="mt-4 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('studio')}
-                          className="flex-1 rounded-xl bg-[#EC749B] py-2.5 text-xs font-bold text-white shadow-2xs hover:bg-[#DF608A]"
-                        >
-                          Buat Konten di Studio
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab('autonomy')}
-                          className="flex-1 rounded-xl border border-neutral-200 bg-white py-2.5 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
-                        >
-                          Atur Jadwal Otonom
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <VeloxaExecutiveDashboardOverview
+                  brand={brand}
+                  currentPlan={currentPlan}
+                  postsUsedThisMonth={postsUsedThisMonth}
+                  connections={connections}
+                  metaAccount={metaAccount}
+                  autonomyConfig={autonomyConfig}
+                  drafts={drafts}
+                  metaAdCampaigns={metaAdCampaigns}
+                  organicWinnerDraft={organicWinnerDraft}
+                  onNavigateTab={(tab) => setActiveTab(tab)}
+                  onToggleChannel={handleToggleChannel}
+                  onOpenOAuthConfigModal={handleOpenOAuthConfigModal}
+                  onPublishDraftNow={handlePublishDraftNow}
+                  onDesignMetaAdsWithAi={handleDesignMetaAdsWithAi}
+                  onOpenBillingModal={() => {
+                    setSelectedCheckoutPlanId(activePlanId);
+                    billingDialogRef.current?.showModal();
+                  }}
+                />
               )}
 
               {/* ====================================================================
@@ -1844,7 +1705,7 @@ export default function VeloxaAiPlatformPage() {
                 <div className="space-y-6">
                   <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
                     {/* Brand Brain Configuration */}
-                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                       <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                         Brand Brain · Otak Identitas Bisnis
                       </span>
@@ -1952,7 +1813,7 @@ export default function VeloxaAiPlatformPage() {
                     </section>
 
                     {/* Upload to Dual Brand Vault */}
-                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                       <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                         Dual Brand Vault · Web, Kamera Android & iOS
                       </span>
@@ -2056,7 +1917,7 @@ export default function VeloxaAiPlatformPage() {
                   </div>
 
                   {/* Vault Gallery Display */}
-                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                     <h3 className="text-base font-black text-neutral-900">
                       Isi Brand Vault Anda ({vaultAssets.length} Aset Tersimpan)
                     </h3>
@@ -2108,7 +1969,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
@@ -2170,7 +2031,7 @@ export default function VeloxaAiPlatformPage() {
                     {drafts.map((draft) => (
                       <article
                         key={draft.id}
-                        className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs"
+                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>
@@ -2345,7 +2206,7 @@ export default function VeloxaAiPlatformPage() {
                 <div className="space-y-6">
                   <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
                     {/* User-Controlled Autonomous Schedule */}
-                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                       <div className="flex items-center justify-between">
                         <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                           Agent Konten Otonom 24/7
@@ -2490,7 +2351,7 @@ export default function VeloxaAiPlatformPage() {
                     </section>
 
                     {/* Event Campaign Countdown Manager */}
-                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                       <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                         Mode Kampanye Event & Promo Terjadwal
                       </span>
@@ -2570,7 +2431,7 @@ export default function VeloxaAiPlatformPage() {
               {activeTab === 'meta_ads' && (
                 <div className="space-y-6" data-testid="meta-ads-agent-panel">
                   {/* AI Meta Ads Campaign Designer */}
-                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
@@ -2739,7 +2600,7 @@ export default function VeloxaAiPlatformPage() {
                     {metaAdCampaigns.map((camp) => (
                       <article
                         key={camp.id}
-                        className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs"
+                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>

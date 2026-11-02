@@ -22,6 +22,19 @@ import type {
 } from './veloxa-types';
 
 export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanId, SubscriptionPlanSpec> = {
+  free_trial: {
+    id: 'free_trial',
+    name: 'Veloxa Free Trial (Gratis)',
+    tagline: 'Coba gratis seluruh fitur studio AI, Dual Brand Vault, 4 Sosmed & simulasi AI Meta Ads.',
+    priceMonthlyIdr: 0,
+    monthlyPostQuota: 10,
+    maxPostsPerDay: 2,
+    allowedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+    includesEventCampaigns: true,
+    includesMetaAdsAgent: true,
+    includesAutoOptimizer: true,
+    estimatedApiCostPerPostIdr: 4_500,
+  },
   starter_500k: {
     id: 'starter_500k',
     name: 'Veloxa Starter',
@@ -970,7 +983,10 @@ export function calculateTenantUnitEconomics(input: {
   const effectiveCostPerPost = Math.round(plan.estimatedApiCostPerPostIdr * (1 - realAssetRatio * 0.45));
   const estimatedApiCostIdr = input.postsPublishedThisMonth * effectiveCostPerPost;
   const netProfitIdr = Math.max(0, plan.priceMonthlyIdr - estimatedApiCostIdr);
-  const grossMarginPct = Math.round((netProfitIdr / plan.priceMonthlyIdr) * 1000) / 10;
+  const grossMarginPct =
+    plan.priceMonthlyIdr > 0
+      ? Math.round((netProfitIdr / plan.priceMonthlyIdr) * 1000) / 10
+      : 100;
 
   return {
     monthlyRevenueIdr: plan.priceMonthlyIdr,

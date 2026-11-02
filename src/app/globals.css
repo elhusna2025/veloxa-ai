@@ -78,11 +78,20 @@ body {
 .veloxa-table-region {
   overflow-x: auto;
   max-width: 100%;
+  max-inline-size: 100%;
+  container-type: inline-size;
 }
 
 .veloxa-table-region table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.veloxa-table-region thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
 }
 
 .veloxa-table-region th,
@@ -94,6 +103,7 @@ body {
 .veloxa-table-region td:first-child {
   position: sticky;
   left: 0;
+  inset-inline-start: 0;
   z-index: 1;
   background: #ffffff;
 }
@@ -110,10 +120,18 @@ dialog::backdrop {
   backdrop-filter: blur(2px);
 }
 
-/* Defer rendering heavy below-the-fold sections (modern-web-guidance: defer-rendering-heavy-content) */
-.veloxa-deferred-section {
+/* Defer rendering heavy below-the-fold sections & isolate dashboard reflows (modern-web-guidance: interactions-in-complex-layouts) */
+.veloxa-deferred-section,
+.veloxa-dashboard-panel {
   content-visibility: auto;
-  contain-intrinsic-size: auto none auto 620px;
+  contain-intrinsic-size: auto 300px auto 800px;
+}
+
+@supports not (content-visibility: auto) {
+  .veloxa-deferred-section,
+  .veloxa-dashboard-panel {
+    contain: layout style paint;
+  }
 }
 
 /* Precise text alignment for badges & icon buttons (modern-web-guidance: precise-text-alignment) */

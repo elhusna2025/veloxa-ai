@@ -101,6 +101,14 @@ export function getPlanLocalizedPrice(
     SubscriptionPlanId,
     Record<VeloxaLocale, { amountFormatted: string; periodLabel: string }>
   > = {
+    free_trial: {
+      id: { amountFormatted: 'Rp0 (Gratis)', periodLabel: '/7 hari' },
+      en: { amountFormatted: '$0 (Free)', periodLabel: '/7 days' },
+      es: { amountFormatted: '$0 (Gratis)', periodLabel: '/7 días' },
+      ar: { amountFormatted: '$0 (مجاناً)', periodLabel: '/7 أيام' },
+      ja: { amountFormatted: '¥0 (無料)', periodLabel: '/7日間' },
+      ko: { amountFormatted: '₩0 (무료)', periodLabel: '/7일' },
+    },
     starter_500k: {
       id: { amountFormatted: 'Rp500.000', periodLabel: '/bulan' },
       en: { amountFormatted: '$35', periodLabel: '/month' },

@@ -234,19 +234,40 @@ export async function syncWorkspaceSnapshotToStore(
   }
 
   try {
-    const wsRef = doc(db, 'workspaces', snapshot.brand.workspaceId);
-    await setDoc(wsRef, snapshot, { merge: true });
-    telemetry.firestoreWrites += 1;
-    telemetry.lastPayloadHash = nextHash;
-    telemetry.lastCloudSyncWib = nowWibLabel();
-    telemetry.dirtyPendingCloudSync = false;
-    persistLocalFirstTelemetry(telemetry);
-    return { syncedToFirestore: true, syncedToLocal, telemetry };
+    const { getAuth } = await import('firebase/auth');
+    const currentUid = cachedApp ? getAuth(cachedApp).currentUser?.uid : undefined;
+    if (currentUid) {
+      const wsRef = doc(db, 'workspaces', snapshot.brand.workspaceId);
+      const serialized = JSON.stringify(snapshot).slice(0, 480000);
+      await setDoc(
+        wsRef,
+        {
+          id: snapshot.brand.workspaceId,
+          ownerUid: currentUid,
+          name: (snapshot.brand.businessName || 'Veloxa Workspace').slice(0, 110),
+          category: (snapshot.brand.category || 'cafe_fnb').slice(0, 70),
+          city: (snapshot.brand.city || 'Jakarta').slice(0, 80),
+          subscriptionPlanId: snapshot.activePlanId,
+          quotaUsed: Math.min(500, Math.max(0, snapshot.postsUsedThisMonth)),
+          autonomyEnabled: Boolean(snapshot.autonomyConfig?.enabled),
+          snapshotJson: serialized,
+          updatedAt: snapshot.updatedAtIso,
+        },
+        { merge: true },
+      );
+      telemetry.firestoreWrites += 1;
+      telemetry.lastPayloadHash = nextHash;
+      telemetry.lastCloudSyncWib = nowWibLabel();
+      telemetry.dirtyPendingCloudSync = false;
+      persistLocalFirstTelemetry(telemetry);
+      return { syncedToFirestore: true, syncedToLocal, telemetry };
+    }
   } catch {
-    telemetry.dirtyPendingCloudSync = true;
-    persistLocalFirstTelemetry(telemetry);
-    return { syncedToFirestore: false, syncedToLocal, telemetry };
+    // fallback below
   }
+  telemetry.dirtyPendingCloudSync = true;
+  persistLocalFirstTelemetry(telemetry);
+  return { syncedToFirestore: false, syncedToLocal, telemetry };
 }
 
 export async function loadWorkspaceSnapshotFromStore(
@@ -287,10 +308,16 @@ export async function loadWorkspaceSnapshotFromStore(
       const snap = await getDoc(wsRef);
       telemetry.firestoreReads += 1;
       if (snap.exists()) {
-        const cloudData = snap.data() as PersistedWorkspaceSnapshot;
-        telemetry.lastCloudSyncWib = nowWibLabel();
-        persistLocalFirstTelemetry(telemetry);
-        return { snapshot: cloudData, telemetry };
+        const rawDoc = snap.data() as Record<string, unknown>;
+        const cloudData =
+          typeof rawDoc.snapshotJson === 'string'
+            ? (JSON.parse(rawDoc.snapshotJson) as PersistedWorkspaceSnapshot)
+            : (rawDoc as unknown as PersistedWorkspaceSnapshot);
+        if (cloudData && cloudData.brand) {
+          telemetry.lastCloudSyncWib = nowWibLabel();
+          persistLocalFirstTelemetry(telemetry);
+          return { snapshot: cloudData, telemetry };
+        }
       }
     } catch {
       // fallback to local storage

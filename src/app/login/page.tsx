@@ -40,11 +40,15 @@ export default function VeloxaLoginPage() {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      await signInWithEmailPasswordOrRegister({
+      const user = await signInWithEmailPasswordOrRegister({
         email: email.trim(),
         password,
       });
-      router.push('/');
+      if (!user.isSuperAdmin && user.onboardingCompleted === false) {
+        router.push('/onboarding');
+      } else {
+        router.push('/');
+      }
     } catch {
       setErrorMessage('Gagal memverifikasi kredensial. Silakan periksa kembali email dan password Anda.');
     } finally {
@@ -56,8 +60,12 @@ export default function VeloxaLoginPage() {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      await signInWithGooglePopup();
-      router.push('/');
+      const user = await signInWithGooglePopup();
+      if (!user.isSuperAdmin && user.onboardingCompleted === false) {
+        router.push('/onboarding');
+      } else {
+        router.push('/');
+      }
     } finally {
       setIsSubmitting(false);
     }
