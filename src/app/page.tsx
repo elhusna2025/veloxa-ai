@@ -2944,6 +2944,28 @@ export default function VeloxaAiPlatformPage() {
               )}
             </div>
           )}
+
+          {authUser && (
+            <footer
+              data-testid="veloxa-workspace-footer"
+              className="mt-10 rounded-3xl border border-neutral-200/80 bg-white px-6 py-4 text-xs text-neutral-500 shadow-2xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#EC749B] text-[11px] font-black text-white">
+                    V
+                  </span>
+                  <span className="font-bold text-neutral-800">
+                    © 2026 Veloxa AI Global Cloud · Web, Android (.apk) & iOS Native
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold">
+                  <span className="text-[#D85A88]">● 5 OpenAI Agents & 4 Social APIs Active</span>
+                  <span>Local-First Hemat {firestoreSavingsPct}% Firestore</span>
+                </div>
+              </div>
+            </footer>
+          )}
         </div>
 
         {/* Native Mobile Bottom Bar — Otomatis Tampil di Layar HP Asli (<768px) */}

@@ -78,4 +78,145 @@ dialog::backdrop {
   padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
 }
 
+/* ============================================================================
+   KINETIC MOTION & COMPOSITOR ANIMATIONS (modern-web-guidance: motion & scroll-entry-exit-effects)
+   Animates transform & opacity on the GPU compositor thread; respects prefers-reduced-motion
+   ============================================================================ */
+@keyframes veloxa-float-y {
+  0%, 100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -8px, 0);
+  }
+}
+
+@keyframes veloxa-ken-burns-zoom {
+  0%, 100% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  50% {
+    transform: scale(1.08) translate3d(-1.5%, -1.5%, 0);
+  }
+}
+
+@keyframes veloxa-eq-bar-dance {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes veloxa-marquee-scroll {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes veloxa-reel-progress-bar {
+  0% {
+    transform: scaleX(0.05);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes veloxa-pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .veloxa-motion-active .veloxa-float-slow {
+    animation: veloxa-float-y 5.5s ease-in-out infinite;
+    will-change: transform;
+  }
+
+  .veloxa-motion-active .veloxa-float-delayed {
+    animation: veloxa-float-y 6.2s ease-in-out 1.4s infinite;
+    will-change: transform;
+  }
+
+  .veloxa-motion-active .veloxa-ken-burns {
+    animation: veloxa-ken-burns-zoom 14s ease-in-out infinite;
+    will-change: transform;
+  }
+
+  .veloxa-motion-active .veloxa-eq-bar {
+    transform-origin: bottom center;
+    animation: veloxa-eq-bar-dance 0.85s ease-in-out infinite;
+  }
+
+  .veloxa-motion-active .veloxa-marquee-track {
+    display: flex;
+    width: max-content;
+    animation: veloxa-marquee-scroll 34s linear infinite;
+    will-change: transform;
+  }
+
+  .veloxa-motion-active .veloxa-marquee-track:hover {
+    animation-play-state: paused;
+  }
+
+  .veloxa-motion-active .veloxa-reel-progress {
+    transform-origin: left center;
+    animation: veloxa-reel-progress-bar 3.5s linear infinite;
+  }
+
+  .veloxa-motion-active .veloxa-live-ping::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    border: 2px solid #ec749b;
+    animation: veloxa-pulse-ring 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+
+  @supports ((animation-timeline: view()) and (animation-range: entry)) {
+    @keyframes veloxa-scroll-entry {
+      from {
+        opacity: 0.25;
+        transform: translate3d(0, 24px, 0) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+      }
+    }
+
+    .veloxa-motion-active .veloxa-scroll-reveal {
+      animation: veloxa-scroll-entry auto ease-out backwards;
+      animation-timeline: view(block);
+      animation-range: entry 5% cover 22%;
+    }
+  }
+}
+
+.veloxa-card-hover {
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.28s ease, border-color 0.28s ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .veloxa-card-hover:hover {
+    transform: translate3d(0, -4px, 0);
+  }
+}
+
+
 
