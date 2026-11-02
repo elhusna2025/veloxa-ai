@@ -1801,72 +1801,227 @@ export default function VeloxaAiPlatformPage() {
             </div>
           ) : (
             /* ======================================================================
-               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD
+               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD (SIDEBAR LAYOUT)
                ====================================================================== */
-            <div className="space-y-6" data-testid="user-workspace-dashboard">
-              {/* Executive Workspace Command Header */}
-              <div className="veloxa-luxury-card-pink flex flex-col justify-between gap-4 rounded-[2rem] border border-pink-200 bg-white p-5 sm:p-7 lg:flex-row lg:items-center">
-                <div className="flex items-start sm:items-center gap-4">
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#EC749B] text-lg font-black text-white shadow-md">
-                    {brand.businessName.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700">
-                        ● Cloud Firestore Synced ({brand.workspaceId})
-                      </span>
-                      <span className="rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-                        {currentPlan.name}
-                      </span>
+            <div
+              className="lg:grid lg:grid-cols-[284px_minmax(0,1fr)] lg:items-start lg:gap-7 space-y-6 lg:space-y-0"
+              data-testid="user-workspace-dashboard"
+            >
+              {/* ====================================================================
+                 LEFT EXECUTIVE SIDEBAR NAVIGATION (STICKY ON DESKTOP)
+                 ==================================================================== */}
+              <aside
+                data-testid="user-workspace-sidebar"
+                aria-label="Sidebar Navigasi Workspace"
+                className="veloxa-luxury-card-pink rounded-[2rem] border border-pink-200 bg-white p-5 lg:sticky lg:top-24 space-y-5"
+              >
+                {/* 1. Brand Identity Card inside Sidebar */}
+                <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50/70 via-white to-white p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#EC749B] text-base font-black text-white shadow-sm">
+                      {brand.businessName.slice(0, 2).toUpperCase()}
                     </div>
-                    <h1 className="mt-1.5 text-xl sm:text-2xl font-black tracking-tight text-neutral-900">
-                      {brand.businessName}{' '}
-                      <span className="text-sm font-bold text-[#D85A88]">· {brand.city}</span>
-                    </h1>
-                    <p className="mt-0.5 text-xs text-neutral-500">
-                      Studio AI Otonom 4 Kanal (IG, FB, TikTok, Shorts) & AI Media Buyer Meta Ads 24/7
-                    </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-base font-black tracking-tight text-neutral-900">
+                          {brand.businessName}
+                        </span>
+                      </div>
+                      <p className="truncate text-xs font-bold text-[#D85A88]">
+                        📍 {brand.city} · {currentPlan.name}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                      ● Cloud Firestore Synced
+                    </span>
+                    {authUser?.isSuperAdmin ? (
+                      <>
+                        <label htmlFor="workspace-preset-select" className="sr-only">
+                          Pilih Inspeksi Brand
+                        </label>
+                        <select
+                          id="workspace-preset-select"
+                          value={selectedPresetKey}
+                          onChange={(e) =>
+                            handleSelectBrandPreset(
+                              e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
+                            )
+                          }
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-neutral-700 focus:outline-hidden"
+                        >
+                          <option value="running_event">🏃 Inspeksi: Nusantara Run</option>
+                          <option value="cafe_fnb">☕ Inspeksi: Kopi Senja</option>
+                          <option value="clinic_beauty">✨ Inspeksi: GlowDerm</option>
+                          <option value="custom">🎨 Brand Aktif</option>
+                        </select>
+                      </>
+                    ) : (
+                      <span
+                        data-testid="real-firestore-workspace-badge"
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/90 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700"
+                      >
+                        <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                        <span>Data Asli Cloud Firestore</span>
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                {/* Clean Executive Actions (Preset Switcher only shown for Super Admin inspection) */}
-                <div className="flex flex-wrap items-center gap-2">
-                  {authUser?.isSuperAdmin ? (
-                    <>
-                      <label htmlFor="workspace-preset-select" className="sr-only">
-                        Pilih Inspeksi Brand
-                      </label>
-                      <select
-                        id="workspace-preset-select"
-                        value={selectedPresetKey}
-                        onChange={(e) =>
-                          handleSelectBrandPreset(
-                            e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
-                          )
-                        }
-                        className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-xs font-bold text-neutral-700 hover:border-pink-200 focus:outline-hidden"
-                      >
-                        <option value="running_event">🏃 Inspeksi: Nusantara Run</option>
-                        <option value="cafe_fnb">☕ Inspeksi: Kopi Senja</option>
-                        <option value="clinic_beauty">✨ Inspeksi: GlowDerm</option>
-                        <option value="custom">🎨 Brand Aktif</option>
-                      </select>
-                    </>
-                  ) : (
-                    <span
-                      data-testid="real-firestore-workspace-badge"
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2.5 text-xs font-extrabold text-emerald-700"
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                      <span>Data Asli Cloud Firestore</span>
+                {/* 2. Vertical Sidebar Menu Items */}
+                <div>
+                  <p className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                    Menu Utama Workspace
+                  </p>
+                  <nav
+                    aria-label="Menu Utama User Workspace"
+                    data-testid="user-workspace-sidebar-nav"
+                    className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-1"
+                  >
+                    {(
+                      [
+                        {
+                          id: 'overview',
+                          label: i18nCopy.workspaceTabs.overview,
+                          sublabel: 'Analitik & 4 Kanal Sosmed',
+                          badge: `${connections.filter((c) => c.connected).length}/4`,
+                          icon: LayoutDashboard,
+                        },
+                        {
+                          id: 'brand_vault',
+                          label: i18nCopy.workspaceTabs.brand_vault,
+                          sublabel: 'Brand Brain & Foto Asli',
+                          badge: `${vaultAssets.length}`,
+                          icon: Camera,
+                        },
+                        {
+                          id: 'studio',
+                          label: i18nCopy.workspaceTabs.studio,
+                          sublabel: 'Reels 9:16, Carousel & Poster',
+                          badge: `${drafts.length}`,
+                          icon: Wand2,
+                        },
+                        {
+                          id: 'autonomy',
+                          label: i18nCopy.workspaceTabs.autonomy,
+                          sublabel: 'Jadwal Tayang & Mode Event',
+                          badge: autonomyConfig.enabled ? 'ON' : 'OFF',
+                          icon: Bot,
+                        },
+                        {
+                          id: 'meta_ads',
+                          label: i18nCopy.workspaceTabs.meta_ads,
+                          sublabel: 'AI Media Buyer & Pagar Budget',
+                          badge: `${metaAdCampaigns.filter((c) => c.status === 'active_running').length}`,
+                          icon: Megaphone,
+                        },
+                      ] as const
+                    ).map((tab) => {
+                      const Icon = tab.icon;
+                      const isActive = activeTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          data-testid={`workspace-tab-${tab.id}`}
+                          onClick={() => setActiveTab(tab.id)}
+                          className={`group flex w-full items-center justify-between gap-2.5 rounded-2xl px-3.5 py-3 text-left transition ${
+                            isActive
+                              ? 'bg-[#EC749B] text-white shadow-sm'
+                              : 'border border-transparent bg-neutral-50/70 text-neutral-700 hover:border-pink-200 hover:bg-pink-50/60 hover:text-neutral-900'
+                          }`}
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span
+                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition ${
+                                isActive
+                                  ? 'bg-white/20 text-white'
+                                  : 'bg-white text-[#EC749B] shadow-2xs group-hover:bg-pink-100/80'
+                              }`}
+                            >
+                              <Icon className="h-4 w-4 shrink-0" />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-black leading-tight">{tab.label}</p>
+                              <p
+                                className={`hidden truncate text-[10px] font-medium lg:block ${
+                                  isActive ? 'text-pink-100' : 'text-neutral-400'
+                                }`}
+                              >
+                                {tab.sublabel}
+                              </p>
+                            </div>
+                          </div>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
+                              isActive
+                                ? 'bg-white/25 text-white'
+                                : 'bg-white text-[#D85A88] border border-pink-100'
+                            }`}
+                          >
+                            {tab.badge}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </nav>
+                </div>
+
+                {/* 3. Sidebar Monthly Quota & Autopilot Progress Card */}
+                <div className="rounded-2xl border border-neutral-200/90 bg-neutral-50/70 p-3.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-extrabold text-neutral-700">Kuota Konten AI</span>
+                    <span className="font-black text-[#D85A88]">
+                      {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} Tayang
                     </span>
-                  )}
+                  </div>
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-pink-100/80">
+                    <div
+                      className="h-full rounded-full bg-[#EC749B] transition-all duration-300"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            6,
+                            Math.round((postsUsedThisMonth / Math.max(1, currentPlan.monthlyPostQuota)) * 100),
+                          ),
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="mt-2.5 flex items-center justify-between text-[10px] text-neutral-500">
+                    <span>{connections.filter((c) => c.connected).length}/4 Sosmed Aktif</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCheckoutPlanId(activePlanId);
+                        billingDialogRef.current?.showModal();
+                      }}
+                      className="font-black text-[#D85A88] hover:underline"
+                    >
+                      Upgrade Paket →
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Sidebar Quick Actions */}
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('studio')}
+                    className="veloxa-luxury-card-pink flex w-full items-center justify-center gap-2 rounded-2xl bg-[#EC749B] px-4 py-3 text-xs font-black text-white shadow-xs hover:bg-[#DF608A] transition"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    <span>Buat Konten AI Baru</span>
+                  </button>
 
                   <button
                     type="button"
                     data-testid="header-connect-social-btn"
                     onClick={() => handleOpenOAuthConfigModal('instagram')}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50/80 px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white transition"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/80 px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white transition"
                   >
                     <span>🔗 Hubungkan 4 Sosmed</span>
                   </button>
@@ -1874,56 +2029,69 @@ export default function VeloxaAiPlatformPage() {
                   <Link
                     href="/onboarding?edit=1"
                     data-testid="open-onboarding-modal-btn"
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs font-black text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
+                    className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs font-black text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     <span>Edit Profil Brand</span>
                   </Link>
-
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('studio')}
-                    className="veloxa-luxury-card-pink inline-flex items-center gap-1.5 rounded-xl bg-[#EC749B] px-4 py-2.5 text-xs font-black text-white hover:bg-[#DF608A]"
-                  >
-                    <Wand2 className="h-3.5 w-3.5" />
-                    <span>Buat Konten AI</span>
-                  </button>
                 </div>
-              </div>
+              </aside>
 
-              {/* Desktop Horizontal Navigation Tabs with Strong Elevation */}
-              <nav
-                aria-label="Menu Utama User Workspace"
-                className="veloxa-luxury-card grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/90 bg-white p-2 sm:grid-cols-5"
-              >
-                {(
-                  [
-                    { id: 'overview', label: i18nCopy.workspaceTabs.overview, icon: LayoutDashboard },
-                    { id: 'brand_vault', label: i18nCopy.workspaceTabs.brand_vault, icon: Camera },
-                    { id: 'studio', label: i18nCopy.workspaceTabs.studio, icon: Wand2 },
-                    { id: 'autonomy', label: i18nCopy.workspaceTabs.autonomy, icon: Bot },
-                    { id: 'meta_ads', label: i18nCopy.workspaceTabs.meta_ads, icon: Megaphone },
-                  ] as const
-                ).map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      data-testid={`workspace-tab-${tab.id}`}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-xs font-black transition ${
-                        activeTab === tab.id
-                          ? 'bg-[#EC749B] text-white shadow-sm'
-                          : 'text-neutral-600 hover:bg-pink-50/50 hover:text-neutral-900'
-                      }`}
-                    >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span>{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </nav>
+              {/* ====================================================================
+                 RIGHT MAIN WORKSPACE CONTENT COLUMN
+                 ==================================================================== */}
+              <div className="min-w-0 space-y-6" data-testid="user-workspace-main">
+                {/* Compact Contextual Top Bar inside Main Column */}
+                <div className="veloxa-luxury-card flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200/90 bg-white px-5 py-4">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+                        {activeTab === 'overview'
+                          ? '📊 1. Channels & Home'
+                          : activeTab === 'brand_vault'
+                            ? '📸 2. Brand & Vault'
+                            : activeTab === 'studio'
+                              ? '🪄 3. Content Studio'
+                              : activeTab === 'autonomy'
+                                ? '🤖 4. Autonomy Engine'
+                                : '📣 5. AI Meta Ads'}
+                      </span>
+                      <span className="text-[11px] font-bold text-neutral-400">
+                        Workspace ID: {brand.workspaceId}
+                      </span>
+                    </div>
+                    <h1 className="mt-1 text-lg sm:text-xl font-black tracking-tight text-neutral-900">
+                      {brand.businessName}{' '}
+                      <span className="text-sm font-bold text-[#D85A88]">· {brand.city}</span>
+                    </h1>
+                  </div>
+
+                  {/* Quick Connected Channels Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {connections.map((conn) => (
+                      <button
+                        key={conn.channel}
+                        type="button"
+                        onClick={() => handleOpenOAuthConfigModal(conn.channel)}
+                        className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-bold transition ${
+                          conn.connected
+                            ? 'border-emerald-200 bg-emerald-50/80 text-emerald-800 hover:border-emerald-300'
+                            : 'border-neutral-200 bg-neutral-50 text-neutral-500 hover:border-pink-200 hover:text-[#D85A88]'
+                        }`}
+                      >
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            conn.connected ? 'bg-emerald-500' : 'bg-neutral-300'
+                          }`}
+                        />
+                        <span>{CHANNEL_META[conn.channel].shortLabel}</span>
+                        {conn.connected && conn.handle ? (
+                          <span className="font-black text-emerald-700">{conn.handle}</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
               {/* ====================================================================
                  TAB 1: EXECUTIVE ANALYTICS OVERVIEW, CHARTS & 4-CHANNEL COMMAND HUB
@@ -3070,6 +3238,7 @@ export default function VeloxaAiPlatformPage() {
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
 
