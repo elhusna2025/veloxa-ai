@@ -25,6 +25,11 @@ import {
   executeMetaAdsCampaignOnGraphApi,
   publishDraftToConnectedChannels,
 } from './veloxa-social-publisher';
+import {
+  calculateFirestoreCostSavingsPct,
+  computePayloadFingerprint,
+} from './veloxa-local-first';
+import { buildRenderedVisualSvg } from './veloxa-visual-renderer';
 import type { ChannelConnectionState, MetaAdsAccountConnection } from './veloxa-types';
 
 const ALL_CONNECTED_CHANNELS: ChannelConnectionState[] = [
@@ -309,3 +314,43 @@ test('5 specialized OpenAI Agents and Multi-Channel Publisher execute end-to-end
   assert.equal(metaReceipt.status, 'ACTIVE');
   assert.equal(metaReceipt.metaAdRemoteIds.length, 2);
 });
+
+test('Local-First Cost Guard FNV-1a fingerprinting and Visual Poster SVG Renderer work deterministically', () => {
+  const hashA = computePayloadFingerprint({ a: 1, b: 'veloxa' });
+  const hashB = computePayloadFingerprint({ a: 1, b: 'veloxa' });
+  const hashC = computePayloadFingerprint({ a: 2, b: 'veloxa' });
+  assert.equal(hashA, hashB);
+  assert.notEqual(hashA, hashC);
+  assert.ok(hashA.startsWith('fnv1a_'));
+
+  const savingsPct = calculateFirestoreCostSavingsPct({
+    localReads: 12,
+    localWrites: 18,
+    firestoreReads: 1,
+    firestoreWrites: 1,
+    firestoreOpsSaved: 28,
+    lastLocalSaveWib: 'Baru saja',
+    lastCloudSyncWib: 'Baru saja',
+    lastPayloadHash: hashA,
+    dirtyPendingCloudSync: false,
+  });
+  assert.ok(savingsPct >= 90);
+
+  const sampleDraft = generateBrandContentDraft({
+    brand: BRAND_PRESETS.running_event,
+    format: 'carousel',
+    source: 'manual_studio',
+    vaultAssets: [],
+    connections: ALL_CONNECTED_CHANNELS,
+    planId: 'pro_1500k',
+  });
+  const svg = buildRenderedVisualSvg({
+    brand: BRAND_PRESETS.running_event,
+    draft: sampleDraft,
+    slideIndex: 0,
+  });
+  assert.ok(svg.includes('<svg'));
+  assert.ok(svg.includes('#EC749B'));
+  assert.ok(svg.includes('Nusantara Run Festival'));
+});
+

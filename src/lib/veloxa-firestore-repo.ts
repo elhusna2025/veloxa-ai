@@ -1,9 +1,11 @@
 /**
- * Veloxa AI — Multi-Tenant Cloud Firestore & Local Persistence Repository
+ * Veloxa AI — Multi-Tenant Cloud Firestore & Local-First Persistence Repository
  *
- * Automatically connects to Cloud Firestore when Firebase Web Config is configured
- * (via `.env.local` or Super Admin Console), while persisting state seamlessly in
- * browser storage so zero changes are lost before or during Firebase setup.
+ * Implements Cendekia-style Local-First Cost Guard Architecture:
+ * 1. Always hydrate from localStorage first (0ms latency, 0 Firestore read cost within 15m TTL).
+ * 2. Single aggregated document per workspace (`workspaces/{workspaceId}`) instead of N+1 listeners.
+ * 3. FNV-1a payload fingerprinting (`computePayloadFingerprint`) so unchanged snapshots never trigger
+ *    redundant Firestore `setDoc` writes.
  */
 
 import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
@@ -14,6 +16,13 @@ import {
   setDoc,
   type Firestore,
 } from 'firebase/firestore';
+import {
+  LOCAL_CACHE_TTL_MS,
+  computePayloadFingerprint,
+  getInitialLocalFirstTelemetry,
+  persistLocalFirstTelemetry,
+  type LocalFirstTelemetry,
+} from './veloxa-local-first';
 import type {
   AutonomyConfig,
   BrandProfile,
@@ -60,6 +69,12 @@ const LOCAL_STORAGE_FIREBASE_CFG_KEY = 'veloxa_ai_firebase_config_v1';
 
 let cachedApp: FirebaseApp | null = null;
 let cachedDb: Firestore | null = null;
+
+function nowWibLabel(): string {
+  return (
+    new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB'
+  );
+}
 
 export function getDefaultFirebaseConnectionConfig(): VeloxaFirebaseConnectionConfig {
   const envProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'veloxa-ai-saas';
@@ -110,8 +125,7 @@ export function saveFirebaseConnectionConfig(
   const updated: VeloxaFirebaseConnectionConfig = {
     ...cfg,
     firebaseConnected: Boolean(cfg.projectId.trim() && cfg.apiKey.trim()),
-    lastSyncedAtWib:
-      new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+    lastSyncedAtWib: nowWibLabel(),
   };
   if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
     try {
@@ -159,42 +173,124 @@ export function getFirestoreInstance(cfg?: VeloxaFirebaseConnectionConfig): Fire
 export async function syncWorkspaceSnapshotToStore(
   snapshot: PersistedWorkspaceSnapshot,
   cfg?: VeloxaFirebaseConnectionConfig,
-): Promise<{ syncedToFirestore: boolean; syncedToLocal: boolean }> {
+  options?: { forceCloudPush?: boolean },
+): Promise<{
+  syncedToFirestore: boolean;
+  syncedToLocal: boolean;
+  telemetry: LocalFirstTelemetry;
+}> {
+  const telemetry = getInitialLocalFirstTelemetry();
+  const fingerprintPayload = {
+    brand: snapshot.brand,
+    activePlanId: snapshot.activePlanId,
+    postsUsedThisMonth: snapshot.postsUsedThisMonth,
+    connections: snapshot.connections,
+    metaAccount: snapshot.metaAccount,
+    vaultAssetsCount: snapshot.vaultAssets.length,
+    autonomyConfig: snapshot.autonomyConfig,
+    eventCampaignsCount: snapshot.eventCampaigns.length,
+    draftsCount: snapshot.drafts.length,
+    metaAdCampaignsCount: snapshot.metaAdCampaigns.length,
+    tenantsCount: snapshot.tenants.length,
+    tenantsMrr: snapshot.tenants.map((t) => `${t.workspaceId}:${t.planId}`).join(','),
+  };
+  const nextHash = computePayloadFingerprint(fingerprintPayload);
+
   let syncedToLocal = false;
   if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
     try {
       window.localStorage.setItem(LOCAL_STORAGE_WORKSPACE_KEY, JSON.stringify(snapshot));
       syncedToLocal = true;
+      telemetry.localWrites += 1;
+      telemetry.lastLocalSaveWib = nowWibLabel();
     } catch {
       syncedToLocal = false;
     }
   }
 
+  // Local-First Deduplication: Skip Firestore write if hash matches and forceCloudPush is false
+  if (nextHash === telemetry.lastPayloadHash && !options?.forceCloudPush) {
+    telemetry.firestoreOpsSaved += 1;
+    telemetry.dirtyPendingCloudSync = false;
+    persistLocalFirstTelemetry(telemetry);
+    return { syncedToFirestore: false, syncedToLocal, telemetry };
+  }
+
   const db = getFirestoreInstance(cfg);
   if (!db) {
-    return { syncedToFirestore: false, syncedToLocal };
+    telemetry.lastPayloadHash = nextHash;
+    telemetry.dirtyPendingCloudSync = true;
+    persistLocalFirstTelemetry(telemetry);
+    return { syncedToFirestore: false, syncedToLocal, telemetry };
+  }
+
+  // Coalesce rapid mutations unless explicitly forced to push to Cloud Firestore
+  if (!options?.forceCloudPush) {
+    telemetry.lastPayloadHash = nextHash;
+    telemetry.firestoreOpsSaved += 1;
+    telemetry.dirtyPendingCloudSync = true;
+    persistLocalFirstTelemetry(telemetry);
+    return { syncedToFirestore: false, syncedToLocal, telemetry };
   }
 
   try {
     const wsRef = doc(db, 'workspaces', snapshot.brand.workspaceId);
     await setDoc(wsRef, snapshot, { merge: true });
-    return { syncedToFirestore: true, syncedToLocal };
+    telemetry.firestoreWrites += 1;
+    telemetry.lastPayloadHash = nextHash;
+    telemetry.lastCloudSyncWib = nowWibLabel();
+    telemetry.dirtyPendingCloudSync = false;
+    persistLocalFirstTelemetry(telemetry);
+    return { syncedToFirestore: true, syncedToLocal, telemetry };
   } catch {
-    return { syncedToFirestore: false, syncedToLocal };
+    telemetry.dirtyPendingCloudSync = true;
+    persistLocalFirstTelemetry(telemetry);
+    return { syncedToFirestore: false, syncedToLocal, telemetry };
   }
 }
 
 export async function loadWorkspaceSnapshotFromStore(
   workspaceId: string,
   cfg?: VeloxaFirebaseConnectionConfig,
-): Promise<PersistedWorkspaceSnapshot | null> {
+  options?: { forceCloudPull?: boolean },
+): Promise<{ snapshot: PersistedWorkspaceSnapshot | null; telemetry: LocalFirstTelemetry }> {
+  const telemetry = getInitialLocalFirstTelemetry();
+
+  // 1. LOCAL-FIRST READ (0ms latency, 0 Firestore Read Cost if within 15-minute TTL)
+  if (
+    !options?.forceCloudPull &&
+    typeof window !== 'undefined' &&
+    typeof window.localStorage?.getItem === 'function'
+  ) {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_STORAGE_WORKSPACE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedWorkspaceSnapshot;
+        const ageMs = Date.now() - new Date(parsed.updatedAtIso || 0).getTime();
+        if (!Number.isNaN(ageMs) && ageMs < LOCAL_CACHE_TTL_MS) {
+          telemetry.localReads += 1;
+          telemetry.firestoreOpsSaved += 1;
+          persistLocalFirstTelemetry(telemetry);
+          return { snapshot: parsed, telemetry };
+        }
+      }
+    } catch {
+      // proceed to cloud fallback
+    }
+  }
+
+  // 2. CLOUD FIRESTORE FALLBACK (Only when local cache is missing/expired or forceCloudPull=true)
   const db = getFirestoreInstance(cfg);
   if (db) {
     try {
       const wsRef = doc(db, 'workspaces', workspaceId);
       const snap = await getDoc(wsRef);
+      telemetry.firestoreReads += 1;
       if (snap.exists()) {
-        return snap.data() as PersistedWorkspaceSnapshot;
+        const cloudData = snap.data() as PersistedWorkspaceSnapshot;
+        telemetry.lastCloudSyncWib = nowWibLabel();
+        persistLocalFirstTelemetry(telemetry);
+        return { snapshot: cloudData, telemetry };
       }
     } catch {
       // fallback to local storage
@@ -205,11 +301,13 @@ export async function loadWorkspaceSnapshotFromStore(
     try {
       const raw = window.localStorage.getItem(LOCAL_STORAGE_WORKSPACE_KEY);
       if (raw) {
-        return JSON.parse(raw) as PersistedWorkspaceSnapshot;
+        telemetry.localReads += 1;
+        persistLocalFirstTelemetry(telemetry);
+        return { snapshot: JSON.parse(raw) as PersistedWorkspaceSnapshot, telemetry };
       }
     } catch {
-      return null;
+      return { snapshot: null, telemetry };
     }
   }
-  return null;
+  return { snapshot: null, telemetry };
 }

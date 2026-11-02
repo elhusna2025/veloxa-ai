@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BRAND_PRESETS,
   SUBSCRIPTION_PLANS,
@@ -13,6 +13,11 @@ import {
   generateBrandContentDraft,
   runMetaAdsAutonomousOptimizer,
 } from '@/lib/veloxa-engine';
+import {
+  calculateFirestoreCostSavingsPct,
+  getInitialLocalFirstTelemetry,
+  type LocalFirstTelemetry,
+} from '@/lib/veloxa-local-first';
 import { VELOXA_OPENAI_AGENTS } from '@/lib/veloxa-openai-agents';
 import {
   getDefaultFirebaseConnectionConfig,
@@ -34,10 +39,16 @@ import {
   buildInitialMetaAdCampaigns,
 } from '@/lib/veloxa-seed-data';
 import { getCentralOAuthCallbackUri, pickBrandAssetFromDevice } from '@/lib/veloxa-mobile-bridge';
+import {
+  buildRenderedVisualSvgDataUrl,
+  downloadDraftPosterSvg,
+  speakDraftVoiceoverIndonesian,
+} from '@/lib/veloxa-visual-renderer';
 import type {
   AutonomyConfig,
   BrandProfile,
   BrandVaultAsset,
+  BusinessCategory,
   CentralPlatformCredentials,
   ChannelConnectionState,
   ContentDraft,
@@ -56,16 +67,21 @@ import {
   Bot,
   Camera,
   CheckCircle2,
+  CreditCard,
+  Download,
   Flame,
   LayoutDashboard,
   Lock,
   Megaphone,
+  Plus,
+  RefreshCw,
   Rocket,
   Send,
   ShieldCheck,
   Smartphone,
   Sparkles,
   Upload,
+  Volume2,
   Wand2,
   Zap,
 } from 'lucide-react';
@@ -155,22 +171,63 @@ export default function VeloxaAiPlatformPage() {
   const [adAgeMax, setAdAgeMax] = useState<number>(44);
   const [adCustomInterest, setAdCustomInterest] = useState<string>('Marathon & Garmin');
 
-  // Super Admin state
+  // Super Admin & Local-First Telemetry state
   const [tenants, setTenants] = useState<TenantWorkspaceSummary[]>(INITIAL_TENANT_WORKSPACES);
   const [centralCreds] = useState<CentralPlatformCredentials>(INITIAL_CENTRAL_CREDENTIALS);
   const [firebaseCfg, setFirebaseCfg] = useState<VeloxaFirebaseConnectionConfig>(() =>
     getDefaultFirebaseConnectionConfig(),
+  );
+  const [localTelemetry, setLocalTelemetry] = useState<LocalFirstTelemetry>(() =>
+    getInitialLocalFirstTelemetry(),
   );
   const [openAiInputKey, setOpenAiInputKey] = useState<string>('');
   const [statusBanner, setStatusBanner] = useState<string>(
     'Veloxa AI aktif · Seluruh 4 kanal sosmed (IG, FB, TikTok, YT Shorts) & AI Agent Meta Ads siap dijalankan.',
   );
 
+  // Stage 1-4 Native <dialog> Modal Refs (modern-web-guidance: dialog)
+  const onboardingDialogRef = useRef<HTMLDialogElement | null>(null);
+  const oauthDialogRef = useRef<HTMLDialogElement | null>(null);
+  const billingDialogRef = useRef<HTMLDialogElement | null>(null);
+
+  // Stage 1: New Business Onboarding Form State
+  const [onboardBusinessName, setOnboardBusinessName] = useState<string>('');
+  const [onboardCity, setOnboardCity] = useState<string>('Bandung');
+  const [onboardCategory, setOnboardCategory] = useState<BusinessCategory>('cafe_fnb');
+  const [onboardOfferingTitle, setOnboardOfferingTitle] = useState<string>('');
+  const [onboardOwnerEmail, setOnboardOwnerEmail] = useState<string>('owner@bisnisbaru.id');
+  const [onboardPlanId, setOnboardPlanId] = useState<SubscriptionPlanId>('growth_1000k');
+
+  // Stage 2: Studio Voiceover Playback State
+  const [playingVoiceoverDraftId, setPlayingVoiceoverDraftId] = useState<string | null>(null);
+
+  // Stage 3: OAuth & Meta Ads Customizer State
+  const [editingChannel, setEditingChannel] = useState<SocialChannelId>('instagram');
+  const [editingChannelHandle, setEditingChannelHandle] = useState<string>('@nusantararun.id');
+  const [editingMetaAdAccountId, setEditingMetaAdAccountId] = useState<string>('act_889920144512');
+
+  // Stage 4: Billing & QRIS Checkout State
+  const [selectedCheckoutPlanId, setSelectedCheckoutPlanId] =
+    useState<SubscriptionPlanId>('pro_1500k');
+  const [paymentMethodTab, setPaymentMethodTab] = useState<'qris' | 'va_bca'>('qris');
+  const [billingReceipts, setBillingReceipts] = useState<
+    Array<{ id: string; workspaceName: string; planName: string; amountIdr: number; paidAtWib: string }>
+  >([
+    {
+      id: 'INV-VLX-20261101',
+      workspaceName: 'Nusantara Run Festival',
+      planName: 'Veloxa Pro + AI Meta Ads',
+      amountIdr: 1_500_000,
+      paidAtWib: '01 Nov 2026, 09:15 WIB',
+    },
+  ]);
+
   useEffect(() => {
     const savedCfg = loadSavedFirebaseConfig();
     setFirebaseCfg(savedCfg);
     void loadWorkspaceSnapshotFromStore(BRAND_PRESETS.running_event.workspaceId, savedCfg).then(
-      (snap) => {
+      ({ snapshot: snap, telemetry }) => {
+        setLocalTelemetry(telemetry);
         if (!snap) return;
         setBrand(snap.brand);
         setActivePlanId(snap.activePlanId);
@@ -204,7 +261,9 @@ export default function VeloxaAiPlatformPage() {
         updatedAtIso: new Date().toISOString(),
       },
       firebaseCfg,
-    );
+    ).then((res) => {
+      setLocalTelemetry(res.telemetry);
+    });
   }, [
     brand,
     activePlanId,
@@ -222,6 +281,259 @@ export default function VeloxaAiPlatformPage() {
 
   const currentPlan = SUBSCRIPTION_PLANS[activePlanId];
   const adminSummary = useMemo(() => calculatePlatformAdminMetrics(tenants), [tenants]);
+  const firestoreSavingsPct = useMemo(
+    () => calculateFirestoreCostSavingsPct(localTelemetry),
+    [localTelemetry],
+  );
+
+  const handleForceCloudSync = async () => {
+    const res = await syncWorkspaceSnapshotToStore(
+      {
+        brand,
+        activePlanId,
+        postsUsedThisMonth,
+        connections,
+        metaAccount,
+        vaultAssets,
+        autonomyConfig,
+        eventCampaigns,
+        drafts,
+        metaAdCampaigns,
+        tenants,
+        updatedAtIso: new Date().toISOString(),
+      },
+      firebaseCfg,
+      { forceCloudPush: true },
+    );
+    setLocalTelemetry(res.telemetry);
+    setStatusBanner(
+      res.syncedToFirestore
+        ? `Snapshot Local-First (${res.telemetry.lastPayloadHash}) berhasil disinkronkan ke Cloud Firestore (veloxa-ai-saas)!`
+        : `Snapshot tersimpan di Local-First Cache (${res.telemetry.lastPayloadHash}) · Hemat ${firestoreSavingsPct}% operasi Firestore.`,
+    );
+  };
+
+  const handleCompleteNewBusinessOnboarding = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = onboardBusinessName.trim() || 'Kopi Roastery Braga';
+    const cleanCity = onboardCity.trim() || 'Bandung';
+    const cleanOffering = onboardOfferingTitle.trim() || `Paket Spesial ${cleanName}`;
+    const newWsId = `ws_custom_${Date.now()}`;
+    const planSpec = SUBSCRIPTION_PLANS[onboardPlanId];
+
+    const createdBrand: BrandProfile = {
+      workspaceId: newWsId,
+      businessName: cleanName,
+      category: onboardCategory,
+      city: cleanCity,
+      targetAudience: `Pelanggan & komunitas ${cleanName} di ${cleanCity} (18-45 tahun)`,
+      brandTone: 'Ramah, modern, autentik, dan persuasif khas brand lokal populer',
+      primaryColorHex: '#EC749B',
+      accentColorHex: '#FFFFFF',
+      visualVibe: 'Clean bright minimalist dengan fokus foto produk/dokumentasi asli',
+      whatsappNumber: '6281299004411',
+      websiteUrl: `https://veloxa.ai/${cleanName.toLowerCase().replace(/\s+/g, '-')}`,
+      offerings: [
+        {
+          id: `off_${Date.now()}`,
+          title: cleanOffering,
+          category: onboardCategory === 'running_event' ? 'event' : 'product',
+          priceLabel: 'Promo Spesial Minggu Ini',
+          highlight: `Unggulan utama ${cleanName} di ${cleanCity}`,
+        },
+      ],
+      defaultCta: `Klik link bio / WhatsApp ${cleanName} (${cleanCity}) sekarang!`,
+      forbiddenWords: ['murahan', 'abal-abal', 'palsu'],
+      prioritizeRealAssets: true,
+    };
+
+    const econ = calculateTenantUnitEconomics({
+      planId: onboardPlanId,
+      postsPublishedThisMonth: 1,
+    });
+
+    const newTenantSummary: TenantWorkspaceSummary = {
+      workspaceId: newWsId,
+      businessName: cleanName,
+      ownerName: cleanName.split(' ')[0] + ' Owner',
+      ownerEmail: onboardOwnerEmail.trim() || 'owner@bisnisbaru.id',
+      category: onboardCategory,
+      planId: onboardPlanId,
+      subscriptionStatus: 'active',
+      postsPublishedThisMonth: 1,
+      monthlyPostQuota: planSpec.monthlyPostQuota,
+      connectedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
+      metaAdsConnected: true,
+      activeMetaCampaigns: 1,
+      monthlySubscriptionRevenueIdr: planSpec.priceMonthlyIdr,
+      estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
+      grossMarginPct: econ.grossMarginPct,
+    };
+
+    setBrand(createdBrand);
+    setActivePlanId(onboardPlanId);
+    setPostsUsedThisMonth(1);
+    setAdCity(cleanCity);
+    setAdPromoTitle(cleanOffering);
+    setTenants((prev) => [newTenantSummary, ...prev]);
+    setSelectedPresetKey('custom');
+    setOnboardBusinessName('');
+    setOnboardOfferingTitle('');
+    onboardingDialogRef.current?.close();
+    setStatusBanner(
+      `Selamat datang! Workspace bisnis baru "${cleanName}" (${cleanCity}) berhasil dibuat dengan paket ${planSpec.name}!`,
+    );
+  };
+
+  const handleRealFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isVideo = file.type.startsWith('video/');
+    const mediaType: 'photo' | 'video_reel' = isVideo ? 'video_reel' : newAssetMediaType;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl =
+        typeof reader.result === 'string'
+          ? reader.result
+          : 'https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80';
+      const cleanTitle =
+        newAssetTitle.trim() ||
+        file.name.replace(/\.[^.]+$/, '') ||
+        `Upload ${brand.businessName}`;
+
+      const created: BrandVaultAsset = {
+        id: `vault_file_${Date.now()}`,
+        workspaceId: brand.workspaceId,
+        drawer: newAssetDrawer,
+        mediaType,
+        title: cleanTitle,
+        description:
+          newAssetDrawer === 'style_reference'
+            ? `File referensi "${file.name}" diunggah langsung dari perangkat & diekstrak Style DNA-nya.`
+            : `File dokumentasi asli "${file.name}" milik ${brand.businessName} siap dipakai Studio & Agent Otonom.`,
+        previewUrl: dataUrl,
+        aspectRatio: mediaType === 'video_reel' ? '9:16' : '4:5',
+        tags: [
+          newAssetDrawer === 'style_reference' ? 'style-dna' : 'aset-asli-device',
+          brand.category,
+        ],
+        uploadedFrom: viewportMode === 'mobile_native' ? 'ios' : 'web',
+        createdAt: 'Baru saja (File Perangkat)',
+        usedInPostsCount: 1,
+        extractedStyleDna:
+          newAssetDrawer === 'style_reference'
+            ? extractStyleDnaFromReference({
+                title: cleanTitle,
+                description: brand.visualVibe,
+                mediaType,
+                category: brand.category,
+              })
+            : undefined,
+      };
+      setVaultAssets((prev) => [created, ...prev]);
+      setNewAssetTitle('');
+      setStatusBanner(
+        `File perangkat "${file.name}" berhasil diunggah ke ${
+          newAssetDrawer === 'style_reference' ? 'Laci 1 (Style DNA)' : 'Laci 2 (Aset Asli Bisnis)'
+        }!`,
+      );
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
+    const found = connections.find((c) => c.channel === channel);
+    setEditingChannel(channel);
+    setEditingChannelHandle(found?.handle || `@${brand.businessName.toLowerCase().replace(/\s+/g, '')}`);
+    setEditingMetaAdAccountId(metaAccount.adAccountId);
+    oauthDialogRef.current?.showModal();
+  };
+
+  const handleSaveOAuthChannelCustomConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanHandle = editingChannelHandle.trim() || '@veloxabrand.id';
+    const cleanAct = editingMetaAdAccountId.trim().startsWith('act_')
+      ? editingMetaAdAccountId.trim()
+      : `act_${editingMetaAdAccountId.trim().replace(/\D/g, '') || '889920144512'}`;
+
+    setConnections((prev) =>
+      prev.map((c) =>
+        c.channel === editingChannel
+          ? {
+              ...c,
+              connected: true,
+              handle: cleanHandle,
+              accountName: `${brand.businessName} (${CHANNEL_META[editingChannel].shortLabel})`,
+              oauthMode: 'direct_publish',
+              lastPublishedAt: 'Terhubung via OAuth 1-Klik',
+            }
+          : c,
+      ),
+    );
+    setMetaAccount((prev) => ({
+      ...prev,
+      connected: true,
+      adAccountId: cleanAct,
+    }));
+    oauthDialogRef.current?.close();
+    setStatusBanner(
+      `Akun ${CHANNEL_META[editingChannel].shortLabel} (${cleanHandle}) & Meta Ads (${cleanAct}) berhasil dikonfigurasi!`,
+    );
+  };
+
+  const handleConfirmQrisSubscriptionUpgrade = () => {
+    const spec = SUBSCRIPTION_PLANS[selectedCheckoutPlanId];
+    setActivePlanId(selectedCheckoutPlanId);
+    setTenants((prev) =>
+      prev.map((t, idx) => {
+        if (t.workspaceId !== brand.workspaceId && idx !== 0) return t;
+        const econ = calculateTenantUnitEconomics({
+          planId: selectedCheckoutPlanId,
+          postsPublishedThisMonth: t.postsPublishedThisMonth,
+        });
+        return {
+          ...t,
+          planId: selectedCheckoutPlanId,
+          monthlyPostQuota: spec.monthlyPostQuota,
+          monthlySubscriptionRevenueIdr: spec.priceMonthlyIdr,
+          estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
+          grossMarginPct: econ.grossMarginPct,
+        };
+      }),
+    );
+    setBillingReceipts((prev) => [
+      {
+        id: `INV-VLX-${Date.now().toString().slice(-6)}`,
+        workspaceName: brand.businessName,
+        planName: spec.name,
+        amountIdr: spec.priceMonthlyIdr,
+        paidAtWib: 'Baru saja · Lunas QRIS',
+      },
+      ...prev,
+    ]);
+    billingDialogRef.current?.close();
+    setStatusBanner(
+      `Pembayaran Lunas! Paket "${spec.name}" (${formatIdr(spec.priceMonthlyIdr)}/bln · Kuota ${spec.monthlyPostQuota} konten) aktif untuk ${brand.businessName}!`,
+    );
+  };
+
+  const handlePlayDraftVoiceover = (draft: ContentDraft) => {
+    if (playingVoiceoverDraftId === draft.id) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      setPlayingVoiceoverDraftId(null);
+      return;
+    }
+    setPlayingVoiceoverDraftId(draft.id);
+    const res = speakDraftVoiceoverIndonesian(draft, () => {
+      setPlayingVoiceoverDraftId(null);
+    });
+    setStatusBanner(
+      `Memutar Voiceover AI Bahasa Indonesia: "${res.scriptText.slice(0, 85)}..."`,
+    );
+  };
 
   const handleSelectBrandPreset = (key: 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom') => {
     setSelectedPresetKey(key);
@@ -319,7 +631,9 @@ export default function VeloxaAiPlatformPage() {
       return;
     }
 
-    const activeCamp = eventCampaigns.find((c) => c.status === 'active');
+    const activeCamp = eventCampaigns.find(
+      (c) => c.status === 'active' && c.workspaceId === brand.workspaceId,
+    );
     let created = generateBrandContentDraft({
       brand,
       format: studioFormat,
@@ -597,19 +911,39 @@ export default function VeloxaAiPlatformPage() {
           </div>
         </div>
 
-        {/* Status Toast Strip — Clean White with Soft Pink Dot */}
+        {/* Status Toast Strip — Clean White with Soft Pink Dot + Local-First & Billing Trigger */}
         <div className="border-t border-neutral-100 bg-white px-4 py-1.5 text-xs text-neutral-600">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-2">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-2 truncate">
               <span className="h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
               {statusBanner}
             </span>
-            {activeRole === 'user' && (
-              <span className="shrink-0 font-semibold text-neutral-700">
-                Paket Aktif: <strong className="text-[#D85A88]">{currentPlan.name}</strong> ({formatIdr(currentPlan.priceMonthlyIdr)}/bln) · Kuota{' '}
-                {postsUsedThisMonth}/{currentPlan.monthlyPostQuota}
-              </span>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="local-first-sync-btn"
+                onClick={() => void handleForceCloudSync()}
+                className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+              >
+                <RefreshCw className="h-3 w-3 text-[#EC749B]" />
+                Local-First Hemat {firestoreSavingsPct}% Firestore · Sinkronkan Cloud
+              </button>
+              {activeRole === 'user' && (
+                <button
+                  type="button"
+                  data-testid="open-billing-modal-btn"
+                  onClick={() => {
+                    setSelectedCheckoutPlanId(activePlanId);
+                    billingDialogRef.current?.showModal();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88] hover:bg-pink-100/70"
+                >
+                  <CreditCard className="h-3 w-3 text-[#EC749B]" />
+                  Paket: {currentPlan.name} ({formatIdr(currentPlan.priceMonthlyIdr)}/bln) · Kuota{' '}
+                  {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} · Upgrade
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -968,6 +1302,60 @@ export default function VeloxaAiPlatformPage() {
                     </div>
                   ))}
                 </div>
+
+                {/* Local-First Cost Guard Telemetry Panel (Cendekia-Style Firestore Cost Optimization) */}
+                <div
+                  data-testid="local-first-telemetry-card"
+                  className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+                        ★ Local-First Cost Guard (Arsitektur Hemat Firestore Setara Cendekia)
+                      </span>
+                      <h3 className="mt-1.5 text-sm font-black text-neutral-900">
+                        Penghematan Biaya Read/Write Cloud Firestore: {firestoreSavingsPct}% Operasi Dihemat
+                      </h3>
+                      <p className="text-[11px] text-neutral-500">
+                        Seluruh pembacaan UI memakai Local-First Cache (TTL 15 menit, 0ms latency) & penulisan memakai deduplikasi FNV-1a Hash sehingga dokumen yang sama tidak pernah ditulis ulang ke Firestore.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleForceCloudSync()}
+                      className="rounded-xl bg-[#EC749B] px-3.5 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                    >
+                      Push Snapshot ke Cloud Firestore Sekarang
+                    </button>
+                  </div>
+
+                  <div className="mt-3 grid gap-2.5 sm:grid-cols-4">
+                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+                      <span className="text-[11px] text-neutral-500">Local Reads/Writes (Rp0):</span>
+                      <p className="mt-0.5 text-sm font-black text-neutral-900">
+                        {localTelemetry.localReads} Read · {localTelemetry.localWrites} Write
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+                      <span className="text-[11px] text-neutral-500">Operasi Firestore Dihemat:</span>
+                      <p className="mt-0.5 text-sm font-black text-[#D85A88]">
+                        {localTelemetry.firestoreOpsSaved}x Read/Write Dicegah
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+                      <span className="text-[11px] text-neutral-500">FNV-1a Payload Fingerprint:</span>
+                      <p className="mt-0.5 font-mono text-xs font-bold text-neutral-900">
+                        {localTelemetry.lastPayloadHash}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+                      <span className="text-[11px] text-neutral-500">Sinkronisasi Terakhir:</span>
+                      <p className="mt-0.5 text-xs font-bold text-neutral-900">
+                        {localTelemetry.lastCloudSyncWib || localTelemetry.lastLocalSaveWib}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </section>
             </div>
           ) : (
@@ -975,7 +1363,7 @@ export default function VeloxaAiPlatformPage() {
                ROLE 2: USER WORKSPACE — DOMINAN PUTIH BERSIH + BUTTON/AKSEN SOFT PINK
                ====================================================================== */
             <div className="space-y-6" data-testid="user-workspace-dashboard">
-              {/* Industry Preset Switcher Bar */}
+              {/* Industry Preset Switcher Bar + New Business Onboarding Wizard Trigger */}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200/80 bg-white p-4 shadow-2xs">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-2xs">
@@ -989,7 +1377,7 @@ export default function VeloxaAiPlatformPage() {
                       </span>
                     </div>
                     <p className="text-xs text-neutral-500">
-                      Contoh Workspace Pelanggan · Pilih simulasi jenis bisnis di sebelah kanan:
+                      Contoh Workspace Pelanggan · Pilih simulasi jenis bisnis atau daftarkan brand baru:
                     </p>
                   </div>
                 </div>
@@ -1016,6 +1404,15 @@ export default function VeloxaAiPlatformPage() {
                       {item.label}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    data-testid="open-onboarding-modal-btn"
+                    onClick={() => onboardingDialogRef.current?.showModal()}
+                    className="inline-flex items-center gap-1 rounded-xl border border-pink-300 bg-pink-50/80 px-3 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Bisnis Baru
+                  </button>
                 </div>
               </div>
 
@@ -1151,17 +1548,27 @@ export default function VeloxaAiPlatformPage() {
                               </p>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => handleToggleChannel(conn.channel)}
-                              className={`mt-4 w-full rounded-xl py-2 text-xs font-bold transition ${
-                                conn.connected
-                                  ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
-                                  : 'bg-[#EC749B] text-white shadow-2xs hover:bg-[#DF608A]'
-                              }`}
-                            >
-                              {conn.connected ? 'Putuskan / Hubungkan Ulang' : `Hubungkan ${meta.shortLabel}`}
-                            </button>
+                            <div className="mt-4 flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleChannel(conn.channel)}
+                                className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${
+                                  conn.connected
+                                    ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
+                                    : 'bg-[#EC749B] text-white shadow-2xs hover:bg-[#DF608A]'
+                                }`}
+                              >
+                                {conn.connected ? 'Putuskan' : `Hubungkan ${meta.shortLabel}`}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`oauth-config-btn-${conn.channel}`}
+                                onClick={() => handleOpenOAuthConfigModal(conn.channel)}
+                                className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                              >
+                                Atur OAuth
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -1456,13 +1863,29 @@ export default function VeloxaAiPlatformPage() {
                             <Upload className="mr-1.5 inline h-4 w-4" />
                             Simpan ke {newAssetDrawer === 'style_reference' ? 'Laci Referensi Gaya' : 'Galeri Aset Asli'}
                           </button>
+                          <label
+                            htmlFor="veloxa-real-file-upload"
+                            data-testid="real-file-upload-label"
+                            className="cursor-pointer rounded-xl border border-pink-200 bg-pink-50/70 px-3.5 py-3 font-bold text-[#D85A88] hover:bg-pink-100/70"
+                          >
+                            <Upload className="mr-1 inline h-4 w-4 text-[#EC749B]" />
+                            Pilih File Laptop/HP
+                            <input
+                              id="veloxa-real-file-upload"
+                              data-testid="real-file-upload-input"
+                              type="file"
+                              accept="image/*,video/*"
+                              onChange={handleRealFileInputChange}
+                              className="sr-only"
+                            />
+                          </label>
                           <button
                             type="button"
                             onClick={() => void handleUploadVaultAsset(true)}
-                            className="rounded-xl border border-neutral-200 bg-white px-4 py-3 font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                            className="rounded-xl border border-neutral-200 bg-white px-3.5 py-3 font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                           >
-                            <Camera className="mr-1.5 inline h-4 w-4 text-[#EC749B]" />
-                            Kamera / File HP
+                            <Camera className="mr-1 inline h-4 w-4 text-[#EC749B]" />
+                            Kamera HP
                           </button>
                         </div>
                       </div>
@@ -1627,6 +2050,29 @@ export default function VeloxaAiPlatformPage() {
                             )}
                             <button
                               type="button"
+                              data-testid={`download-poster-btn-${draft.id}`}
+                              onClick={() => {
+                                downloadDraftPosterSvg(draft, brand);
+                                setStatusBanner(`Visual poster "${draft.title}" berhasil diunduh ke perangkat Anda!`);
+                              }}
+                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                            >
+                              <Download className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
+                              Unduh Visual Poster
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`play-voiceover-btn-${draft.id}`}
+                              onClick={() => handlePlayDraftVoiceover(draft)}
+                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                            >
+                              <Volume2 className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
+                              {playingVoiceoverDraftId === draft.id
+                                ? 'Hentikan Voiceover AI'
+                                : 'Putar Voiceover AI (ID)'}
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => handleDesignMetaAdsWithAi(draft)}
                               className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                             >
@@ -1636,31 +2082,47 @@ export default function VeloxaAiPlatformPage() {
                           </div>
                         </div>
 
-                        {/* Quality Gate Proof */}
-                        <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5 text-xs text-neutral-800">
-                          <div className="flex items-center justify-between font-bold text-neutral-900">
-                            <span>
-                              <span className="text-[#D85A88]">✓ Self-Healing Quality Gate:</span> {draft.qualityReview.score}/100 (0 Masalah Tersisa)
-                            </span>
-                            <span className="text-neutral-500">Iterasi perbaikan: {draft.qualityReview.repairAttempts}x</span>
+                        {/* Live Rendered Visual Poster / Carousel Preview + Quality Gate */}
+                        <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr]">
+                          <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-2">
+                            <img
+                              data-testid={`rendered-poster-img-${draft.id}`}
+                              src={buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })}
+                              alt={`Pratinjau Visual ${draft.title}`}
+                              className="mx-auto max-h-60 w-auto rounded-xl border border-neutral-200 object-contain"
+                            />
                           </div>
-                          <p className="mt-1 text-neutral-600">{draft.qualityReview.summary}</p>
-                        </div>
+                          <div className="space-y-3">
+                            {/* Quality Gate Proof */}
+                            <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5 text-xs text-neutral-800">
+                              <div className="flex items-center justify-between font-bold text-neutral-900">
+                                <span>
+                                  <span className="text-[#D85A88]">✓ Self-Healing Quality Gate:</span> {draft.qualityReview.score}/100 (0 Masalah Tersisa)
+                                </span>
+                                <span className="text-neutral-500">Iterasi perbaikan: {draft.qualityReview.repairAttempts}x</span>
+                              </div>
+                              <p className="mt-1 text-neutral-600">{draft.qualityReview.summary}</p>
+                            </div>
 
-                        {/* Multi-Channel Distribution Badges */}
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-bold text-neutral-500">Distribusi Lintas Platform:</span>
-                          {draft.channelStatuses.map((cs) => (
-                            <span
-                              key={cs.channel}
-                              className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${CHANNEL_META[cs.channel].badgeClass}`}
-                            >
-                              {CHANNEL_META[cs.channel].shortLabel}:{' '}
-                              <span className="text-[#D85A88]">
-                                {cs.status === 'published' ? '✓ Sudah Tayang' : '● Siap Kirim'}
-                              </span>
-                            </span>
-                          ))}
+                            {/* Multi-Channel Distribution Badges */}
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-bold text-neutral-500">Distribusi Lintas Platform:</span>
+                              {draft.channelStatuses.map((cs) => (
+                                <span
+                                  key={cs.channel}
+                                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${CHANNEL_META[cs.channel].badgeClass}`}
+                                >
+                                  {CHANNEL_META[cs.channel].shortLabel}:{' '}
+                                  <span className="text-[#D85A88]">
+                                    {cs.status === 'published' ? '✓ Sudah Tayang' : '● Siap Kirim'}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                            <p className="rounded-xl border border-neutral-100 bg-white p-3 text-xs text-neutral-600">
+                              <strong className="text-neutral-900">Caption Siap Kirim:</strong> {draft.caption}
+                            </p>
+                          </div>
                         </div>
 
                         {/* Storyboard / Slides Preview — Clean White Cards */}
@@ -2406,6 +2868,361 @@ export default function VeloxaAiPlatformPage() {
           </nav>
         )}
       </main>
+
+      {/* ========================================================================
+         STAGE 1 MODAL: NEW BUSINESS ONBOARDING WIZARD (<dialog> modern-web-guidance)
+         ======================================================================== */}
+      <dialog
+        ref={onboardingDialogRef}
+        aria-labelledby="onboarding-dialog-title"
+        data-testid="onboarding-dialog"
+        className="w-full max-w-lg rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div>
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+              Tahap 1 · Onboarding Workspace Pelanggan Baru
+            </span>
+            <h2 id="onboarding-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
+              Daftarkan Brand / Bisnis Baru ke Veloxa AI
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => onboardingDialogRef.current?.close()}
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600 hover:text-neutral-900"
+          >
+            Tutup
+          </button>
+        </div>
+
+        <form onSubmit={handleCompleteNewBusinessOnboarding} className="mt-4 space-y-3 text-xs">
+          <div>
+            <label htmlFor="onboard-biz-name" className="font-bold text-neutral-700">
+              Nama Bisnis / Brand / Event
+            </label>
+            <input
+              id="onboard-biz-name"
+              data-testid="onboard-biz-name-input"
+              type="text"
+              required
+              placeholder="Contoh: Kopi Roastery Braga / Surabaya Marathon"
+              value={onboardBusinessName}
+              onChange={(e) => setOnboardBusinessName(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <label htmlFor="onboard-category" className="font-bold text-neutral-700">
+                Kategori Industri
+              </label>
+              <select
+                id="onboard-category"
+                value={onboardCategory}
+                onChange={(e) => setOnboardCategory(e.target.value as BusinessCategory)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-bold text-neutral-900"
+              >
+                <option value="cafe_fnb">Cafe, Resto & F&B</option>
+                <option value="running_event">Event Lari / Konser / EO</option>
+                <option value="clinic_beauty">Klinik Kecantikan & Kesehatan</option>
+                <option value="fashion_retail">Fashion & Retail Lokal</option>
+                <option value="custom">Bisnis Kustom Lainnya</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="onboard-city" className="font-bold text-neutral-700">
+                Kota Target Utama
+              </label>
+              <input
+                id="onboard-city"
+                data-testid="onboard-city-input"
+                type="text"
+                required
+                value={onboardCity}
+                onChange={(e) => setOnboardCity(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="onboard-offering" className="font-bold text-neutral-700">
+              Produk / Menu / Tiket Event Unggulan
+            </label>
+            <input
+              id="onboard-offering"
+              data-testid="onboard-offering-input"
+              type="text"
+              placeholder="Contoh: Es Kopi Susu Gula Aren Rp22.000"
+              value={onboardOfferingTitle}
+              onChange={(e) => setOnboardOfferingTitle(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <label htmlFor="onboard-email" className="font-bold text-neutral-700">
+                Email Pemilik (Tenant)
+              </label>
+              <input
+                id="onboard-email"
+                type="email"
+                value={onboardOwnerEmail}
+                onChange={(e) => setOnboardOwnerEmail(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
+              />
+            </div>
+            <div>
+              <label htmlFor="onboard-plan" className="font-bold text-neutral-700">
+                Paket Langganan Awal
+              </label>
+              <select
+                id="onboard-plan"
+                value={onboardPlanId}
+                onChange={(e) => setOnboardPlanId(e.target.value as SubscriptionPlanId)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-bold text-neutral-900"
+              >
+                <option value="starter_500k">Starter (Rp500rb/bln)</option>
+                <option value="growth_1000k">Growth (Rp1jt/bln)</option>
+                <option value="pro_1500k">Pro + Meta Ads (Rp1,5jt/bln)</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3">
+            <button
+              type="button"
+              onClick={() => onboardingDialogRef.current?.close()}
+              className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-bold text-neutral-700"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              data-testid="submit-onboarding-btn"
+              className="rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+            >
+              Buat Workspace & Aktifkan Brand Brain
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      {/* ========================================================================
+         STAGE 3 MODAL: OAUTH 1-CLICK & META ADS HANDLE CUSTOMIZER (<dialog>)
+         ======================================================================== */}
+      <dialog
+        ref={oauthDialogRef}
+        aria-labelledby="oauth-dialog-title"
+        data-testid="oauth-config-dialog"
+        className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div>
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+              Tahap 3 · OAuth 1-Klik & Meta Marketing API
+            </span>
+            <h2 id="oauth-dialog-title" className="mt-1 text-base font-black text-neutral-900">
+              Konfigurasi Akun {CHANNEL_META[editingChannel].shortLabel} & Meta Ads
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => oauthDialogRef.current?.close()}
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600"
+          >
+            Tutup
+          </button>
+        </div>
+
+        <form onSubmit={handleSaveOAuthChannelCustomConfig} className="mt-4 space-y-3 text-xs">
+          <div>
+            <label htmlFor="oauth-handle-input" className="font-bold text-neutral-700">
+              Username / Handle {CHANNEL_META[editingChannel].shortLabel} Bisnis Anda
+            </label>
+            <input
+              id="oauth-handle-input"
+              data-testid="oauth-handle-input"
+              type="text"
+              required
+              value={editingChannelHandle}
+              onChange={(e) => setEditingChannelHandle(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="oauth-meta-act-input" className="font-bold text-neutral-700">
+              ID Akun Iklan Meta Ads Manager (act_...)
+            </label>
+            <input
+              id="oauth-meta-act-input"
+              data-testid="oauth-meta-act-input"
+              type="text"
+              required
+              value={editingMetaAdAccountId}
+              onChange={(e) => setEditingMetaAdAccountId(e.target.value)}
+              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono font-semibold text-neutral-900"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => oauthDialogRef.current?.close()}
+              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 font-bold text-neutral-700"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              data-testid="save-oauth-config-btn"
+              className="rounded-xl bg-[#EC749B] px-5 py-2 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+            >
+              Simpan & Hubungkan OAuth
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      {/* ========================================================================
+         STAGE 4 MODAL: QRIS & VIRTUAL ACCOUNT SUBSCRIPTION CHECKOUT (<dialog>)
+         ======================================================================== */}
+      <dialog
+        ref={billingDialogRef}
+        aria-labelledby="billing-dialog-title"
+        data-testid="billing-checkout-dialog"
+        className="w-full max-w-xl rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div>
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+              Tahap 4 · Pembayaran Langganan Web (Bebas Potongan 30% App Store)
+            </span>
+            <h2 id="billing-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
+              Pilih / Upgrade Paket Langganan Veloxa AI
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => billingDialogRef.current?.close()}
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600"
+          >
+            Tutup
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-4 text-xs">
+          <div className="grid grid-cols-3 gap-2">
+            {Object.values(SUBSCRIPTION_PLANS).map((plan) => (
+              <button
+                key={plan.id}
+                type="button"
+                data-testid={`select-plan-btn-${plan.id}`}
+                onClick={() => setSelectedCheckoutPlanId(plan.id)}
+                className={`rounded-2xl border p-3 text-left transition ${
+                  selectedCheckoutPlanId === plan.id
+                    ? 'border-[#EC749B] bg-pink-50/50 ring-1 ring-pink-200'
+                    : 'border-neutral-200 bg-white'
+                }`}
+              >
+                <p className="font-black text-neutral-900">{plan.name}</p>
+                <p className="mt-1 text-sm font-black text-[#D85A88]">
+                  {formatIdr(plan.priceMonthlyIdr)}
+                </p>
+                <p className="mt-0.5 text-[10px] text-neutral-500">
+                  {plan.monthlyPostQuota} Konten/bln
+                </p>
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethodTab('qris')}
+                  className={`rounded-xl px-3 py-1.5 font-bold ${
+                    paymentMethodTab === 'qris'
+                      ? 'bg-[#EC749B] text-white'
+                      : 'border border-neutral-200 bg-white text-neutral-700'
+                  }`}
+                >
+                  QRIS Instan (Semua Bank / E-Wallet)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethodTab('va_bca')}
+                  className={`rounded-xl px-3 py-1.5 font-bold ${
+                    paymentMethodTab === 'va_bca'
+                      ? 'bg-[#EC749B] text-white'
+                      : 'border border-neutral-200 bg-white text-neutral-700'
+                  }`}
+                >
+                  BCA / Mandiri Virtual Account
+                </button>
+              </div>
+              <span className="font-black text-neutral-900">
+                Total: {formatIdr(SUBSCRIPTION_PLANS[selectedCheckoutPlanId].priceMonthlyIdr)}
+              </span>
+            </div>
+
+            {paymentMethodTab === 'qris' ? (
+              <div className="mt-3 flex items-center gap-4 rounded-xl border border-neutral-200 bg-white p-3">
+                <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50 font-mono text-[10px] font-black text-neutral-800">
+                  [QRIS VLX]
+                </div>
+                <div>
+                  <p className="font-black text-neutral-900">
+                    NMID: ID2026VELOXAAISAAS · PT Veloxa Kreasi AI
+                  </p>
+                  <p className="mt-0.5 text-neutral-500">
+                    Scan dengan BCA Mobile, Livin Mandiri, GoPay, OVO, atau ShopeePay. Kuota {SUBSCRIPTION_PLANS[selectedCheckoutPlanId].monthlyPostQuota} postingan/bulan aktif otomatis.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-3">
+                <p className="text-neutral-500">Nomor BCA Virtual Account:</p>
+                <p className="font-mono text-base font-black text-neutral-900">88012 0812 9900 441</p>
+              </div>
+            )}
+          </div>
+
+          {billingReceipts.length > 0 && (
+            <div className="rounded-xl border border-neutral-200 bg-white p-3">
+              <p className="font-bold text-neutral-800">Riwayat Pembayaran Terakhir:</p>
+              <p className="mt-1 text-[11px] text-neutral-600">
+                ✓ {billingReceipts[0].id} · {billingReceipts[0].workspaceName} ·{' '}
+                <strong>{billingReceipts[0].planName}</strong> ({formatIdr(billingReceipts[0].amountIdr)}) —{' '}
+                <span className="font-bold text-[#D85A88]">{billingReceipts[0].paidAtWib}</span>
+              </p>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => billingDialogRef.current?.close()}
+              className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-bold text-neutral-700"
+            >
+              Tutup
+            </button>
+            <button
+              type="button"
+              data-testid="confirm-qris-payment-btn"
+              onClick={handleConfirmQrisSubscriptionUpgrade}
+              className="rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+            >
+              ✓ Simulasikan Pembayaran Lunas QRIS (Aktifkan Paket Instan)
+            </button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }

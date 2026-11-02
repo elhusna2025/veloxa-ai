@@ -49,3 +49,16 @@ body {
   z-index: 1;
   background: #ffffff;
 }
+
+/* Native <dialog> modal scroll containment (modern-web-guidance: dialog) */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgba(23, 23, 23, 0.35);
+  backdrop-filter: blur(2px);
+}
+
