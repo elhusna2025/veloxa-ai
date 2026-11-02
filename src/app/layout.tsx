@@ -2,16 +2,16 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Veloxa AI — Autonomous Social Content & Meta Ads Marketing SaaS',
+  title: 'Veloxa AI — Autonomous Social Content Studio & AI Meta Ads Agent',
   description:
-    'Platform SaaS AI Otonom untuk pembuatan konten Instagram, Facebook, TikTok, YouTube Shorts, dan AI Agent Marketing Meta Ads (Web, Android, iOS).',
+    'Platform SaaS AI Otonom untuk pembuatan konten Instagram, Facebook, TikTok, YouTube Shorts, dan AI Agent Marketing Meta Ads (Web, Android, & iOS).',
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  viewportFit: 'cover',
-  themeColor: '#0f172a',
+  maximumScale: 5,
+  themeColor: '#ffffff',
 };
 
 export default function RootLayout({
@@ -21,7 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="id">
-      <body className="min-h-dvh bg-slate-50 text-slate-900 antialiased selection:bg-indigo-600 selection:text-white">
+      <body className="min-h-dvh bg-[#FAFAFA] text-neutral-900 antialiased selection:bg-pink-100 selection:text-neutral-900">
         {children}
       </body>
     </html>

@@ -44,34 +44,19 @@ import type {
   VeloxaRole,
 } from '@/lib/veloxa-types';
 import {
-  Activity,
   Bot,
-  Calendar,
   Camera,
   CheckCircle2,
-  CreditCard,
   Flame,
-  Globe,
-  Image as ImageIcon,
-  Instagram,
-  Layers,
   LayoutDashboard,
   Lock,
   Megaphone,
-  Play,
-  Plus,
-  RefreshCw,
   Rocket,
   Send,
-  Settings,
   ShieldCheck,
   Smartphone,
   Sparkles,
-  Target,
-  TrendingUp,
   Upload,
-  Users,
-  Video,
   Wand2,
   Zap,
 } from 'lucide-react';
@@ -85,28 +70,28 @@ const CHANNEL_META: Record<
   instagram: {
     label: 'Instagram (Reels & Feed)',
     shortLabel: 'Instagram',
-    badgeClass: 'bg-pink-100 text-pink-800 border-pink-200',
+    badgeClass: 'bg-white text-neutral-700 border-neutral-200',
     supportsPhoto: true,
     supportsVideo: true,
   },
   facebook: {
     label: 'Facebook Page & Reels',
     shortLabel: 'Facebook',
-    badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+    badgeClass: 'bg-white text-neutral-700 border-neutral-200',
     supportsPhoto: true,
     supportsVideo: true,
   },
   tiktok: {
     label: 'TikTok (Video & Photo Mode)',
     shortLabel: 'TikTok',
-    badgeClass: 'bg-slate-900 text-white border-slate-700',
+    badgeClass: 'bg-white text-neutral-700 border-neutral-200',
     supportsPhoto: true,
     supportsVideo: true,
   },
   youtube_shorts: {
     label: 'YouTube Shorts (9:16)',
     shortLabel: 'YT Shorts',
-    badgeClass: 'bg-red-100 text-red-800 border-red-200',
+    badgeClass: 'bg-white text-neutral-700 border-neutral-200',
     supportsPhoto: false,
     supportsVideo: true,
   },
@@ -163,22 +148,12 @@ export default function VeloxaAiPlatformPage() {
 
   // Super Admin state
   const [tenants, setTenants] = useState<TenantWorkspaceSummary[]>(INITIAL_TENANT_WORKSPACES);
-  const [centralCreds, setCentralCreds] = useState<CentralPlatformCredentials>(INITIAL_CENTRAL_CREDENTIALS);
+  const [centralCreds] = useState<CentralPlatformCredentials>(INITIAL_CENTRAL_CREDENTIALS);
   const [statusBanner, setStatusBanner] = useState<string>(
     'Veloxa AI aktif · Seluruh 4 kanal sosmed (IG, FB, TikTok, YT Shorts) & AI Agent Meta Ads siap dijalankan.',
   );
 
   const currentPlan = SUBSCRIPTION_PLANS[activePlanId];
-  const unitEcon = useMemo(
-    () =>
-      calculateTenantUnitEconomics({
-        planId: activePlanId,
-        postsPublishedThisMonth: postsUsedThisMonth,
-        realAssetRatioPct: brand.prioritizeRealAssets ? 65 : 20,
-      }),
-    [activePlanId, postsUsedThisMonth, brand.prioritizeRealAssets],
-  );
-
   const adminSummary = useMemo(() => calculatePlatformAdminMetrics(tenants), [tenants]);
 
   const handleSelectBrandPreset = (key: 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom') => {
@@ -416,22 +391,22 @@ export default function VeloxaAiPlatformPage() {
   const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
 
   return (
-    <div className="min-h-dvh bg-slate-100/80 pb-24">
-      {/* Top Global Control Header */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-950 text-white shadow-md">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+    <div className="min-h-dvh bg-[#FAFAFA] pb-24 text-neutral-900">
+      {/* Top Global Control Header — Dominan Putih Bersih + Aksen Soft Pink */}
+      <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-emerald-400 font-black text-white shadow-md">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-xs">
               V
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-black tracking-tight">VELOXA AI</span>
-                <span className="rounded-full bg-indigo-500/20 px-2.5 py-0.5 text-[11px] font-bold text-indigo-300 ring-1 ring-indigo-400/30">
+                <span className="text-lg font-black tracking-tight text-neutral-900">VELOXA AI</span>
+                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
                   Web · Android · iOS
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-neutral-500">
                 Autonomous Social Content Studio & AI Meta Ads Marketing Agent
               </p>
             </div>
@@ -442,15 +417,15 @@ export default function VeloxaAiPlatformPage() {
             <div
               role="group"
               aria-label="Pilih Peran Aplikasi"
-              className="flex rounded-xl bg-slate-900 p-1 ring-1 ring-slate-800"
+              className="flex rounded-2xl border border-neutral-200 bg-neutral-50 p-1"
             >
               <button
                 type="button"
                 onClick={() => setActiveRole('user')}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
                   activeRole === 'user'
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-[#EC749B] text-white shadow-xs'
+                    : 'text-neutral-600 hover:bg-white hover:text-neutral-900'
                 }`}
               >
                 <Sparkles className="h-3.5 w-3.5" />
@@ -459,10 +434,10 @@ export default function VeloxaAiPlatformPage() {
               <button
                 type="button"
                 onClick={() => setActiveRole('admin')}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
                   activeRole === 'admin'
-                    ? 'bg-emerald-600 text-white shadow'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-[#EC749B] text-white shadow-xs'
+                    : 'text-neutral-600 hover:bg-white hover:text-neutral-900'
                 }`}
               >
                 <ShieldCheck className="h-3.5 w-3.5" />
@@ -475,9 +450,9 @@ export default function VeloxaAiPlatformPage() {
               onClick={() =>
                 setViewportMode((m) => (m === 'desktop_web' ? 'mobile_native' : 'desktop_web'))
               }
-              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-800"
+              className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
             >
-              <Smartphone className="h-3.5 w-3.5 text-emerald-400" />
+              <Smartphone className="h-3.5 w-3.5 text-[#EC749B]" />
               {viewportMode === 'desktop_web'
                 ? 'Tampilan: Web Desktop'
                 : 'Tampilan: Native Mobile (Android/iOS)'}
@@ -485,16 +460,16 @@ export default function VeloxaAiPlatformPage() {
           </div>
         </div>
 
-        {/* Status Toast Strip */}
-        <div className="border-t border-slate-800/80 bg-slate-900/90 px-4 py-1.5 text-xs text-slate-300">
+        {/* Status Toast Strip — Clean White with Soft Pink Dot */}
+        <div className="border-t border-neutral-100 bg-white px-4 py-1.5 text-xs text-neutral-600">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-2">
             <span className="flex items-center gap-2 truncate">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+              <span className="h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
               {statusBanner}
             </span>
             {activeRole === 'user' && (
-              <span className="shrink-0 font-semibold text-indigo-300">
-                Paket Aktif: {currentPlan.name} ({formatIdr(currentPlan.priceMonthlyIdr)}/bln) · Kuota{' '}
+              <span className="shrink-0 font-semibold text-neutral-700">
+                Paket Aktif: <strong className="text-[#D85A88]">{currentPlan.name}</strong> ({formatIdr(currentPlan.priceMonthlyIdr)}/bln) · Kuota{' '}
                 {postsUsedThisMonth}/{currentPlan.monthlyPostQuota}
               </span>
             )}
@@ -506,93 +481,93 @@ export default function VeloxaAiPlatformPage() {
       <main
         className={`mx-auto transition-all duration-300 ${
           viewportMode === 'mobile_native'
-            ? 'my-6 max-w-[430px] overflow-hidden rounded-[42px] border-[10px] border-slate-900 bg-slate-50 shadow-2xl'
+            ? 'my-6 max-w-[430px] overflow-hidden rounded-[42px] border-[10px] border-neutral-200 bg-white shadow-xl'
             : 'max-w-7xl px-4 py-6 sm:px-6'
         }`}
       >
         {viewportMode === 'mobile_native' && (
-          <div className="flex items-center justify-between bg-slate-900 px-6 py-2 text-[11px] font-bold text-white">
+          <div className="flex items-center justify-between border-b border-neutral-100 bg-white px-6 py-2.5 text-[11px] font-bold text-neutral-800">
             <span>09:41</span>
-            <span className="rounded-full bg-slate-800 px-3 py-0.5 text-[10px] text-emerald-400">
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-0.5 text-[10px] font-extrabold text-[#D85A88]">
               Veloxa iOS / Android Shell
             </span>
             <span>5G · 100%</span>
           </div>
         )}
 
-        <div className={viewportMode === 'mobile_native' ? 'p-4 pb-24' : ''}>
+        <div className={viewportMode === 'mobile_native' ? 'bg-[#FAFAFA] p-4 pb-24' : ''}>
           {activeRole === 'admin' ? (
             /* ======================================================================
-               ROLE 1: SUPER ADMIN COMMAND CENTER (OWNER SAAS)
+               ROLE 1: SUPER ADMIN COMMAND CENTER — DOMINAN PUTIH + AKSEN SOFT PINK
                ====================================================================== */
             <div className="space-y-6" data-testid="super-admin-dashboard">
-              <div className="flex flex-col justify-between gap-4 rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white shadow-lg sm:flex-row sm:items-center">
+              <div className="flex flex-col justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-6 text-neutral-900 shadow-2xs sm:flex-row sm:items-center">
                 <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-bold text-emerald-300">
-                    <ShieldCheck className="h-3.5 w-3.5" /> Super Admin Control Center
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
+                    <ShieldCheck className="h-3.5 w-3.5 text-[#EC749B]" /> Super Admin Control Center
                   </span>
-                  <h1 className="veloxa-hero-title mt-2 font-black tracking-tight">
+                  <h1 className="veloxa-hero-title mt-2 font-black tracking-tight text-neutral-900">
                     Manajemen Bisnis SaaS Veloxa AI
                   </h1>
-                  <p className="mt-1 text-sm text-slate-300">
+                  <p className="mt-1 text-sm text-neutral-500">
                     Pantau pendapatan langganan (Rp500rb – Rp1,5jt), margin API AI, kuota pelanggan, dan kredensial OAuth terpusat.
                   </p>
                 </div>
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
-                  <p className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-neutral-500">
                     Gross Margin SaaS
                   </p>
-                  <p className="text-3xl font-black">{adminSummary.averageGrossMarginPct}%</p>
-                  <p className="text-xs text-slate-300">Target sehat: &gt;75%</p>
+                  <p className="text-3xl font-black text-[#D85A88]">{adminSummary.averageGrossMarginPct}%</p>
+                  <p className="text-xs text-neutral-500">Target sehat: &gt;75%</p>
                 </div>
               </div>
 
               {/* Admin KPI Row */}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-xs font-bold uppercase text-slate-400">Pendapatan Bulanan (MRR)</p>
-                  <p className="mt-2 text-2xl font-black text-slate-900">
+                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-xs font-bold uppercase text-neutral-400">Pendapatan Bulanan (MRR)</p>
+                  <p className="mt-2 text-2xl font-black text-neutral-900">
                     {formatIdr(adminSummary.totalMrrIdr)}
                   </p>
-                  <p className="mt-1 text-xs font-semibold text-emerald-600">
+                  <p className="mt-1 text-xs font-medium text-neutral-500">
                     {tenants.length} bisnis aktif berlangganan
                   </p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-xs font-bold uppercase text-slate-400">Modal API (OpenAI + Render)</p>
-                  <p className="mt-2 text-2xl font-black text-slate-900">
+                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-xs font-bold uppercase text-neutral-400">Modal API (OpenAI + Render)</p>
+                  <p className="mt-2 text-2xl font-black text-neutral-900">
                     {formatIdr(adminSummary.totalApiCostIdr)}
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="mt-1 text-xs text-neutral-500">
                     Untuk {adminSummary.totalPublishedPosts} konten tayang bulan ini
                   </p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-xs font-bold uppercase text-slate-400">Laba Bersih SaaS</p>
-                  <p className="mt-2 text-2xl font-black text-emerald-600">
+                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-xs font-bold uppercase text-neutral-400">Laba Bersih SaaS</p>
+                  <p className="mt-2 text-2xl font-black text-[#D85A88]">
                     {formatIdr(adminSummary.totalNetProfitIdr)}
                   </p>
-                  <p className="mt-1 text-xs font-semibold text-emerald-700">
+                  <p className="mt-1 text-xs font-medium text-neutral-500">
                     Margin kotor {adminSummary.averageGrossMarginPct}%
                   </p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-xs font-bold uppercase text-slate-400">Kampanye AI Meta Ads</p>
-                  <p className="mt-2 text-2xl font-black text-indigo-600">
+                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-xs font-bold uppercase text-neutral-400">Kampanye AI Meta Ads</p>
+                  <p className="mt-2 text-2xl font-black text-neutral-900">
                     {adminSummary.totalActiveMetaCampaigns} Aktif
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="mt-1 text-xs text-neutral-500">
                     Ad spend ditarik langsung dari kartu user
                   </p>
                 </div>
               </div>
 
               {/* Subscription Pricing Tiers Overview */}
-              <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <h2 className="text-lg font-black text-slate-900">
-                   Katalog Paket Langganan Veloxa AI (Rp500rb – Rp1,5 Juta)
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                <h2 className="text-lg font-black text-neutral-900">
+                  Katalog Paket Langganan Veloxa AI (Rp500rb – Rp1,5 Juta)
                 </h2>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-neutral-500">
                   Pembayaran langganan dilakukan via Web (Midtrans/Xendit QRIS & VA) agar bebas potongan 30% App Store / Play Store.
                 </p>
                 <div className="mt-4 grid gap-4 md:grid-cols-3">
@@ -601,28 +576,28 @@ export default function VeloxaAiPlatformPage() {
                       key={plan.id}
                       className={`rounded-2xl border p-5 ${
                         plan.id === 'pro_1500k'
-                          ? 'border-indigo-300 bg-indigo-50/50 ring-2 ring-indigo-500/20'
-                          : 'border-slate-200 bg-slate-50/60'
+                          ? 'border-pink-300 bg-white ring-2 ring-pink-100'
+                          : 'border-neutral-200 bg-white'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-black text-slate-900">{plan.name}</span>
+                        <span className="text-sm font-black text-neutral-900">{plan.name}</span>
                         {plan.id === 'pro_1500k' && (
-                          <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                          <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-bold text-white">
                             TERLARIS
                           </span>
                         )}
                       </div>
-                      <p className="mt-2 text-2xl font-black text-indigo-700">
+                      <p className="mt-2 text-2xl font-black text-neutral-900">
                         {formatIdr(plan.priceMonthlyIdr)}
-                        <span className="text-xs font-semibold text-slate-500">/bulan</span>
+                        <span className="text-xs font-semibold text-neutral-400">/bulan</span>
                       </p>
-                      <p className="mt-1 text-xs text-slate-600">{plan.tagline}</p>
-                      <ul className="mt-3 space-y-1.5 text-xs text-slate-700">
-                        <li>• Kuota: <strong>{plan.monthlyPostQuota} postingan/bulan</strong> (maks {plan.maxPostsPerDay}x/hari)</li>
-                        <li>• Kanal: <strong>{plan.allowedChannels.join(', ').toUpperCase()}</strong></li>
-                        <li>• Kampanye Event: <strong>{plan.includesEventCampaigns ? 'Termasuk' : 'Tidak'}</strong></li>
-                        <li>• AI Agent Meta Ads: <strong>{plan.includesMetaAdsAgent ? 'Termasuk + Auto-Optimizer' : 'Tidak'}</strong></li>
+                      <p className="mt-1 text-xs text-neutral-500">{plan.tagline}</p>
+                      <ul className="mt-3 space-y-1.5 text-xs text-neutral-600">
+                        <li>• Kuota: <strong className="text-neutral-900">{plan.monthlyPostQuota} postingan/bulan</strong> (maks {plan.maxPostsPerDay}x/hari)</li>
+                        <li>• Kanal: <strong className="text-neutral-900">{plan.allowedChannels.join(', ').toUpperCase()}</strong></li>
+                        <li>• Kampanye Event: <strong className="text-neutral-900">{plan.includesEventCampaigns ? 'Termasuk' : 'Tidak'}</strong></li>
+                        <li>• AI Agent Meta Ads: <strong className="text-neutral-900">{plan.includesMetaAdsAgent ? 'Termasuk + Auto-Optimizer' : 'Tidak'}</strong></li>
                       </ul>
                     </div>
                   ))}
@@ -630,13 +605,13 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Accessible Sticky Responsive Tenant Table (modern-web-guidance responsive-table) */}
-              <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h2 id="tenant-table-caption" className="text-lg font-black text-slate-900">
+                    <h2 id="tenant-table-caption" className="text-lg font-black text-neutral-900">
                       Daftar Pelanggan (Tenants) & Kontrol Kuota
                     </h2>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-neutral-500">
                       Ubah paket pelanggan secara instan atau pantau margin pemakaian API masing-masing brand.
                     </p>
                   </div>
@@ -646,10 +621,10 @@ export default function VeloxaAiPlatformPage() {
                   tabIndex={0}
                   role="region"
                   aria-labelledby="tenant-table-caption"
-                  className="veloxa-table-region rounded-2xl border border-slate-200"
+                  className="veloxa-table-region rounded-2xl border border-neutral-200"
                 >
                   <table className="text-left text-sm">
-                    <thead className="bg-slate-900 text-xs uppercase text-slate-200">
+                    <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase text-neutral-500">
                       <tr>
                         <th className="px-4 py-3.5">Brand / Bisnis</th>
                         <th className="px-4 py-3.5">Kategori</th>
@@ -660,37 +635,37 @@ export default function VeloxaAiPlatformPage() {
                         <th className="px-4 py-3.5">Ubah Paket</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200 bg-white">
+                    <tbody className="divide-y divide-neutral-200 bg-white">
                       {tenants.map((t) => (
-                        <tr key={t.workspaceId} className="hover:bg-slate-50">
-                          <th className="px-4 py-3.5 font-bold text-slate-900">
+                        <tr key={t.workspaceId} className="hover:bg-neutral-50/70">
+                          <th className="px-4 py-3.5 font-bold text-neutral-900">
                             <div>{t.businessName}</div>
-                            <div className="text-xs font-normal text-slate-500">
+                            <div className="text-xs font-normal text-neutral-500">
                               {t.ownerName} · {t.ownerEmail}
                             </div>
                           </th>
-                          <td className="px-4 py-3.5 text-xs font-semibold uppercase text-slate-600">
+                          <td className="px-4 py-3.5 text-xs font-semibold uppercase text-neutral-600">
                             {t.category.replace('_', ' ')}
                           </td>
                           <td className="px-4 py-3.5">
-                            <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-800">
+                            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-1 text-xs font-bold text-[#D85A88]">
                               {SUBSCRIPTION_PLANS[t.planId].name}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-xs font-bold text-slate-800">
+                          <td className="px-4 py-3.5 text-xs font-bold text-neutral-900">
                             {t.postsPublishedThisMonth} / {t.monthlyPostQuota} post
                           </td>
-                          <td className="px-4 py-3.5 text-xs text-slate-600">
+                          <td className="px-4 py-3.5 text-xs text-neutral-600">
                             <div>{t.connectedChannels.length} Sosmed Aktif</div>
-                            <div className="font-semibold text-emerald-700">
-                              {t.metaAdsConnected ? `${t.activeMetaCampaigns} Kampanye Meta Ads` : 'Tanpa Meta Ads'}
+                            <div className="font-semibold text-[#D85A88]">
+                              {t.metaAdsConnected ? `✓ ${t.activeMetaCampaigns} Kampanye Meta Ads` : 'Tanpa Meta Ads'}
                             </div>
                           </td>
                           <td className="px-4 py-3.5 text-xs">
-                            <div className="font-bold text-slate-900">
-                               Bayar: {formatIdr(t.monthlySubscriptionRevenueIdr)}
+                            <div className="font-bold text-neutral-900">
+                              Bayar: {formatIdr(t.monthlySubscriptionRevenueIdr)}
                             </div>
-                            <div className="text-slate-500">
+                            <div className="text-neutral-500">
                               API: {formatIdr(t.estimatedMonthlyApiCostIdr)} (Margin {t.grossMarginPct}%)
                             </div>
                           </td>
@@ -704,7 +679,7 @@ export default function VeloxaAiPlatformPage() {
                                   e.target.value as SubscriptionPlanId,
                                 )
                               }
-                              className="rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800"
+                              className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-bold text-neutral-800"
                             >
                               <option value="starter_500k">Starter (Rp500rb)</option>
                               <option value="growth_1000k">Growth (Rp1jt)</option>
@@ -719,43 +694,43 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Central API & OAuth Vault (1 App Developer for All Users) */}
-              <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                 <div className="flex items-center gap-2">
-                  <Lock className="h-5 w-5 text-indigo-600" />
-                  <h2 className="text-lg font-black text-slate-900">
+                  <Lock className="h-5 w-5 text-[#EC749B]" />
+                  <h2 className="text-lg font-black text-neutral-900">
                     Brankas API & OAuth Terpusat (Dikelola Pemilik SaaS)
                   </h2>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-neutral-500">
                   User tidak perlu membuat API sendiri. Seluruh login Instagram, Facebook, TikTok, YouTube Shorts, dan Meta Ads memakai aplikasi resmi Veloxa AI di bawah ini.
                 </p>
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <p className="text-xs font-black uppercase text-slate-400">OpenAI Master Engine</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">
+                  <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+                    <p className="text-xs font-black uppercase text-neutral-400">OpenAI Master Engine</p>
+                    <p className="mt-1 text-sm font-bold text-neutral-900">
                       {centralCreds.openAiModelText} · {centralCreds.openAiModelImage} · {centralCreds.openAiModelVoice}
                     </p>
-                    <p className="mt-1 text-xs text-emerald-700">
-                      ✓ API Key Terpusat Aktif · Batas Auto-Repair: {centralCreds.globalMaxRepairAttemptsPerJob}x/job
+                    <p className="mt-1 text-xs font-medium text-neutral-600">
+                      <span className="font-bold text-[#D85A88]">✓ Aktif</span> · Batas Auto-Repair: {centralCreds.globalMaxRepairAttemptsPerJob}x/job
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <p className="text-xs font-black uppercase text-slate-400">Meta Graph & Marketing API</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">
+                  <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+                    <p className="text-xs font-black uppercase text-neutral-400">Meta Graph & Marketing API</p>
+                    <p className="mt-1 text-sm font-bold text-neutral-900">
                       App ID: {centralCreds.metaAppId}
                     </p>
-                    <p className="mt-1 text-xs text-emerald-700">
-                      ✓ Advanced Access Ready (IG + FB + ads_management)
+                    <p className="mt-1 text-xs font-medium text-neutral-600">
+                      <span className="font-bold text-[#D85A88]">✓ Advanced Access</span> (IG + FB + ads_management)
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <p className="text-xs font-black uppercase text-slate-400">TikTok & YouTube Shorts</p>
-                    <p className="mt-1 text-sm font-bold text-slate-900">
+                  <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+                    <p className="text-xs font-black uppercase text-neutral-400">TikTok & YouTube Shorts</p>
+                    <p className="mt-1 text-sm font-bold text-neutral-900">
                       TikTok Direct Post · YT Quota {centralCreds.youtubeDailyQuotaUnits.toLocaleString('id-ID')}/hari
                     </p>
-                    <p className="mt-1 text-xs text-emerald-700">
-                      ✓ Payment Gateway: {centralCreds.paymentGatewayProvider} (QRIS & Virtual Account)
+                    <p className="mt-1 text-xs font-medium text-neutral-600">
+                      <span className="font-bold text-[#D85A88]">✓ Payment Gateway:</span> {centralCreds.paymentGatewayProvider} (QRIS & VA)
                     </p>
                   </div>
                 </div>
@@ -763,26 +738,23 @@ export default function VeloxaAiPlatformPage() {
             </div>
           ) : (
             /* ======================================================================
-               ROLE 2: USER WORKSPACE (CAFE, EVENT LARI, KLINIK, BRAND)
+               ROLE 2: USER WORKSPACE — DOMINAN PUTIH BERSIH + BUTTON/AKSEN SOFT PINK
                ====================================================================== */
             <div className="space-y-6" data-testid="user-workspace-dashboard">
               {/* Industry Preset Switcher Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200/80 bg-white p-4 shadow-2xs">
                 <div className="flex items-center gap-3">
-                  <div
-                    className="flex h-11 w-11 items-center justify-center rounded-2xl font-black text-white shadow"
-                    style={{ backgroundColor: brand.primaryColorHex }}
-                  >
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-2xs">
                     {brand.businessName.slice(0, 2).toUpperCase()}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
-                      <h1 className="text-lg font-black text-slate-900">{brand.businessName}</h1>
-                      <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                      <h1 className="text-lg font-black text-neutral-900">{brand.businessName}</h1>
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
                         {brand.city}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-neutral-500">
                       Contoh Workspace Pelanggan · Pilih simulasi jenis bisnis di sebelah kanan:
                     </p>
                   </div>
@@ -803,8 +775,8 @@ export default function VeloxaAiPlatformPage() {
                       onClick={() => handleSelectBrandPreset(item.key)}
                       className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
                         selectedPresetKey === item.key
-                          ? 'bg-slate-900 text-white shadow'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          ? 'bg-[#EC749B] text-white shadow-2xs'
+                          : 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
                       }`}
                     >
                       {item.label}
@@ -817,7 +789,7 @@ export default function VeloxaAiPlatformPage() {
               {viewportMode === 'desktop_web' && (
                 <nav
                   aria-label="Menu Utama User Workspace"
-                  className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:grid-cols-5"
+                  className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-2 shadow-2xs sm:grid-cols-5"
                 >
                   {(
                     [
@@ -836,8 +808,8 @@ export default function VeloxaAiPlatformPage() {
                         onClick={() => setActiveTab(tab.id)}
                         className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-xs font-black transition ${
                           activeTab === tab.id
-                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20'
-                            : 'text-slate-600 hover:bg-slate-100'
+                            ? 'bg-[#EC749B] text-white shadow-2xs'
+                            : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
                         }`}
                       >
                         <Icon className="h-4 w-4 shrink-0" />
@@ -853,63 +825,71 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'overview' && (
                 <div className="space-y-6">
-                  {/* Organic Winner Auto-Boost Alert Banner */}
+                  {/* Organic Winner Auto-Boost Alert Banner — Pure White Card + Soft Pink CTA */}
                   {organicWinnerDraft && (
-                    <div className="flex flex-col justify-between gap-4 rounded-3xl border border-amber-300 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 p-5 shadow-sm sm:flex-row sm:items-center">
+                    <div
+                      className={`flex justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-5 shadow-2xs ${
+                        viewportMode === 'mobile_native'
+                          ? 'flex-col'
+                          : 'flex-col sm:flex-row sm:items-center'
+                      }`}
+                    >
                       <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-pink-50 text-[#EC749B] border border-pink-100">
                           <Flame className="h-5 w-5" />
                         </div>
                         <div>
-                          <span className="rounded-full bg-amber-200 px-2.5 py-0.5 text-[10px] font-black uppercase text-amber-900">
-                            Rekomendasi Pintar AI Marketing
+                          <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black uppercase text-[#D85A88]">
+                            ★ Rekomendasi Pintar AI Marketing
                           </span>
-                          <h2 className="mt-1 text-base font-black text-slate-900">
+                          <h2 className="mt-1 text-base font-black text-neutral-900">
                             Konten Organik Sedang Ramai! ({organicWinnerDraft.organicMetrics?.reach.toLocaleString('id-ID')} Reach · Engagement {organicWinnerDraft.organicMetrics?.engagementRatePct}%)
                           </h2>
-                          <p className="mt-0.5 text-xs text-slate-700">
-                            Reels <strong>&ldquo;{organicWinnerDraft.title}&rdquo;</strong> punya performa organik sangat tinggi. Ubah menjadi kampanye Meta Ads ({formatIdr(organicWinnerDraft.organicMetrics?.recommendedAdDailyBudgetIdr || 150_000)}/hari) untuk menjangkau ribuan calon pembeli baru di {brand.city}!
+                          <p className="mt-0.5 text-xs text-neutral-600">
+                            Reels <strong className="text-neutral-900">&ldquo;{organicWinnerDraft.title}&rdquo;</strong> punya performa organik sangat tinggi. Ubah menjadi kampanye Meta Ads ({formatIdr(organicWinnerDraft.organicMetrics?.recommendedAdDailyBudgetIdr || 150_000)}/hari) untuk menjangkau ribuan calon pembeli baru di {brand.city}!
                           </p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleDesignMetaAdsWithAi(organicWinnerDraft)}
-                        className="shrink-0 rounded-2xl bg-slate-900 px-4 py-3 text-xs font-black text-white shadow hover:bg-slate-800"
+                        className="shrink-0 rounded-2xl bg-[#EC749B] px-4 py-3 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                       >
-                        <Rocket className="mr-1.5 inline h-4 w-4 text-amber-400" />
+                        <Rocket className="mr-1.5 inline h-4 w-4 text-white" />
                         Boost Jadi Meta Ads 1-Klik
                       </button>
                     </div>
                   )}
 
-                  {/* 4 Social Channels OAuth Connection Cards */}
-                  <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  {/* 4 Social Channels OAuth Connection Cards — Pure White Cards */}
+                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <h2 className="text-lg font-black text-slate-900">
+                        <h2 className="text-lg font-black text-neutral-900">
                           Hubungkan Akun Media Sosial Anda (OAuth 1-Klik)
                         </h2>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-neutral-500">
                           Tidak perlu membuat API Key sendiri—cukup klik Hubungkan dan login ke akun medsos bisnis Anda.
                         </p>
                       </div>
-                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
-                        {connections.filter((c) => c.connected).length} dari 4 Platform Terhubung
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
+                        ✓ {connections.filter((c) => c.connected).length} dari 4 Platform Terhubung
                       </span>
                     </div>
 
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div
+                      className={`mt-4 grid gap-4 ${
+                        viewportMode === 'mobile_native'
+                          ? 'grid-cols-1'
+                          : 'sm:grid-cols-2 lg:grid-cols-4'
+                      }`}
+                    >
                       {connections.map((conn) => {
                         const meta = CHANNEL_META[conn.channel];
                         return (
                           <div
                             key={conn.channel}
-                            className={`flex flex-col justify-between rounded-2xl border p-4 transition ${
-                              conn.connected
-                                ? 'border-emerald-200 bg-emerald-50/40'
-                                : 'border-slate-200 bg-slate-50'
-                            }`}
+                            className="flex flex-col justify-between rounded-2xl border border-neutral-200/90 bg-white p-4 transition hover:border-pink-200"
                           >
                             <div>
                               <div className="flex items-center justify-between gap-2">
@@ -920,17 +900,17 @@ export default function VeloxaAiPlatformPage() {
                                 </span>
                                 <span
                                   className={`text-[11px] font-bold ${
-                                    conn.connected ? 'text-emerald-700' : 'text-slate-400'
+                                    conn.connected ? 'text-[#D85A88]' : 'text-neutral-400'
                                   }`}
                                 >
                                   {conn.connected ? '● Terhubung' : '○ Terputus'}
                                 </span>
                               </div>
-                              <p className="mt-3 text-sm font-black text-slate-900">{meta.label}</p>
-                              <p className="mt-1 text-xs font-semibold text-slate-700">
+                              <p className="mt-3 text-sm font-black text-neutral-900">{meta.label}</p>
+                              <p className="mt-1 text-xs font-semibold text-neutral-700">
                                 {conn.connected ? `${conn.handle} · ${conn.followerCount.toLocaleString('id-ID')} pengikut` : 'Belum ditautkan'}
                               </p>
-                              <p className="mt-1 text-[11px] text-slate-500">
+                              <p className="mt-1 text-[11px] text-neutral-500">
                                 {conn.connected
                                   ? `Tayang terakhir: ${conn.lastPublishedAt}`
                                   : 'Mendukung jadwal otomatis & publikasi instan'}
@@ -942,8 +922,8 @@ export default function VeloxaAiPlatformPage() {
                               onClick={() => handleToggleChannel(conn.channel)}
                               className={`mt-4 w-full rounded-xl py-2 text-xs font-bold transition ${
                                 conn.connected
-                                  ? 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-                                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                  ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
+                                  : 'bg-[#EC749B] text-white shadow-2xs hover:bg-[#DF608A]'
                               }`}
                             >
                               {conn.connected ? 'Putuskan / Hubungkan Ulang' : `Hubungkan ${meta.shortLabel}`}
@@ -955,68 +935,72 @@ export default function VeloxaAiPlatformPage() {
                   </section>
 
                   {/* Meta Ads Account Connection & Quick Summary */}
-                  <div className="grid gap-5 lg:grid-cols-2">
-                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div
+                    className={`grid gap-5 ${
+                      viewportMode === 'mobile_native' ? 'grid-cols-1' : 'lg:grid-cols-2'
+                    }`}
+                  >
+                    <div className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-800">
+                        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
                           Meta Marketing API · Ads Manager
                         </span>
-                        <span className="text-xs font-bold text-emerald-700">
+                        <span className="text-xs font-bold text-[#D85A88]">
                           ✓ Terhubung ({metaAccount.adAccountId})
                         </span>
                       </div>
-                      <h3 className="mt-3 text-base font-black text-slate-900">
+                      <h3 className="mt-3 text-base font-black text-neutral-900">
                         {metaAccount.adAccountName}
                       </h3>
-                      <p className="mt-1 text-xs text-slate-600">
+                      <p className="mt-1 text-xs text-neutral-500">
                         Tagihan iklan dibayar langsung oleh metode pembayaran Anda di Meta ({metaAccount.paymentMethodLabel}).
                       </p>
-                      <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-3.5 text-xs">
+                      <div className="mt-4 grid grid-cols-2 gap-3 rounded-2xl border border-neutral-100 bg-neutral-50/70 p-3.5 text-xs">
                         <div>
-                          <span className="text-slate-500">Pagar Budget Harian Maks:</span>
-                          <p className="text-sm font-black text-slate-900">
+                          <span className="text-neutral-500">Pagar Budget Harian Maks:</span>
+                          <p className="text-sm font-black text-neutral-900">
                             {formatIdr(metaAccount.dailyHardCapIdr)}/hari
                           </p>
                         </div>
                         <div>
-                          <span className="text-slate-500">AI Media Buyer Optimizer:</span>
-                          <p className="text-sm font-black text-emerald-700">
-                            {metaAccount.autoOptimizeEnabled ? 'Aktif Otomatis 24/7' : 'Manual'}
+                          <span className="text-neutral-500">AI Media Buyer Optimizer:</span>
+                          <p className="text-sm font-black text-[#D85A88]">
+                            {metaAccount.autoOptimizeEnabled ? '✓ Aktif Otomatis 24/7' : 'Manual'}
                           </p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => setActiveTab('meta_ads')}
-                        className="mt-4 w-full rounded-xl bg-slate-900 py-2.5 text-xs font-bold text-white hover:bg-slate-800"
+                        className="mt-4 w-full rounded-xl bg-[#EC749B] py-2.5 text-xs font-bold text-white shadow-2xs hover:bg-[#DF608A]"
                       >
                         Buka AI Agent Marketing (Meta Ads) →
                       </button>
                     </div>
 
-                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <div className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-800">
+                        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
                           Ringkasan Kuota & Otonomi
                         </span>
-                        <span className="text-xs font-bold text-slate-600">
+                        <span className="text-xs font-bold text-neutral-600">
                           {currentPlan.name} ({formatIdr(currentPlan.priceMonthlyIdr)}/bln)
                         </span>
                       </div>
-                      <h3 className="mt-3 text-base font-black text-slate-900">
+                      <h3 className="mt-3 text-base font-black text-neutral-900">
                         Terpakai {postsUsedThisMonth} dari {currentPlan.monthlyPostQuota} Kuota Postingan Bulan Ini
                       </h3>
-                      <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-neutral-100">
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-indigo-600 to-emerald-500"
+                          className="h-full rounded-full bg-[#EC749B]"
                           style={{
                             width: `${Math.min(100, Math.round((postsUsedThisMonth / currentPlan.monthlyPostQuota) * 100))}%`,
                           }}
                         />
                       </div>
-                      <p className="mt-2 text-xs text-slate-600">
-                        Jadwal Otonom aktif: <strong>{autonomyConfig.postsPerDay}x sehari</strong> ({autonomyConfig.scheduleTimesWib.join(' & ')} WIB) · Mode{' '}
-                        <strong>
+                      <p className="mt-2 text-xs text-neutral-500">
+                        Jadwal Otonom aktif: <strong className="text-neutral-900">{autonomyConfig.postsPerDay}x sehari</strong> ({autonomyConfig.scheduleTimesWib.join(' & ')} WIB) · Mode{' '}
+                        <strong className="text-neutral-900">
                           {autonomyConfig.executionMode === 'full_autonomous'
                             ? '100% Full Otonom'
                             : 'Co-Pilot Tinjau H-1'}
@@ -1026,14 +1010,14 @@ export default function VeloxaAiPlatformPage() {
                         <button
                           type="button"
                           onClick={() => setActiveTab('studio')}
-                          className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white hover:bg-indigo-700"
+                          className="flex-1 rounded-xl bg-[#EC749B] py-2.5 text-xs font-bold text-white shadow-2xs hover:bg-[#DF608A]"
                         >
                           Buat Konten di Studio
                         </button>
                         <button
                           type="button"
                           onClick={() => setActiveTab('autonomy')}
-                          className="flex-1 rounded-xl border border-slate-300 bg-white py-2.5 text-xs font-bold text-slate-800 hover:bg-slate-50"
+                          className="flex-1 rounded-xl border border-neutral-200 bg-white py-2.5 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                         >
                           Atur Jadwal Otonom
                         </button>
@@ -1048,63 +1032,69 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
                 <div className="space-y-6">
-                  <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+                  <div
+                    className={`grid gap-6 ${
+                      viewportMode === 'mobile_native'
+                        ? 'grid-cols-1'
+                        : 'lg:grid-cols-[1.05fr_0.95fr]'
+                    }`}
+                  >
                     {/* Brand Brain Configuration */}
-                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                      <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-800">
+                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                         Brand Brain · Otak Identitas Bisnis
                       </span>
-                      <h2 className="mt-2 text-lg font-black text-slate-900">
+                      <h2 className="mt-2 text-lg font-black text-neutral-900">
                         Pengaturan Karakter & Produk Unggulan
                       </h2>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-neutral-500">
                         AI Agent mempelajari profil ini agar setiap naskah, visual, dan voiceover Reels terasa 100% khas bisnis Anda.
                       </p>
 
                       <div className="mt-4 space-y-3.5 text-xs">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="font-bold text-slate-700">Nama Bisnis / Acara</label>
+                            <label className="font-bold text-neutral-700">Nama Bisnis / Acara</label>
                             <input
                               type="text"
                               value={brand.businessName}
                               onChange={(e) => setBrand({ ...brand, businessName: e.target.value })}
-                              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
                             />
                           </div>
                           <div>
-                            <label className="font-bold text-slate-700">Kota / Target Area</label>
+                            <label className="font-bold text-neutral-700">Kota / Target Area</label>
                             <input
                               type="text"
                               value={brand.city}
                               onChange={(e) => setBrand({ ...brand, city: e.target.value })}
-                              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
                             />
                           </div>
                         </div>
 
                         <div>
-                          <label className="font-bold text-slate-700">Target Audiens</label>
+                          <label className="font-bold text-neutral-700">Target Audiens</label>
                           <input
                             type="text"
                             value={brand.targetAudience}
                             onChange={(e) => setBrand({ ...brand, targetAudience: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                           />
                         </div>
 
                         <div>
-                          <label className="font-bold text-slate-700">Gaya Bahasa & Tone Merek</label>
+                          <label className="font-bold text-neutral-700">Gaya Bahasa & Tone Merek</label>
                           <input
                             type="text"
                             value={brand.brandTone}
                             onChange={(e) => setBrand({ ...brand, brandTone: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                           />
                         </div>
 
                         <div>
-                          <label className="font-bold text-slate-700">
+                          <label className="font-bold text-neutral-700">
                             Produk / Menu / Event Unggulan Utama
                           </label>
                           <input
@@ -1122,34 +1112,34 @@ export default function VeloxaAiPlatformPage() {
                                 offerings: [{ ...first, title: e.target.value }, ...brand.offerings.slice(1)],
                               });
                             }}
-                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 font-semibold"
+                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
                           />
                         </div>
 
                         <div>
-                          <label className="font-bold text-slate-700">Ajakan Bertindak (Default CTA)</label>
+                          <label className="font-bold text-neutral-700">Ajakan Bertindak (Default CTA)</label>
                           <input
                             type="text"
                             value={brand.defaultCta}
                             onChange={(e) => setBrand({ ...brand, defaultCta: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                           />
                         </div>
 
-                        <label className="flex cursor-pointer items-center gap-2.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+                        <label className="flex cursor-pointer items-center gap-2.5 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5">
                           <input
                             type="checkbox"
                             checked={brand.prioritizeRealAssets}
                             onChange={(e) =>
                               setBrand({ ...brand, prioritizeRealAssets: e.target.checked })
                             }
-                            className="h-4 w-4 accent-emerald-600"
+                            className="h-4 w-4 accent-[#EC749B]"
                           />
                           <span>
-                            <strong className="block text-emerald-950">
+                            <strong className="block text-neutral-900">
                               Prioritaskan Foto & Klip Video Asli Saya di Setiap Konten AI
                             </strong>
-                            <span className="text-emerald-800">
+                            <span className="text-neutral-500">
                               AI akan mengambil foto menu cafe / foto pelari asli dari Laci 2 dan memadukannya dengan tipografi & voiceover otomatis.
                             </span>
                           </span>
@@ -1158,14 +1148,14 @@ export default function VeloxaAiPlatformPage() {
                     </section>
 
                     {/* Upload to Dual Brand Vault */}
-                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                      <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-bold text-violet-800">
+                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                         Dual Brand Vault · Web, Kamera Android & iOS
                       </span>
-                      <h2 className="mt-2 text-lg font-black text-slate-900">
+                      <h2 className="mt-2 text-lg font-black text-neutral-900">
                         Upload Contoh Referensi atau Dokumentasi Asli
                       </h2>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-neutral-500">
                         Unggah contoh poster/Reels yang Anda sukai (untuk ditiru gayanya oleh AI) atau stok foto/video asli bisnis Anda.
                       </p>
 
@@ -1176,11 +1166,11 @@ export default function VeloxaAiPlatformPage() {
                             onClick={() => setNewAssetDrawer('style_reference')}
                             className={`rounded-xl border p-3 text-left font-bold transition ${
                               newAssetDrawer === 'style_reference'
-                                ? 'border-violet-600 bg-violet-50 text-violet-950'
-                                : 'border-slate-200 bg-slate-50 text-slate-600'
+                                ? 'border-[#EC749B] bg-pink-50/50 text-neutral-900'
+                                : 'border-neutral-200 bg-white text-neutral-600'
                             }`}
                           >
-                            <Sparkles className="mb-1 h-4 w-4 text-violet-600" />
+                            <Sparkles className="mb-1 h-4 w-4 text-[#EC749B]" />
                             Laci 1: Contoh Referensi Gaya (Style DNA)
                           </button>
                           <button
@@ -1188,37 +1178,37 @@ export default function VeloxaAiPlatformPage() {
                             onClick={() => setNewAssetDrawer('real_asset')}
                             className={`rounded-xl border p-3 text-left font-bold transition ${
                               newAssetDrawer === 'real_asset'
-                                ? 'border-emerald-600 bg-emerald-50 text-emerald-950'
-                                : 'border-slate-200 bg-slate-50 text-slate-600'
+                                ? 'border-[#EC749B] bg-pink-50/50 text-neutral-900'
+                                : 'border-neutral-200 bg-white text-neutral-600'
                             }`}
                           >
-                            <Camera className="mb-1 h-4 w-4 text-emerald-600" />
+                            <Camera className="mb-1 h-4 w-4 text-[#EC749B]" />
                             Laci 2: Foto / Video Asli Milik Bisnis
                           </button>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="font-bold text-slate-700">Jenis Media</label>
+                            <label className="font-bold text-neutral-700">Jenis Media</label>
                             <select
                               value={newAssetMediaType}
                               onChange={(e) =>
                                 setNewAssetMediaType(e.target.value as 'photo' | 'video_reel')
                               }
-                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-semibold"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
                             >
                               <option value="photo">Foto / Poster / Carousel</option>
                               <option value="video_reel">Video Reels / TikTok (9:16)</option>
                             </select>
                           </div>
                           <div>
-                            <label className="font-bold text-slate-700">Judul / Catatan Aset</label>
+                            <label className="font-bold text-neutral-700">Judul / Catatan Aset</label>
                             <input
                               type="text"
                               placeholder="Misal: Foto Pelari 10K / Kopi Susu"
                               value={newAssetTitle}
                               onChange={(e) => setNewAssetTitle(e.target.value)}
-                              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                             />
                           </div>
                         </div>
@@ -1227,7 +1217,7 @@ export default function VeloxaAiPlatformPage() {
                           <button
                             type="button"
                             onClick={() => void handleUploadVaultAsset(false)}
-                            className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 font-black text-white shadow hover:bg-indigo-700"
+                            className="flex-1 rounded-xl bg-[#EC749B] px-4 py-3 font-black text-white shadow-2xs hover:bg-[#DF608A]"
                           >
                             <Upload className="mr-1.5 inline h-4 w-4" />
                             Simpan ke {newAssetDrawer === 'style_reference' ? 'Laci Referensi Gaya' : 'Galeri Aset Asli'}
@@ -1235,9 +1225,9 @@ export default function VeloxaAiPlatformPage() {
                           <button
                             type="button"
                             onClick={() => void handleUploadVaultAsset(true)}
-                            className="rounded-xl border border-slate-300 bg-white px-4 py-3 font-bold text-slate-800 hover:bg-slate-50"
+                            className="rounded-xl border border-neutral-200 bg-white px-4 py-3 font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                           >
-                            <Camera className="mr-1.5 inline h-4 w-4 text-emerald-600" />
+                            <Camera className="mr-1.5 inline h-4 w-4 text-[#EC749B]" />
                             Kamera / File HP
                           </button>
                         </div>
@@ -1246,41 +1236,47 @@ export default function VeloxaAiPlatformPage() {
                   </div>
 
                   {/* Vault Gallery Display */}
-                  <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                    <h3 className="text-base font-black text-slate-900">
+                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                    <h3 className="text-base font-black text-neutral-900">
                       Isi Brand Vault Anda ({vaultAssets.length} Aset Tersimpan)
                     </h3>
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div
+                      className={`mt-4 grid gap-4 ${
+                        viewportMode === 'mobile_native'
+                          ? 'grid-cols-1'
+                          : 'sm:grid-cols-2 lg:grid-cols-4'
+                      }`}
+                    >
                       {vaultAssets.map((asset) => (
                         <article
                           key={asset.id}
-                          className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
+                          className="overflow-hidden rounded-2xl border border-neutral-200 bg-white"
                         >
-                          <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-900">
+                          <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-100">
                             <img
                               src={asset.previewUrl}
                               alt={asset.title}
-                              className="h-full w-full object-cover opacity-90"
+                              className="h-full w-full object-cover"
                             />
                             <span
                               className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase ${
                                 asset.drawer === 'style_reference'
-                                  ? 'bg-violet-600 text-white'
-                                  : 'bg-emerald-600 text-white'
+                                  ? 'bg-[#EC749B] text-white shadow-2xs'
+                                  : 'border border-neutral-200 bg-white/95 text-neutral-800'
                               }`}
                             >
-                              {asset.drawer === 'style_reference' ? 'Referensi Gaya' : 'Aset Asli User'}
+                              {asset.drawer === 'style_reference' ? '★ Referensi Gaya' : '✓ Aset Asli User'}
                             </span>
-                            <span className="absolute bottom-2 right-2 rounded-md bg-black/70 px-2 py-0.5 text-[10px] font-bold text-white">
+                            <span className="absolute bottom-2 right-2 rounded-md border border-neutral-200 bg-white/95 px-2 py-0.5 text-[10px] font-bold text-neutral-800">
                               {asset.mediaType === 'video_reel' ? 'Reels 9:16' : 'Foto 4:5'} · via {asset.uploadedFrom.toUpperCase()}
                             </span>
                           </div>
                           <div className="p-3.5 text-xs">
-                            <h4 className="font-black text-slate-900">{asset.title}</h4>
-                            <p className="mt-1 text-slate-600">{asset.description}</p>
+                            <h4 className="font-black text-neutral-900">{asset.title}</h4>
+                            <p className="mt-1 text-neutral-500">{asset.description}</p>
                             {asset.extractedStyleDna && (
-                              <div className="mt-2.5 rounded-xl bg-violet-100/70 p-2.5 text-[11px] text-violet-950">
-                                <strong>Style DNA Diekstrak AI:</strong>
+                              <div className="mt-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 text-[11px] text-neutral-700">
+                                <strong className="text-[#D85A88]">Style DNA Diekstrak AI:</strong>
                                 <p className="mt-0.5">• Layout: {asset.extractedStyleDna.layoutPattern}</p>
                                 <p>• Hook: {asset.extractedStyleDna.hookFormula}</p>
                               </div>
@@ -1298,13 +1294,13 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-800">
+                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                           Studio Konten AI · Self-Healing Quality Gate
                         </span>
-                        <h2 className="mt-2 text-lg font-black text-slate-900">
+                        <h2 className="mt-2 text-lg font-black text-neutral-900">
                           Buat Konten Baru Sesuai Referensi & Aset {brand.businessName}
                         </h2>
                       </div>
@@ -1312,11 +1308,11 @@ export default function VeloxaAiPlatformPage() {
 
                     <div className="mt-4 grid gap-4 sm:grid-cols-3">
                       <div>
-                        <label className="text-xs font-bold text-slate-700">Format Konten</label>
+                        <label className="text-xs font-bold text-neutral-700">Format Konten</label>
                         <select
                           value={studioFormat}
                           onChange={(e) => setStudioFormat(e.target.value as ContentFormat)}
-                          className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs font-bold"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-xs font-bold text-neutral-900"
                         >
                           <option value="short_video">
                             Video Pendek 9:16 (IG Reels + FB Reels + TikTok + YT Shorts)
@@ -1331,7 +1327,7 @@ export default function VeloxaAiPlatformPage() {
                       </div>
 
                       <div className="sm:col-span-2">
-                        <label className="text-xs font-bold text-slate-700">
+                        <label className="text-xs font-bold text-neutral-700">
                           Topik / Brief Khusus (Kosongkan bila ingin AI memilih otomatis dari Brand Brain & Event)
                         </label>
                         <div className="mt-1 flex gap-2">
@@ -1340,12 +1336,12 @@ export default function VeloxaAiPlatformPage() {
                             placeholder={`Contoh: Promo ${brand.offerings[0]?.title || brand.businessName} minggu ini...`}
                             value={studioTopic}
                             onChange={(e) => setStudioTopic(e.target.value)}
-                            className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2.5 text-xs"
+                            className="flex-1 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs text-neutral-900"
                           />
                           <button
                             type="button"
                             onClick={() => handleGenerateStudioDraft('manual_studio')}
-                            className="shrink-0 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-black text-white shadow hover:bg-indigo-700"
+                            className="shrink-0 rounded-xl bg-[#EC749B] px-5 py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                           >
                             <Sparkles className="mr-1.5 inline h-4 w-4" />
                             Buat & Periksa Otomatis
@@ -1360,15 +1356,15 @@ export default function VeloxaAiPlatformPage() {
                     {drafts.map((draft) => (
                       <article
                         key={draft.id}
-                        className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+                        className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs"
                       >
-                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-black text-emerald-800">
+                              <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-black text-[#D85A88]">
                                 {draft.status === 'published' ? '✓ Sudah Tayang' : '✓ Lolos Pemeriksaan AI'}
                               </span>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700">
+                              <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs font-bold text-neutral-700">
                                 {draft.format === 'short_video'
                                   ? `Video 9:16 (${draft.videoDurationSeconds || 28} dtk)`
                                   : draft.format === 'carousel'
@@ -1376,12 +1372,12 @@ export default function VeloxaAiPlatformPage() {
                                     : 'Post Tunggal'}
                               </span>
                               {draft.usedRealAssetIds.length > 0 && (
-                                <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-800">
-                                  Memakai {draft.usedRealAssetIds.length} Foto/Video Asli User
+                                <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-xs font-bold text-neutral-700">
+                                  ★ Memakai {draft.usedRealAssetIds.length} Foto/Video Asli User
                                 </span>
                               )}
                             </div>
-                            <h3 className="mt-2 text-base font-black text-slate-900">{draft.title}</h3>
+                            <h3 className="mt-2 text-base font-black text-neutral-900">{draft.title}</h3>
                           </div>
 
                           <div className="flex flex-wrap gap-2">
@@ -1389,7 +1385,7 @@ export default function VeloxaAiPlatformPage() {
                               <button
                                 type="button"
                                 onClick={() => handlePublishDraftNow(draft.id)}
-                                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-black text-white shadow hover:bg-emerald-700"
+                                className="rounded-xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                               >
                                 <Send className="mr-1.5 inline h-3.5 w-3.5" />
                                 Terbitkan ke {draft.targetChannels.length} Sosmed Sekarang
@@ -1398,58 +1394,68 @@ export default function VeloxaAiPlatformPage() {
                             <button
                               type="button"
                               onClick={() => handleDesignMetaAdsWithAi(draft)}
-                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100"
+                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                             >
-                              <Megaphone className="mr-1.5 inline h-3.5 w-3.5" />
+                              <Megaphone className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
                               Jadikan Materi Meta Ads
                             </button>
                           </div>
                         </div>
 
                         {/* Quality Gate Proof */}
-                        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs text-emerald-950">
-                          <div className="flex items-center justify-between font-bold">
+                        <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5 text-xs text-neutral-800">
+                          <div className="flex items-center justify-between font-bold text-neutral-900">
                             <span>
-                              ✓ Self-Healing Quality Gate: {draft.qualityReview.score}/100 (0 Masalah Tersisa)
+                              <span className="text-[#D85A88]">✓ Self-Healing Quality Gate:</span> {draft.qualityReview.score}/100 (0 Masalah Tersisa)
                             </span>
-                            <span>Iterasi perbaikan: {draft.qualityReview.repairAttempts}x</span>
+                            <span className="text-neutral-500">Iterasi perbaikan: {draft.qualityReview.repairAttempts}x</span>
                           </div>
-                          <p className="mt-1 text-emerald-800">{draft.qualityReview.summary}</p>
+                          <p className="mt-1 text-neutral-600">{draft.qualityReview.summary}</p>
                         </div>
 
                         {/* Multi-Channel Distribution Badges */}
                         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-bold text-slate-500">Distribusi Lintas Platform:</span>
+                          <span className="font-bold text-neutral-500">Distribusi Lintas Platform:</span>
                           {draft.channelStatuses.map((cs) => (
                             <span
                               key={cs.channel}
                               className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${CHANNEL_META[cs.channel].badgeClass}`}
                             >
                               {CHANNEL_META[cs.channel].shortLabel}:{' '}
-                              {cs.status === 'published' ? 'Sudah Tayang' : 'Siap Kirim'}
+                              <span className="text-[#D85A88]">
+                                {cs.status === 'published' ? '✓ Sudah Tayang' : '● Siap Kirim'}
+                              </span>
                             </span>
                           ))}
                         </div>
 
-                        {/* Storyboard / Slides Preview */}
+                        {/* Storyboard / Slides Preview — Clean White Cards */}
                         {draft.videoScenes && (
-                          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <div
+                            className={`mt-4 grid gap-3 ${
+                              viewportMode === 'mobile_native'
+                                ? 'grid-cols-1'
+                                : 'sm:grid-cols-2 lg:grid-cols-4'
+                            }`}
+                          >
                             {draft.videoScenes.map((scene) => (
                               <div
                                 key={scene.sceneNumber}
-                                className="flex flex-col justify-between rounded-2xl border border-slate-200 bg-slate-900 p-4 text-xs text-white"
+                                className="flex flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-4 text-xs text-neutral-900"
                               >
                                 <div>
-                                  <div className="flex items-center justify-between text-[11px] font-bold text-emerald-400">
+                                  <div className="flex items-center justify-between text-[11px] font-bold text-[#D85A88]">
                                     <span>ADEGAN {scene.sceneNumber}</span>
-                                    <span>{scene.timeRange}</span>
+                                    <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] text-neutral-600">
+                                      {scene.timeRange}
+                                    </span>
                                   </div>
-                                  <p className="mt-2 font-black text-white">{scene.textOverlay}</p>
-                                  <p className="mt-2 text-[11px] text-slate-300">
-                                    <strong>VO:</strong> &ldquo;{scene.voiceover}&rdquo;
+                                  <p className="mt-2 font-black text-neutral-900">{scene.textOverlay}</p>
+                                  <p className="mt-2 text-[11px] text-neutral-600">
+                                    <strong className="text-neutral-800">VO:</strong> &ldquo;{scene.voiceover}&rdquo;
                                   </p>
                                 </div>
-                                <p className="mt-3 border-t border-slate-800 pt-2 text-[10px] text-indigo-300">
+                                <p className="mt-3 border-t border-neutral-100 pt-2 text-[10px] text-neutral-500">
                                   Visual: {scene.visualDirection}
                                 </p>
                               </div>
@@ -1458,21 +1464,27 @@ export default function VeloxaAiPlatformPage() {
                         )}
 
                         {draft.slides && (
-                          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <div
+                            className={`mt-4 grid gap-3 ${
+                              viewportMode === 'mobile_native'
+                                ? 'grid-cols-1'
+                                : 'sm:grid-cols-2 lg:grid-cols-4'
+                            }`}
+                          >
                             {draft.slides.map((slide) => (
                               <div
                                 key={slide.slideNumber}
-                                className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs"
+                                className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs"
                               >
-                                <div className="flex items-center justify-between font-bold text-indigo-600">
+                                <div className="flex items-center justify-between font-bold text-[#D85A88]">
                                   <span>SLIDE 0{slide.slideNumber}</span>
-                                  <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px]">
+                                  <span className="rounded border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 text-[10px] text-neutral-600">
                                     {slide.badgeText}
                                   </span>
                                 </div>
-                                <p className="mt-2 font-black text-slate-900">{slide.headline}</p>
-                                <p className="mt-1 text-slate-600">{slide.body}</p>
-                                <p className="mt-2 border-t border-slate-200 pt-2 text-[10px] text-slate-500">
+                                <p className="mt-2 font-black text-neutral-900">{slide.headline}</p>
+                                <p className="mt-1 text-neutral-600">{slide.body}</p>
+                                <p className="mt-2 border-t border-neutral-100 pt-2 text-[10px] text-neutral-400">
                                   {slide.visualDirection}
                                 </p>
                               </div>
@@ -1490,11 +1502,17 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'autonomy' && (
                 <div className="space-y-6">
-                  <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                  <div
+                    className={`grid gap-6 ${
+                      viewportMode === 'mobile_native'
+                        ? 'grid-cols-1'
+                        : 'lg:grid-cols-[1.1fr_0.9fr]'
+                    }`}
+                  >
                     {/* User-Controlled Autonomous Schedule */}
-                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
+                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                           Agent Konten Otonom 24/7
                         </span>
                         <button
@@ -1504,25 +1522,25 @@ export default function VeloxaAiPlatformPage() {
                           }
                           className={`rounded-full px-3.5 py-1 text-xs font-black ${
                             autonomyConfig.enabled
-                              ? 'bg-emerald-600 text-white'
-                              : 'bg-slate-200 text-slate-700'
+                              ? 'bg-[#EC749B] text-white shadow-2xs'
+                              : 'border border-neutral-200 bg-neutral-100 text-neutral-600'
                           }`}
                         >
                           {autonomyConfig.enabled ? '● Otonom Aktif' : '○ Dijeda'}
                         </button>
                       </div>
 
-                      <h2 className="mt-2 text-lg font-black text-slate-900">
+                      <h2 className="mt-2 text-lg font-black text-neutral-900">
                         Atur Sendiri Frekuensi & Jam Posting Harian Anda
                       </h2>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-neutral-500">
                         Agent akan memilih ide topik, memadukan foto/video dari Brand Vault, memeriksa kualitas sampai 0 masalah, dan menerbitkan otomatis ke kanal Anda.
                       </p>
 
                       <div className="mt-4 space-y-4 text-xs">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="font-bold text-slate-700">
+                            <label className="font-bold text-neutral-700">
                               Frekuensi Posting per Hari
                             </label>
                             <select
@@ -1542,7 +1560,7 @@ export default function VeloxaAiPlatformPage() {
                                   scheduleTimesWib: presets[count],
                                 });
                               }}
-                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-bold"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
                             >
                               <option value={1}>1x Sehari (30 konten/bulan)</option>
                               <option value={2}>2x Sehari · Pagi & Malam (60 konten/bulan)</option>
@@ -1552,7 +1570,7 @@ export default function VeloxaAiPlatformPage() {
                           </div>
 
                           <div>
-                            <label className="font-bold text-slate-700">Mode Kepercayaan Otonom</label>
+                            <label className="font-bold text-neutral-700">Mode Kepercayaan Otonom</label>
                             <select
                               value={autonomyConfig.executionMode}
                               onChange={(e) =>
@@ -1561,7 +1579,7 @@ export default function VeloxaAiPlatformPage() {
                                   executionMode: e.target.value as AutonomyConfig['executionMode'],
                                 })
                               }
-                              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-bold"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
                             >
                               <option value="full_autonomous">
                                 100% Full Otonom (Langsung Tayang Tanpa Disentuh)
@@ -1574,7 +1592,7 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         <div>
-                          <label className="font-bold text-slate-700">
+                          <label className="font-bold text-neutral-700">
                             Jam Tayang Otomatis (WIB): {autonomyConfig.scheduleTimesWib.join(' · ')} WIB
                           </label>
                           <div className="mt-2 flex flex-wrap gap-2">
@@ -1588,34 +1606,34 @@ export default function VeloxaAiPlatformPage() {
                                   next[idx] = e.target.value;
                                   setAutonomyConfig({ ...autonomyConfig, scheduleTimesWib: next });
                                 }}
-                                className="rounded-xl border border-slate-300 px-3 py-1.5 font-bold text-slate-900"
+                                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 font-bold text-neutral-900"
                               />
                             ))}
                           </div>
                         </div>
 
-                        <div className="rounded-2xl bg-slate-50 p-4">
-                          <p className="font-bold text-slate-800">
+                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4">
+                          <p className="font-bold text-neutral-800">
                             Komposisi Pilar Konten Otomatis:
                           </p>
                           <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-                            <div className="rounded-xl bg-white p-2.5 shadow-sm">
-                              <span className="text-lg font-black text-indigo-600">
+                            <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
+                              <span className="text-lg font-black text-[#D85A88]">
                                 {autonomyConfig.contentMixPct.educationTips}%
                               </span>
-                              <p className="text-[11px] text-slate-600">Edukasi & Tips</p>
+                              <p className="text-[11px] text-neutral-500">Edukasi & Tips</p>
                             </div>
-                            <div className="rounded-xl bg-white p-2.5 shadow-sm">
-                              <span className="text-lg font-black text-emerald-600">
+                            <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
+                              <span className="text-lg font-black text-neutral-900">
                                 {autonomyConfig.contentMixPct.communityStory}%
                               </span>
-                              <p className="text-[11px] text-slate-600">Cerita & Testimoni</p>
+                              <p className="text-[11px] text-neutral-500">Cerita & Testimoni</p>
                             </div>
-                            <div className="rounded-xl bg-white p-2.5 shadow-sm">
-                              <span className="text-lg font-black text-amber-600">
+                            <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
+                              <span className="text-lg font-black text-neutral-900">
                                 {autonomyConfig.contentMixPct.productEventPromo}%
                               </span>
-                              <p className="text-[11px] text-slate-600">Promo Produk/Event</p>
+                              <p className="text-[11px] text-neutral-500">Promo Produk/Event</p>
                             </div>
                           </div>
                         </div>
@@ -1628,23 +1646,23 @@ export default function VeloxaAiPlatformPage() {
                               `Hari ini, ${autonomyConfig.scheduleTimesWib[0] || '07:00'} WIB`,
                             )
                           }
-                          className="w-full rounded-2xl bg-slate-900 py-3 font-black text-white shadow hover:bg-slate-800"
+                          className="w-full rounded-2xl bg-[#EC749B] py-3 font-black text-white shadow-2xs hover:bg-[#DF608A]"
                         >
-                          <Bot className="mr-1.5 inline h-4 w-4 text-emerald-400" />
+                          <Bot className="mr-1.5 inline h-4 w-4 text-white" />
                           Jalankan 1 Slot Agent Otonom Sekarang (Simulasi Produksi & Jadwal)
                         </button>
                       </div>
                     </section>
 
                     {/* Event Campaign Countdown Manager */}
-                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                      <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-900">
+                    <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                         Mode Kampanye Event & Promo Terjadwal
                       </span>
-                      <h2 className="mt-2 text-lg font-black text-slate-900">
+                      <h2 className="mt-2 text-lg font-black text-neutral-900">
                         Kalender Hitung Mundur Event (Teaser → Early Bird → Hari-H)
                       </h2>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-neutral-500">
                         Sangat cocok untuk Event Lari, Launching Menu Baru Cafe, atau Promo Tanggal Kembar.
                       </p>
 
@@ -1654,40 +1672,40 @@ export default function VeloxaAiPlatformPage() {
                           return (
                             <div
                               key={camp.id}
-                              className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4"
+                              className="rounded-2xl border border-neutral-200 bg-white p-4"
                             >
                               <div className="flex items-center justify-between">
-                                <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                                <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-bold text-white">
                                   {phase.phaseLabel}
                                 </span>
-                                <span className="font-bold text-slate-600">
+                                <span className="font-bold text-neutral-600">
                                   Target: {camp.currentConversions}/{camp.targetRegistrationsOrSales} pendaftar/pembeli
                                 </span>
                               </div>
-                              <h3 className="mt-2 text-sm font-black text-slate-900">{camp.name}</h3>
-                              <p className="mt-0.5 text-slate-700">{camp.ticketOrPromoHighlight}</p>
-                              <p className="mt-1.5 text-[11px] font-semibold text-indigo-900">
+                              <h3 className="mt-2 text-sm font-black text-neutral-900">{camp.name}</h3>
+                              <p className="mt-0.5 text-neutral-600">{camp.ticketOrPromoHighlight}</p>
+                              <p className="mt-1.5 text-[11px] font-semibold text-[#D85A88]">
                                 Arahan AI Hari Ini: {phase.contentAngleDirective}
                               </p>
                             </div>
                           );
                         })}
 
-                        <div className="rounded-2xl border border-slate-200 p-3.5">
-                          <p className="font-bold text-slate-800">+ Tambah Kampanye Event Baru</p>
+                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-3.5">
+                          <p className="font-bold text-neutral-900">+ Tambah Kampanye Event Baru</p>
                           <div className="mt-2 grid gap-2 sm:grid-cols-2">
                             <input
                               type="text"
                               placeholder="Nama Event (misal: Jakarta Night Run 10K)"
                               value={newCampaignName}
                               onChange={(e) => setNewCampaignName(e.target.value)}
-                              className="rounded-xl border border-slate-300 px-3 py-2"
+                              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                             />
                             <input
                               type="date"
                               value={newCampaignDate}
                               onChange={(e) => setNewCampaignDate(e.target.value)}
-                              className="rounded-xl border border-slate-300 px-3 py-2"
+                              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                             />
                           </div>
                           <input
@@ -1695,12 +1713,12 @@ export default function VeloxaAiPlatformPage() {
                             placeholder="Info Tiket / Promo Utama (misal: Early Bird Rp199rb + Medali)"
                             value={newCampaignHighlight}
                             onChange={(e) => setNewCampaignHighlight(e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2"
+                            className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
                           />
                           <button
                             type="button"
                             onClick={handleCreateEventCampaign}
-                            className="mt-2 w-full rounded-xl bg-indigo-600 py-2.5 font-bold text-white hover:bg-indigo-700"
+                            className="mt-2 w-full rounded-xl bg-[#EC749B] py-2.5 font-bold text-white shadow-2xs hover:bg-[#DF608A]"
                           >
                             Aktifkan Kampanye Event ke Agent Otonom
                           </button>
@@ -1717,16 +1735,16 @@ export default function VeloxaAiPlatformPage() {
               {activeTab === 'meta_ads' && (
                 <div className="space-y-6" data-testid="meta-ads-agent-panel">
                   {/* AI Meta Ads Campaign Designer */}
-                  <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-800">
+                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
                           AI Agent Marketing · Terhubung ke Meta Marketing API
                         </span>
-                        <h2 className="mt-2 text-lg font-black text-slate-900">
+                        <h2 className="mt-2 text-lg font-black text-neutral-900">
                           Rancang, Susun Demografi & Interest, dan Eksekusi Meta Ads Otomatis
                         </h2>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-neutral-500">
                           AI memvalidasi ID Interest resmi di Meta Graph API, memetakan radius lokasi, membagi A/B testing materi iklan, dan menjaga budget di bawah pagar pengaman Anda.
                         </p>
                       </div>
@@ -1740,11 +1758,11 @@ export default function VeloxaAiPlatformPage() {
                       }`}
                     >
                       <div>
-                        <label className="font-bold text-slate-700">Tujuan Kampanye (Objective)</label>
+                        <label className="font-bold text-neutral-700">Tujuan Kampanye (Objective)</label>
                         <select
                           value={adObjective}
                           onChange={(e) => setAdObjective(e.target.value as MetaAdObjective)}
-                          className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-bold"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
                         >
                           <option value="WHATSAPP_MESSAGES">
                             Pesan Chat WhatsApp (CTWA)
@@ -1762,17 +1780,17 @@ export default function VeloxaAiPlatformPage() {
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700">Produk / Event yang Diiklankan</label>
+                        <label className="font-bold text-neutral-700">Produk / Event yang Diiklankan</label>
                         <input
                           type="text"
                           value={adPromoTitle}
                           onChange={(e) => setAdPromoTitle(e.target.value)}
-                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-semibold"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700">
+                        <label className="font-bold text-neutral-700">
                           Kota Target & Radius (km)
                         </label>
                         <div className="mt-1 flex gap-2">
@@ -1780,7 +1798,7 @@ export default function VeloxaAiPlatformPage() {
                             type="text"
                             value={adCity}
                             onChange={(e) => setAdCity(e.target.value)}
-                            className="w-2/3 rounded-xl border border-slate-300 px-3 py-2.5 font-semibold"
+                            className="w-2/3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
                           />
                           <input
                             type="number"
@@ -1788,13 +1806,13 @@ export default function VeloxaAiPlatformPage() {
                             min={3}
                             max={80}
                             onChange={(e) => setAdRadiusKm(Number(e.target.value))}
-                            className="w-1/3 rounded-xl border border-slate-300 px-2.5 py-2.5 font-bold"
+                            className="w-1/3 rounded-xl border border-neutral-200 bg-white px-2.5 py-2.5 font-bold text-neutral-900"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700">
+                        <label className="font-bold text-neutral-700">
                           Rentang Usia Demografi ({adAgeMin} – {adAgeMax} thn)
                         </label>
                         <div className="mt-1 flex gap-2">
@@ -1804,7 +1822,7 @@ export default function VeloxaAiPlatformPage() {
                             min={18}
                             max={55}
                             onChange={(e) => setAdAgeMin(Number(e.target.value))}
-                            className="w-1/2 rounded-xl border border-slate-300 px-3 py-2.5 font-bold"
+                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
                           />
                           <input
                             type="number"
@@ -1812,13 +1830,13 @@ export default function VeloxaAiPlatformPage() {
                             min={20}
                             max={65}
                             onChange={(e) => setAdAgeMax(Number(e.target.value))}
-                            className="w-1/2 rounded-xl border border-slate-300 px-3 py-2.5 font-bold"
+                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700">
+                        <label className="font-bold text-neutral-700">
                           Kata Kunci Interest Tambahan
                         </label>
                         <input
@@ -1826,35 +1844,35 @@ export default function VeloxaAiPlatformPage() {
                           value={adCustomInterest}
                           onChange={(e) => setAdCustomInterest(e.target.value)}
                           placeholder="Misal: Strava, Kopi Gayo, Skincare"
-                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700">Budget Harian (IDR)</label>
+                        <label className="font-bold text-neutral-700">Budget Harian (IDR)</label>
                         <input
                           type="number"
                           step={25000}
                           value={adDailyBudgetIdr}
                           onChange={(e) => setAdDailyBudgetIdr(Number(e.target.value))}
-                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-black text-indigo-700"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-black text-neutral-900"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-slate-700">Durasi Tayang (Hari)</label>
+                        <label className="font-bold text-neutral-700">Durasi Tayang (Hari)</label>
                         <input
                           type="number"
                           min={1}
                           max={90}
                           value={adDurationDays}
                           onChange={(e) => setAdDurationDays(Number(e.target.value))}
-                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-bold"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-emerald-800">
+                        <label className="font-bold text-[#D85A88]">
                           Pagar Pengaman Budget Harian
                         </label>
                         <input
@@ -1867,19 +1885,19 @@ export default function VeloxaAiPlatformPage() {
                               dailyHardCapIdr: Number(e.target.value),
                             })
                           }
-                          className="mt-1 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2.5 font-black text-emerald-900"
+                          className="mt-1 w-full rounded-xl border border-pink-200 bg-white px-3 py-2.5 font-black text-neutral-900"
                         />
                       </div>
                     </div>
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-2">
-                      <p className="text-xs text-slate-500">
-                        Estimasi total anggaran: <strong>{formatIdr(Math.min(adDailyBudgetIdr, metaAccount.dailyHardCapIdr) * adDurationDays)}</strong> ({adDurationDays} hari) · Ditarik langsung oleh Meta dari akun iklan <code>{metaAccount.adAccountId}</code>.
+                      <p className="text-xs text-neutral-500">
+                        Estimasi total anggaran: <strong className="text-neutral-900">{formatIdr(Math.min(adDailyBudgetIdr, metaAccount.dailyHardCapIdr) * adDurationDays)}</strong> ({adDurationDays} hari) · Ditarik langsung oleh Meta dari akun iklan <code>{metaAccount.adAccountId}</code>.
                       </p>
                       <button
                         type="button"
                         onClick={() => handleDesignMetaAdsWithAi()}
-                        className="rounded-2xl bg-indigo-600 px-6 py-3 text-xs font-black text-white shadow-lg shadow-indigo-600/20 hover:bg-indigo-700"
+                        className="rounded-2xl bg-[#EC749B] px-6 py-3 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                       >
                         <Sparkles className="mr-1.5 inline h-4 w-4" />
                         Rancang & Susun Kampanye Meta Ads dengan AI
@@ -1892,37 +1910,37 @@ export default function VeloxaAiPlatformPage() {
                     {metaAdCampaigns.map((camp) => (
                       <article
                         key={camp.id}
-                        className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+                        className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs"
                       >
-                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span
-                                className={`rounded-full px-3 py-0.5 text-xs font-black ${
+                                className={`rounded-full border px-3 py-0.5 text-xs font-black ${
                                   camp.status === 'active_running'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-amber-100 text-amber-900'
+                                    ? 'border-pink-200 bg-pink-50/70 text-[#D85A88]'
+                                    : 'border-neutral-200 bg-neutral-50 text-neutral-600'
                                 }`}
                               >
                                 {camp.status === 'active_running'
                                   ? '● ACTIVE · Sedang Tayang di Meta Ads'
                                   : '⏸ PAUSED · Siap Diluncurkan 1-Klik'}
                               </span>
-                              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-700">
+                              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-xs font-bold text-neutral-600">
                                 Objective: {camp.objective.replace('_', ' ')}
                               </span>
                               {camp.budget.hardCapClamped && (
-                                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-bold text-[#D85A88]">
                                   ✓ Dijaga Pagar Budget ({formatIdr(camp.budget.appliedDailyBudgetIdr)}/hari)
                                 </span>
                               )}
                             </div>
-                            <h3 className="mt-2 text-lg font-black text-slate-900">
+                            <h3 className="mt-2 text-lg font-black text-neutral-900">
                               {camp.campaignName}
                             </h3>
-                            <p className="text-xs text-slate-500">
+                            <p className="text-xs text-neutral-500">
                               Tujuan Klik: <code>{camp.destinationUrlOrWa}</code> · Total Anggaran {camp.budget.durationDays} Hari:{' '}
-                              <strong>{formatIdr(camp.budget.totalBudgetIdr)}</strong>
+                              <strong className="text-neutral-900">{formatIdr(camp.budget.totalBudgetIdr)}</strong>
                             </p>
                           </div>
 
@@ -1930,10 +1948,10 @@ export default function VeloxaAiPlatformPage() {
                             <button
                               type="button"
                               onClick={() => handleToggleMetaCampaignRun(camp.id)}
-                              className={`rounded-xl px-4 py-2.5 text-xs font-black text-white shadow ${
+                              className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${
                                 camp.status === 'active_running'
-                                  ? 'bg-amber-600 hover:bg-amber-700'
-                                  : 'bg-emerald-600 hover:bg-emerald-700'
+                                  ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
+                                  : 'bg-[#EC749B] text-white shadow-2xs hover:bg-[#DF608A]'
                               }`}
                             >
                               {camp.status === 'active_running'
@@ -1943,9 +1961,9 @@ export default function VeloxaAiPlatformPage() {
                             <button
                               type="button"
                               onClick={() => handleRunMetaAutoOptimizer(camp.id)}
-                              className="rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-black text-white shadow hover:bg-slate-800"
+                              className="rounded-xl bg-[#EC749B] px-4 py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                             >
-                              <Zap className="mr-1.5 inline h-3.5 w-3.5 text-amber-400" />
+                              <Zap className="mr-1.5 inline h-3.5 w-3.5 text-white" />
                               Jalankan Optimasi AI Media Buyer
                             </button>
                           </div>
@@ -1958,47 +1976,47 @@ export default function VeloxaAiPlatformPage() {
                           }`}
                         >
                           {/* Column 1: Demografi & Geo */}
-                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs">
-                            <p className="font-black uppercase tracking-wider text-slate-400">
+                          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
+                            <p className="font-black uppercase tracking-wider text-neutral-400">
                               1. Sisi Demografi & Lokasi
                             </p>
-                            <ul className="mt-2.5 space-y-1.5 text-slate-700">
+                            <ul className="mt-2.5 space-y-1.5 text-neutral-600">
                               <li>
-                                • <strong>Usia Target:</strong> {camp.demographics.ageMin} – {camp.demographics.ageMax} tahun
+                                • <strong className="text-neutral-900">Usia Target:</strong> {camp.demographics.ageMin} – {camp.demographics.ageMax} tahun
                               </li>
                               <li>
-                                • <strong>Lokasi & Radius:</strong>{' '}
+                                • <strong className="text-neutral-900">Lokasi & Radius:</strong>{' '}
                                 {camp.demographics.locations
                                   .map((l) => `${l.cityOrPinName} (+${l.radiusKm} km)`)
                                   .join(', ')}
                               </li>
                               <li>
-                                • <strong>Bahasa:</strong> {camp.demographics.languages.join(', ')}
+                                • <strong className="text-neutral-900">Bahasa:</strong> {camp.demographics.languages.join(', ')}
                               </li>
                               <li>
-                                • <strong>Advantage+ Audience:</strong> Aktif dengan panduan sinyal AI
+                                • <strong className="text-neutral-900">Advantage+ Audience:</strong> Aktif dengan panduan sinyal AI
                               </li>
                             </ul>
                           </div>
 
                           {/* Column 2: Validated Meta Interests */}
-                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs">
-                            <p className="font-black uppercase tracking-wider text-slate-400">
+                          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
+                            <p className="font-black uppercase tracking-wider text-neutral-400">
                               2. Sisi Interest Resmi Meta API
                             </p>
                             <div className="mt-2.5 space-y-2">
                               {camp.validatedInterests.slice(0, 3).map((interest) => (
                                 <div
                                   key={interest.id}
-                                  className="rounded-xl bg-white p-2.5 shadow-sm"
+                                  className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-2.5"
                                 >
-                                  <div className="flex items-center justify-between font-bold text-slate-900">
+                                  <div className="flex items-center justify-between font-bold text-neutral-900">
                                     <span>{interest.name}</span>
-                                    <span className="text-[10px] text-indigo-600">
+                                    <span className="text-[10px] text-[#D85A88]">
                                       ID #{interest.id.slice(-5)}
                                     </span>
                                   </div>
-                                  <p className="mt-0.5 text-[11px] text-slate-500">
+                                  <p className="mt-0.5 text-[11px] text-neutral-500">
                                     Ukuran audiens: {(interest.audienceSizeLower / 1_000_000).toFixed(1)}M –{' '}
                                     {(interest.audienceSizeUpper / 1_000_000).toFixed(1)}M orang
                                   </p>
@@ -2008,34 +2026,34 @@ export default function VeloxaAiPlatformPage() {
                           </div>
 
                           {/* Column 3: Sisi Budget & Estimasi Hasil */}
-                          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs">
-                            <p className="font-black uppercase tracking-wider text-slate-400">
+                          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
+                            <p className="font-black uppercase tracking-wider text-neutral-400">
                               3. Sisi Budget & Proyeksi Harian
                             </p>
-                            <div className="mt-2.5 space-y-2 text-slate-700">
+                            <div className="mt-2.5 space-y-2 text-neutral-600">
                               <div className="flex justify-between">
                                 <span>Budget Harian Aktif:</span>
-                                <strong className="text-slate-900">
+                                <strong className="text-neutral-900">
                                   {formatIdr(camp.budget.appliedDailyBudgetIdr)}/hari
                                 </strong>
                               </div>
                               <div className="flex justify-between">
                                 <span>Estimasi Jangkauan (Reach):</span>
-                                <strong className="text-slate-900">
+                                <strong className="text-neutral-900">
                                   {camp.estimatedDailyOutcome.reachMin.toLocaleString('id-ID')} –{' '}
                                   {camp.estimatedDailyOutcome.reachMax.toLocaleString('id-ID')} org/hari
                                 </strong>
                               </div>
                               <div className="flex justify-between">
                                 <span>Estimasi Klik CTA:</span>
-                                <strong className="text-slate-900">
+                                <strong className="text-neutral-900">
                                   {camp.estimatedDailyOutcome.estimatedClicksMin} –{' '}
                                   {camp.estimatedDailyOutcome.estimatedClicksMax} klik/hari
                                 </strong>
                               </div>
                               <div className="flex justify-between">
                                 <span>Target Biaya per Hasil (CPR):</span>
-                                <strong className="text-emerald-700">
+                                <strong className="text-[#D85A88]">
                                   ~{formatIdr(camp.estimatedDailyOutcome.estimatedCostPerResultIdr)} / konversi
                                 </strong>
                               </div>
@@ -2054,21 +2072,21 @@ export default function VeloxaAiPlatformPage() {
                               key={cr.id}
                               className={`rounded-2xl border p-4 text-xs ${
                                 cr.status === 'winner_scaled'
-                                  ? 'border-emerald-300 bg-emerald-50/70'
+                                  ? 'border-pink-300 bg-white ring-1 ring-pink-100'
                                   : cr.status === 'paused_by_ai_loser'
-                                    ? 'border-rose-200 bg-rose-50/50 opacity-75'
-                                    : 'border-slate-200 bg-white'
+                                    ? 'border-neutral-200 bg-neutral-50 opacity-75'
+                                    : 'border-neutral-200 bg-white'
                               }`}
                             >
                               <div className="flex items-center justify-between">
-                                <span className="font-black text-slate-900">{cr.variantLabel}</span>
+                                <span className="font-black text-neutral-900">{cr.variantLabel}</span>
                                 <span
                                   className={`rounded-full px-2.5 py-0.5 text-[10px] font-black ${
                                     cr.status === 'winner_scaled'
-                                      ? 'bg-emerald-600 text-white'
+                                      ? 'bg-[#EC749B] text-white'
                                       : cr.status === 'paused_by_ai_loser'
-                                        ? 'bg-rose-600 text-white'
-                                        : 'bg-indigo-100 text-indigo-800'
+                                        ? 'border border-neutral-200 bg-white text-neutral-500'
+                                        : 'border border-pink-200 bg-pink-50/70 text-[#D85A88]'
                                   }`}
                                 >
                                   {cr.status === 'winner_scaled'
@@ -2078,13 +2096,13 @@ export default function VeloxaAiPlatformPage() {
                                       : `Alokasi Budget ${cr.budgetSharePct}%`}
                                 </span>
                               </div>
-                              <p className="mt-1.5 font-bold text-slate-800">{cr.headline}</p>
-                              <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-600">
-                                <span>CTR: <strong>{cr.metrics.ctrPct}%</strong></span>
-                                <span>Konversi: <strong>{cr.metrics.conversions} hasil</strong></span>
+                              <p className="mt-1.5 font-bold text-neutral-900">{cr.headline}</p>
+                              <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-500">
+                                <span>CTR: <strong className="text-neutral-900">{cr.metrics.ctrPct}%</strong></span>
+                                <span>Konversi: <strong className="text-neutral-900">{cr.metrics.conversions} hasil</strong></span>
                                 <span>
                                   Biaya per Hasil:{' '}
-                                  <strong className="text-slate-900">
+                                  <strong className="text-neutral-900">
                                     {formatIdr(cr.metrics.costPerResultIdr)}
                                   </strong>
                                 </span>
@@ -2095,17 +2113,17 @@ export default function VeloxaAiPlatformPage() {
 
                         {/* AI Media Buyer Optimization Logs */}
                         {camp.optimizationLogs.length > 0 && (
-                          <div className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 text-xs">
-                            <p className="font-black text-indigo-950">
+                          <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4 text-xs">
+                            <p className="font-black text-neutral-900">
                               Riwayat Tindakan Otonom AI Media Buyer:
                             </p>
-                            <ul className="mt-2 space-y-1.5 text-indigo-900">
+                            <ul className="mt-2 space-y-1.5 text-neutral-600">
                               {camp.optimizationLogs.map((log) => (
                                 <li key={log.id} className="flex items-start gap-2">
-                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#EC749B]" />
                                   <span>
-                                    <strong>[{log.timestampWib}]</strong> {log.summary} (Efisiensi anggaran:{' '}
-                                    <strong>{formatIdr(log.savedOrReallocatedIdr)}/hari</strong>)
+                                    <strong className="text-neutral-900">[{log.timestampWib}]</strong> {log.summary} (Efisiensi anggaran:{' '}
+                                    <strong className="text-[#D85A88]">{formatIdr(log.savedOrReallocatedIdr)}/hari</strong>)
                                   </span>
                                 </li>
                               ))}
@@ -2121,11 +2139,11 @@ export default function VeloxaAiPlatformPage() {
           )}
         </div>
 
-        {/* Native Mobile Bottom Navigation Bar (When in Android/iOS Mode or Small Screens) */}
+        {/* Native Mobile Bottom Navigation Bar (When in Android/iOS Mode) */}
         {activeRole === 'user' && viewportMode === 'mobile_native' && (
           <nav
             aria-label="Bottom Navigation Android dan iOS"
-            className="sticky bottom-0 z-20 grid grid-cols-5 border-t border-slate-200 bg-white/95 px-2 py-2.5 backdrop-blur"
+            className="sticky bottom-0 z-20 grid grid-cols-5 border-t border-neutral-200 bg-white/95 px-2 py-2.5 backdrop-blur"
           >
             {(
               [
@@ -2143,7 +2161,7 @@ export default function VeloxaAiPlatformPage() {
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex flex-col items-center gap-1 rounded-xl py-1 text-[10px] font-bold ${
-                    activeTab === tab.id ? 'text-indigo-600' : 'text-slate-400'
+                    activeTab === tab.id ? 'text-[#EC749B]' : 'text-neutral-400'
                   }`}
                 >
                   <Icon className="h-4 w-4" />

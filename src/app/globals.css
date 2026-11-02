@@ -3,44 +3,49 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  --veloxa-pink-primary: #ec749b;
+  --veloxa-pink-hover: #df608a;
+  --veloxa-pink-soft: #fdf2f6;
+  --veloxa-surface-white: #ffffff;
+  --veloxa-surface-subtle: #fafafa;
+  --veloxa-border-neutral: #e5e7eb;
+  --veloxa-text-primary: #171717;
+  --veloxa-text-muted: #6b7280;
 }
 
 body {
-  min-block-size: 100dvh;
-  background-color: #f8fafc;
-  color: #0f172a;
+  background-color: #fafafa;
+  color: var(--veloxa-text-primary);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Fluid typography with clamp() (modern-web-guidance: responsive-design) */
 .veloxa-hero-title {
-  font-size: clamp(1.5rem, 1.1rem + 1.5vw, 2.35rem);
-  line-height: 1.15;
+  font-size: clamp(1.25rem, 2vw + 0.65rem, 1.85rem);
+  line-height: 1.2;
 }
 
-/* Responsive table wrapper following modern-web-guidance responsive-table */
+/* Sticky responsive data table container (modern-web-guidance: responsive-table) */
 .veloxa-table-region {
-  overflow: auto;
-  max-inline-size: 100%;
-  max-block-size: min(540px, 78dvh);
-  container-type: inline-size;
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 .veloxa-table-region table {
-  border-collapse: separate;
-  border-spacing: 0;
   width: 100%;
+  border-collapse: collapse;
 }
 
-.veloxa-table-region thead {
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 2;
+.veloxa-table-region th,
+.veloxa-table-region td {
+  white-space: nowrap;
 }
 
-.veloxa-table-region tbody th {
+.veloxa-table-region th:first-child,
+.veloxa-table-region td:first-child {
   position: sticky;
-  inset-inline-start: 0;
+  left: 0;
   z-index: 1;
-  background-color: #ffffff;
+  background: #ffffff;
 }
