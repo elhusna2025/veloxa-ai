@@ -1234,8 +1234,12 @@ export default function VeloxaAiPlatformPage() {
       {/* Top Global Header — 1-Row Sleek Layout on Mobile + Dedicated Page Navigation */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
         <div
-          className={`mx-auto flex max-w-[1480px] items-center justify-between gap-2 px-3.5 py-3 sm:px-8 sm:py-3.5 lg:px-12 ${
-            authUser ? 'flex-wrap' : 'flex-nowrap'
+          className={`flex items-center justify-between gap-2 ${
+            authUser && !(authUser.isSuperAdmin && activeRole === 'admin')
+              ? 'w-full flex-wrap px-4 py-3 sm:px-6'
+              : `mx-auto max-w-[1480px] px-3.5 py-3 sm:px-8 sm:py-3.5 lg:px-12 ${
+                  authUser ? 'flex-wrap' : 'flex-nowrap'
+                }`
           }`}
         >
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
@@ -1346,31 +1350,16 @@ export default function VeloxaAiPlatformPage() {
             )}
           </div>
         </div>
-
-        {/* Status Toast Strip — Hanya tampil saat sudah Login ke dalam Aplikasi */}
-        {authUser && (
-          <div className="border-t border-neutral-100 bg-white px-4 py-1.5 text-xs text-neutral-600">
-            <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-2 sm:px-4 lg:px-8">
-              <span className="flex items-center gap-2 truncate">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
-                {statusBanner}
-              </span>
-              <button
-                type="button"
-                data-testid="local-first-sync-btn"
-                onClick={() => void handleForceCloudSync()}
-                className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
-              >
-                <RefreshCw className="h-3 w-3 text-[#EC749B]" />
-                Local-First Hemat {firestoreSavingsPct}% Firestore · Sinkronkan Cloud
-              </button>
-            </div>
-          </div>
-        )}
       </header>
 
-      {/* Main Content Container — Responsif Otomatis & Luas (1480px Wide Tanpa Card Pembungkus Sempit) */}
-      <main className="mx-auto max-w-[1480px] px-4 py-6 sm:px-8 lg:px-12">
+      {/* Main Content Container — Flush Full-Width untuk User Sidemenu, atau 1480px untuk Landing/Super Admin */}
+      <main
+        className={
+          authUser && !(authUser.isSuperAdmin && activeRole === 'admin')
+            ? 'w-full'
+            : 'mx-auto max-w-[1480px] px-4 py-6 sm:px-8 lg:px-12'
+        }
+      >
         <div>
           {!authUser ? (
             /* ======================================================================
@@ -1801,246 +1790,266 @@ export default function VeloxaAiPlatformPage() {
             </div>
           ) : (
             /* ======================================================================
-               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD (SIDEBAR LAYOUT)
+               ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD (FLUSH LEFT SIDEMENU)
                ====================================================================== */
             <div
-              className="lg:grid lg:grid-cols-[284px_minmax(0,1fr)] lg:items-start lg:gap-7 space-y-6 lg:space-y-0"
+              className="relative min-h-[calc(100dvh-61px)] w-full"
               data-testid="user-workspace-dashboard"
             >
               {/* ====================================================================
-                 LEFT EXECUTIVE SIDEBAR NAVIGATION (STICKY ON DESKTOP)
+                 FLUSH LEFT SIDEMENU NAVIGATION (DOCKED TO LEFT EDGE OF SCREEN)
                  ==================================================================== */}
               <aside
                 data-testid="user-workspace-sidebar"
                 aria-label="Sidebar Navigasi Workspace"
-                className="veloxa-luxury-card-pink rounded-[2rem] border border-pink-200 bg-white p-5 lg:sticky lg:top-24 space-y-5"
+                className="border-b border-neutral-200/90 bg-white p-4 lg:fixed lg:top-[61px] lg:bottom-0 lg:left-0 lg:z-20 lg:flex lg:w-[276px] lg:flex-col lg:justify-between lg:overflow-y-auto lg:border-b-0 lg:border-r lg:border-neutral-200/90 lg:bg-white lg:px-4 lg:py-5"
               >
-                {/* 1. Brand Identity Card inside Sidebar */}
-                <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50/70 via-white to-white p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#EC749B] text-base font-black text-white shadow-sm">
-                      {brand.businessName.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-base font-black tracking-tight text-neutral-900">
-                          {brand.businessName}
-                        </span>
+                <div className="space-y-5">
+                  {/* 1. Brand Identity Header inside Flush Left Sidemenu */}
+                  <div className="rounded-2xl border border-pink-100 bg-gradient-to-br from-pink-50/70 via-white to-white p-3.5">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#EC749B] text-sm font-black text-white shadow-xs">
+                        {brand.businessName.slice(0, 2).toUpperCase()}
                       </div>
-                      <p className="truncate text-xs font-bold text-[#D85A88]">
-                        📍 {brand.city} · {currentPlan.name}
-                      </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-sm font-black tracking-tight text-neutral-900">
+                            {brand.businessName}
+                          </span>
+                        </div>
+                        <p className="truncate text-[11px] font-bold text-[#D85A88]">
+                          📍 {brand.city} · {currentPlan.name}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                        ● Cloud Firestore Synced
+                      </span>
+                      {authUser?.isSuperAdmin ? (
+                        <>
+                          <label htmlFor="workspace-preset-select" className="sr-only">
+                            Pilih Inspeksi Brand
+                          </label>
+                          <select
+                            id="workspace-preset-select"
+                            value={selectedPresetKey}
+                            onChange={(e) =>
+                              handleSelectBrandPreset(
+                                e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
+                              )
+                            }
+                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-neutral-700 focus:outline-hidden"
+                          >
+                            <option value="running_event">🏃 Inspeksi: Nusantara Run</option>
+                            <option value="cafe_fnb">☕ Inspeksi: Kopi Senja</option>
+                            <option value="clinic_beauty">✨ Inspeksi: GlowDerm</option>
+                            <option value="custom">🎨 Brand Aktif</option>
+                          </select>
+                        </>
+                      ) : (
+                        <span
+                          data-testid="real-firestore-workspace-badge"
+                          className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/90 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700"
+                        >
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          <span>Data Asli Cloud Firestore</span>
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700">
-                      ● Cloud Firestore Synced
-                    </span>
-                    {authUser?.isSuperAdmin ? (
-                      <>
-                        <label htmlFor="workspace-preset-select" className="sr-only">
-                          Pilih Inspeksi Brand
-                        </label>
-                        <select
-                          id="workspace-preset-select"
-                          value={selectedPresetKey}
-                          onChange={(e) =>
-                            handleSelectBrandPreset(
-                              e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
-                            )
-                          }
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-neutral-700 focus:outline-hidden"
-                        >
-                          <option value="running_event">🏃 Inspeksi: Nusantara Run</option>
-                          <option value="cafe_fnb">☕ Inspeksi: Kopi Senja</option>
-                          <option value="clinic_beauty">✨ Inspeksi: GlowDerm</option>
-                          <option value="custom">🎨 Brand Aktif</option>
-                        </select>
-                      </>
-                    ) : (
-                      <span
-                        data-testid="real-firestore-workspace-badge"
-                        className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/90 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-700"
-                      >
-                        <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                        <span>Data Asli Cloud Firestore</span>
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2. Vertical Sidebar Menu Items */}
-                <div>
-                  <p className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
-                    Menu Utama Workspace
-                  </p>
-                  <nav
-                    aria-label="Menu Utama User Workspace"
-                    data-testid="user-workspace-sidebar-nav"
-                    className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-1"
-                  >
-                    {(
-                      [
-                        {
-                          id: 'overview',
-                          label: i18nCopy.workspaceTabs.overview,
-                          sublabel: 'Analitik & 4 Kanal Sosmed',
-                          badge: `${connections.filter((c) => c.connected).length}/4`,
-                          icon: LayoutDashboard,
-                        },
-                        {
-                          id: 'brand_vault',
-                          label: i18nCopy.workspaceTabs.brand_vault,
-                          sublabel: 'Brand Brain & Foto Asli',
-                          badge: `${vaultAssets.length}`,
-                          icon: Camera,
-                        },
-                        {
-                          id: 'studio',
-                          label: i18nCopy.workspaceTabs.studio,
-                          sublabel: 'Reels 9:16, Carousel & Poster',
-                          badge: `${drafts.length}`,
-                          icon: Wand2,
-                        },
-                        {
-                          id: 'autonomy',
-                          label: i18nCopy.workspaceTabs.autonomy,
-                          sublabel: 'Jadwal Tayang & Mode Event',
-                          badge: autonomyConfig.enabled ? 'ON' : 'OFF',
-                          icon: Bot,
-                        },
-                        {
-                          id: 'meta_ads',
-                          label: i18nCopy.workspaceTabs.meta_ads,
-                          sublabel: 'AI Media Buyer & Pagar Budget',
-                          badge: `${metaAdCampaigns.filter((c) => c.status === 'active_running').length}`,
-                          icon: Megaphone,
-                        },
-                      ] as const
-                    ).map((tab) => {
-                      const Icon = tab.icon;
-                      const isActive = activeTab === tab.id;
-                      return (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          data-testid={`workspace-tab-${tab.id}`}
-                          onClick={() => setActiveTab(tab.id)}
-                          className={`group flex w-full items-center justify-between gap-2.5 rounded-2xl px-3.5 py-3 text-left transition ${
-                            isActive
-                              ? 'bg-[#EC749B] text-white shadow-sm'
-                              : 'border border-transparent bg-neutral-50/70 text-neutral-700 hover:border-pink-200 hover:bg-pink-50/60 hover:text-neutral-900'
-                          }`}
-                        >
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span
-                              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition ${
-                                isActive
-                                  ? 'bg-white/20 text-white'
-                                  : 'bg-white text-[#EC749B] shadow-2xs group-hover:bg-pink-100/80'
-                              }`}
-                            >
-                              <Icon className="h-4 w-4 shrink-0" />
-                            </span>
-                            <div className="min-w-0">
-                              <p className="truncate text-xs font-black leading-tight">{tab.label}</p>
-                              <p
-                                className={`hidden truncate text-[10px] font-medium lg:block ${
-                                  isActive ? 'text-pink-100' : 'text-neutral-400'
-                                }`}
-                              >
-                                {tab.sublabel}
-                              </p>
-                            </div>
-                          </div>
-                          <span
-                            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
+                  {/* 2. Vertical Sidemenu Items */}
+                  <div>
+                    <p className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">
+                      Menu Utama Workspace
+                    </p>
+                    <nav
+                      aria-label="Menu Utama User Workspace"
+                      data-testid="user-workspace-sidebar-nav"
+                      className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-1"
+                    >
+                      {(
+                        [
+                          {
+                            id: 'overview',
+                            label: i18nCopy.workspaceTabs.overview,
+                            sublabel: 'Analitik & 4 Kanal Sosmed',
+                            badge: `${connections.filter((c) => c.connected).length}/4`,
+                            icon: LayoutDashboard,
+                          },
+                          {
+                            id: 'brand_vault',
+                            label: i18nCopy.workspaceTabs.brand_vault,
+                            sublabel: 'Brand Brain & Foto Asli',
+                            badge: `${vaultAssets.length}`,
+                            icon: Camera,
+                          },
+                          {
+                            id: 'studio',
+                            label: i18nCopy.workspaceTabs.studio,
+                            sublabel: 'Reels 9:16, Carousel & Poster',
+                            badge: `${drafts.length}`,
+                            icon: Wand2,
+                          },
+                          {
+                            id: 'autonomy',
+                            label: i18nCopy.workspaceTabs.autonomy,
+                            sublabel: 'Jadwal Tayang & Mode Event',
+                            badge: autonomyConfig.enabled ? 'ON' : 'OFF',
+                            icon: Bot,
+                          },
+                          {
+                            id: 'meta_ads',
+                            label: i18nCopy.workspaceTabs.meta_ads,
+                            sublabel: 'AI Media Buyer & Pagar Budget',
+                            badge: `${metaAdCampaigns.filter((c) => c.status === 'active_running').length}`,
+                            icon: Megaphone,
+                          },
+                        ] as const
+                      ).map((tab) => {
+                        const Icon = tab.icon;
+                        const isActive = activeTab === tab.id;
+                        return (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            data-testid={`workspace-tab-${tab.id}`}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`group flex w-full items-center justify-between gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${
                               isActive
-                                ? 'bg-white/25 text-white'
-                                : 'bg-white text-[#D85A88] border border-pink-100'
+                                ? 'bg-[#EC749B] text-white shadow-xs'
+                                : 'border border-transparent bg-transparent text-neutral-700 hover:bg-pink-50/70 hover:text-neutral-900'
                             }`}
                           >
-                            {tab.badge}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </nav>
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <span
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition ${
+                                  isActive
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-neutral-100 text-[#EC749B] group-hover:bg-pink-100/80'
+                                }`}
+                              >
+                                <Icon className="h-4 w-4 shrink-0" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-black leading-tight">{tab.label}</p>
+                                <p
+                                  className={`hidden truncate text-[10px] font-medium lg:block ${
+                                    isActive ? 'text-pink-100' : 'text-neutral-400'
+                                  }`}
+                                >
+                                  {tab.sublabel}
+                                </p>
+                              </div>
+                            </div>
+                            <span
+                              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${
+                                isActive
+                                  ? 'bg-white/25 text-white'
+                                  : 'bg-pink-50 text-[#D85A88] border border-pink-100'
+                              }`}
+                            >
+                              {tab.badge}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </nav>
+                  </div>
                 </div>
 
-                {/* 3. Sidebar Monthly Quota & Autopilot Progress Card */}
-                <div className="rounded-2xl border border-neutral-200/90 bg-neutral-50/70 p-3.5">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-extrabold text-neutral-700">Kuota Konten AI</span>
-                    <span className="font-black text-[#D85A88]">
-                      {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} Tayang
-                    </span>
+                {/* Bottom Section of Flush Left Sidemenu: Quota + Quick Actions */}
+                <div className="mt-5 space-y-3 border-t border-neutral-100 pt-4">
+                  {/* 3. Sidebar Monthly Quota & Autopilot Progress Card */}
+                  <div className="rounded-2xl border border-neutral-200/90 bg-neutral-50/70 p-3">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-extrabold text-neutral-700">Kuota Konten AI</span>
+                      <span className="font-black text-[#D85A88]">
+                        {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} Tayang
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-pink-100/80">
+                      <div
+                        className="h-full rounded-full bg-[#EC749B] transition-all duration-300"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.max(
+                              6,
+                              Math.round((postsUsedThisMonth / Math.max(1, currentPlan.monthlyPostQuota)) * 100),
+                            ),
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-neutral-500">
+                      <span>{connections.filter((c) => c.connected).length}/4 Sosmed Aktif</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCheckoutPlanId(activePlanId);
+                          billingDialogRef.current?.showModal();
+                        }}
+                        className="font-black text-[#D85A88] hover:underline"
+                      >
+                        Upgrade Paket →
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-pink-100/80">
-                    <div
-                      className="h-full rounded-full bg-[#EC749B] transition-all duration-300"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(
-                            6,
-                            Math.round((postsUsedThisMonth / Math.max(1, currentPlan.monthlyPostQuota)) * 100),
-                          ),
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="mt-2.5 flex items-center justify-between text-[10px] text-neutral-500">
-                    <span>{connections.filter((c) => c.connected).length}/4 Sosmed Aktif</span>
+
+                  {/* 4. Sidebar Quick Actions */}
+                  <div className="space-y-1.5">
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelectedCheckoutPlanId(activePlanId);
-                        billingDialogRef.current?.showModal();
-                      }}
-                      className="font-black text-[#D85A88] hover:underline"
+                      onClick={() => setActiveTab('studio')}
+                      className="veloxa-luxury-card-pink flex w-full items-center justify-center gap-2 rounded-xl bg-[#EC749B] px-3.5 py-2.5 text-xs font-black text-white shadow-xs hover:bg-[#DF608A] transition"
                     >
-                      Upgrade Paket →
+                      <Wand2 className="h-3.5 w-3.5" />
+                      <span>Buat Konten AI Baru</span>
                     </button>
+
+                    <button
+                      type="button"
+                      data-testid="header-connect-social-btn"
+                      onClick={() => handleOpenOAuthConfigModal('instagram')}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50/80 px-3 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white transition"
+                    >
+                      <span>🔗 Hubungkan 4 Sosmed</span>
+                    </button>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <Link
+                        href="/onboarding?edit=1"
+                        data-testid="open-onboarding-modal-btn"
+                        className="flex items-center justify-center gap-1 rounded-xl border border-neutral-200 bg-white px-2.5 py-2 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
+                      >
+                        <Plus className="h-3 w-3" />
+                        <span>Edit Brand</span>
+                      </Link>
+                      <button
+                        type="button"
+                        data-testid="local-first-sync-btn"
+                        onClick={() => void handleForceCloudSync()}
+                        className="flex items-center justify-center gap-1 rounded-xl border border-neutral-200 bg-white px-2.5 py-2 text-[11px] font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
+                      >
+                        <RefreshCw className="h-3 w-3 text-[#EC749B]" />
+                        <span>Sync Cloud</span>
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                {/* 4. Sidebar Quick Actions */}
-                <div className="space-y-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('studio')}
-                    className="veloxa-luxury-card-pink flex w-full items-center justify-center gap-2 rounded-2xl bg-[#EC749B] px-4 py-3 text-xs font-black text-white shadow-xs hover:bg-[#DF608A] transition"
-                  >
-                    <Wand2 className="h-4 w-4" />
-                    <span>Buat Konten AI Baru</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="header-connect-social-btn"
-                    onClick={() => handleOpenOAuthConfigModal('instagram')}
-                    className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/80 px-3.5 py-2.5 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white transition"
-                  >
-                    <span>🔗 Hubungkan 4 Sosmed</span>
-                  </button>
-
-                  <Link
-                    href="/onboarding?edit=1"
-                    data-testid="open-onboarding-modal-btn"
-                    className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs font-black text-neutral-700 hover:border-pink-200 hover:text-[#D85A88] transition"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Edit Profil Brand</span>
-                  </Link>
                 </div>
               </aside>
 
               {/* ====================================================================
-                 RIGHT MAIN WORKSPACE CONTENT COLUMN
+                 RIGHT MAIN WORKSPACE CONTENT COLUMN (OFFSET BY FLUSH 276PX SIDEMENU)
                  ==================================================================== */}
-              <div className="min-w-0 space-y-6" data-testid="user-workspace-main">
+              <div
+                className="min-w-0 lg:pl-[276px]"
+                data-testid="user-workspace-main"
+              >
+                <div className="mx-auto max-w-[1560px] space-y-6 px-4 py-6 sm:px-7 lg:px-9">
                 {/* Compact Contextual Top Bar inside Main Column */}
                 <div className="veloxa-luxury-card flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200/90 bg-white px-5 py-4">
                   <div>
@@ -3238,6 +3247,7 @@ export default function VeloxaAiPlatformPage() {
                   </div>
                 </div>
               )}
+                </div>
               </div>
             </div>
           )}
@@ -3245,7 +3255,11 @@ export default function VeloxaAiPlatformPage() {
           {authUser && (
             <footer
               data-testid="veloxa-workspace-footer"
-              className="mt-10 rounded-3xl border border-neutral-200/80 bg-white px-6 py-4 text-xs text-neutral-500 shadow-2xs"
+              className={`mt-10 rounded-3xl border border-neutral-200/80 bg-white px-6 py-4 text-xs text-neutral-500 shadow-2xs ${
+                !(authUser.isSuperAdmin && activeRole === 'admin')
+                  ? 'mx-4 sm:mx-7 lg:ml-[312px] lg:mr-9'
+                  : ''
+              }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
