@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BRAND_PRESETS,
   SUBSCRIPTION_PLANS,
@@ -13,6 +13,15 @@ import {
   generateBrandContentDraft,
   runMetaAdsAutonomousOptimizer,
 } from '@/lib/veloxa-engine';
+import { VELOXA_OPENAI_AGENTS } from '@/lib/veloxa-openai-agents';
+import {
+  getDefaultFirebaseConnectionConfig,
+  loadSavedFirebaseConfig,
+  loadWorkspaceSnapshotFromStore,
+  saveFirebaseConnectionConfig,
+  syncWorkspaceSnapshotToStore,
+  type VeloxaFirebaseConnectionConfig,
+} from '@/lib/veloxa-firestore-repo';
 import {
   INITIAL_AUTONOMY_CONFIG,
   INITIAL_CENTRAL_CREDENTIALS,
@@ -149,9 +158,67 @@ export default function VeloxaAiPlatformPage() {
   // Super Admin state
   const [tenants, setTenants] = useState<TenantWorkspaceSummary[]>(INITIAL_TENANT_WORKSPACES);
   const [centralCreds] = useState<CentralPlatformCredentials>(INITIAL_CENTRAL_CREDENTIALS);
+  const [firebaseCfg, setFirebaseCfg] = useState<VeloxaFirebaseConnectionConfig>(() =>
+    getDefaultFirebaseConnectionConfig(),
+  );
+  const [openAiInputKey, setOpenAiInputKey] = useState<string>('');
   const [statusBanner, setStatusBanner] = useState<string>(
     'Veloxa AI aktif · Seluruh 4 kanal sosmed (IG, FB, TikTok, YT Shorts) & AI Agent Meta Ads siap dijalankan.',
   );
+
+  useEffect(() => {
+    const savedCfg = loadSavedFirebaseConfig();
+    setFirebaseCfg(savedCfg);
+    void loadWorkspaceSnapshotFromStore(BRAND_PRESETS.running_event.workspaceId, savedCfg).then(
+      (snap) => {
+        if (!snap) return;
+        setBrand(snap.brand);
+        setActivePlanId(snap.activePlanId);
+        setPostsUsedThisMonth(snap.postsUsedThisMonth);
+        setConnections(snap.connections);
+        setMetaAccount(snap.metaAccount);
+        setVaultAssets(snap.vaultAssets);
+        setAutonomyConfig(snap.autonomyConfig);
+        setEventCampaigns(snap.eventCampaigns);
+        setDrafts(snap.drafts);
+        setMetaAdCampaigns(snap.metaAdCampaigns);
+        setTenants(snap.tenants);
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    void syncWorkspaceSnapshotToStore(
+      {
+        brand,
+        activePlanId,
+        postsUsedThisMonth,
+        connections,
+        metaAccount,
+        vaultAssets,
+        autonomyConfig,
+        eventCampaigns,
+        drafts,
+        metaAdCampaigns,
+        tenants,
+        updatedAtIso: new Date().toISOString(),
+      },
+      firebaseCfg,
+    );
+  }, [
+    brand,
+    activePlanId,
+    postsUsedThisMonth,
+    connections,
+    metaAccount,
+    vaultAssets,
+    autonomyConfig,
+    eventCampaigns,
+    drafts,
+    metaAdCampaigns,
+    tenants,
+    firebaseCfg,
+  ]);
 
   const currentPlan = SUBSCRIPTION_PLANS[activePlanId];
   const adminSummary = useMemo(() => calculatePlatformAdminMetrics(tenants), [tenants]);
@@ -242,7 +309,7 @@ export default function VeloxaAiPlatformPage() {
     );
   };
 
-  const handleGenerateStudioDraft = (source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
+  const handleGenerateStudioDraft = async (source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
     const quotaGuard = canConsumePostingQuota({
       planId: activePlanId,
       postsPublishedThisMonth: postsUsedThisMonth,
@@ -253,7 +320,7 @@ export default function VeloxaAiPlatformPage() {
     }
 
     const activeCamp = eventCampaigns.find((c) => c.status === 'active');
-    const created = generateBrandContentDraft({
+    let created = generateBrandContentDraft({
       brand,
       format: studioFormat,
       source,
@@ -265,6 +332,34 @@ export default function VeloxaAiPlatformPage() {
       scheduledForWib: scheduledSlotWib,
     });
 
+    try {
+      const res = await fetch('/api/veloxa/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'content_creator_and_critic',
+          brand,
+          format: studioFormat,
+          source,
+          customTopic: studioTopic,
+          vaultAssets,
+          connections,
+          planId: activePlanId,
+          activeCampaign: activeCamp,
+          scheduledForWib: scheduledSlotWib,
+          openAiApiKey: openAiInputKey.trim() || undefined,
+        }),
+      });
+      if (res.ok) {
+        const payload = (await res.json()) as { ok?: boolean; draft?: ContentDraft };
+        if (payload.ok && payload.draft) {
+          created = payload.draft;
+        }
+      }
+    } catch {
+      // fallback to local deterministic draft
+    }
+
     setDrafts((prev) => [created, ...prev]);
     setPostsUsedThisMonth((prev) => prev + 1);
     setStudioTopic('');
@@ -273,7 +368,19 @@ export default function VeloxaAiPlatformPage() {
     );
   };
 
-  const handlePublishDraftNow = (draftId: string) => {
+  const handlePublishDraftNow = async (draftId: string) => {
+    const targetDraft = drafts.find((d) => d.id === draftId);
+    if (targetDraft) {
+      try {
+        await fetch('/api/veloxa/publish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draft: targetDraft }),
+        });
+      } catch {
+        // non-blocking fallback
+      }
+    }
     setDrafts((prev) =>
       prev.map((d) =>
         d.id === draftId
@@ -340,7 +447,23 @@ export default function VeloxaAiPlatformPage() {
     );
   };
 
-  const handleToggleMetaCampaignRun = (campaignId: string) => {
+  const handleToggleMetaCampaignRun = async (campaignId: string) => {
+    const targetCamp = metaAdCampaigns.find((c) => c.id === campaignId);
+    if (targetCamp) {
+      try {
+        await fetch('/api/veloxa/meta-ads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaign: targetCamp,
+            adAccountId: metaAccount.adAccountId,
+            targetStatus: targetCamp.status === 'active_running' ? 'PAUSED' : 'ACTIVE',
+          }),
+        });
+      } catch {
+        // non-blocking fallback
+      }
+    }
     setMetaAdCampaigns((prev) =>
       prev.map((c) =>
         c.id === campaignId
@@ -386,6 +509,20 @@ export default function VeloxaAiPlatformPage() {
       setActivePlanId(nextPlanId);
     }
     setStatusBanner(`Paket langganan tenant berhasil diperbarui ke ${spec.name} (${formatIdr(spec.priceMonthlyIdr)}/bln).`);
+  };
+
+  const handleSaveCloudConnectionConfig = () => {
+    const nextCfg = saveFirebaseConnectionConfig({
+      ...firebaseCfg,
+      openAiConnected: Boolean(openAiInputKey.trim() || firebaseCfg.openAiConnected),
+      openAiApiKeyMasked: openAiInputKey.trim()
+        ? `${openAiInputKey.trim().slice(0, 8)}••••••••••••••••`
+        : firebaseCfg.openAiApiKeyMasked,
+    });
+    setFirebaseCfg(nextCfg);
+    setStatusBanner(
+      `Konfigurasi Cloud Firebase (${nextCfg.projectId}) & 5 OpenAI Agent berhasil disimpan (${nextCfg.lastSyncedAtWib}).`,
+    );
   };
 
   const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
@@ -733,6 +870,103 @@ export default function VeloxaAiPlatformPage() {
                       <span className="font-bold text-[#D85A88]">✓ Payment Gateway:</span> {centralCreds.paymentGatewayProvider} (QRIS & VA)
                     </p>
                   </div>
+                </div>
+              </section>
+
+              {/* Cloud Firebase Database & 5 OpenAI Agents Configuration Panel (Cendekia-Style Architecture) */}
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
+                      Cloud Database & Multi-Agent OpenAI (Arsitektur Setara Cendekia)
+                    </span>
+                    <h2 className="mt-2 text-lg font-black text-neutral-900">
+                      Koneksi Firebase Firestore & 5 OpenAI Agent Khusus Veloxa AI
+                    </h2>
+                    <p className="text-xs text-neutral-500">
+                      Masukkan konfigurasi proyek Firebase baru Anda dan kunci OpenAI untuk mengaktifkan sinkronisasi database real-time & kelima Agent AI produksi.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
+                    Status Sinkronisasi:{' '}
+                    <span className="text-[#D85A88]">
+                      {firebaseCfg.firebaseConnected ? '● Cloud Firestore Aktif' : '● Penyimpanan Lokal + Siap Tautkan Firebase'}
+                    </span>
+                  </span>
+                </div>
+
+                {/* Firebase & OpenAI Connection Inputs */}
+                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <label className="font-bold text-neutral-700">Firebase Project ID</label>
+                    <input
+                      type="text"
+                      value={firebaseCfg.projectId}
+                      onChange={(e) =>
+                        setFirebaseCfg({
+                          ...firebaseCfg,
+                          projectId: e.target.value,
+                          authDomain: `${e.target.value}.firebaseapp.com`,
+                          storageBucket: `${e.target.value}.firebasestorage.app`,
+                        })
+                      }
+                      placeholder="veloxa-ai-prod"
+                      className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-neutral-700">Firebase Web API Key</label>
+                    <input
+                      type="password"
+                      value={firebaseCfg.apiKey}
+                      onChange={(e) => setFirebaseCfg({ ...firebaseCfg, apiKey: e.target.value })}
+                      placeholder="AIzaSy..."
+                      className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-neutral-700">OpenAI Master API Key</label>
+                    <input
+                      type="password"
+                      value={openAiInputKey}
+                      onChange={(e) => setOpenAiInputKey(e.target.value)}
+                      placeholder={firebaseCfg.openAiApiKeyMasked || 'sk-proj-...'}
+                      className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      onClick={handleSaveCloudConnectionConfig}
+                      className="w-full rounded-xl bg-[#EC749B] px-4 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                    >
+                      Simpan & Sinkronkan Koneksi Cloud
+                    </button>
+                  </div>
+                </div>
+
+                {/* 5 Specialized OpenAI Agents Directory */}
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  {Object.values(VELOXA_OPENAI_AGENTS).map((agt) => (
+                    <div
+                      key={agt.agentId}
+                      className="flex flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-3.5 text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="rounded border border-pink-200 bg-pink-50/70 px-2 py-0.5 text-[10px] font-black text-[#D85A88]">
+                            {agt.model}
+                          </span>
+                          <span className="text-[10px] font-bold text-[#D85A88]">● Siap</span>
+                        </div>
+                        <p className="mt-2 font-black text-neutral-900">{agt.name}</p>
+                        <p className="mt-1 text-[11px] text-neutral-500">{agt.roleDescription}</p>
+                      </div>
+                      <p className="mt-2.5 border-t border-neutral-100 pt-2 font-mono text-[10px] text-neutral-400">
+                        ID: {agt.agentId}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </section>
             </div>

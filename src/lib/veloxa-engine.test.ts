@@ -16,6 +16,15 @@ import {
   searchValidatedMetaInterests,
   validateAutonomyScheduleAgainstPlan,
 } from './veloxa-engine';
+import {
+  VELOXA_OPENAI_AGENTS,
+  runContentCreatorAndCriticAgent,
+  runStyleDnaVisionAgent,
+} from './veloxa-openai-agents';
+import {
+  executeMetaAdsCampaignOnGraphApi,
+  publishDraftToConnectedChannels,
+} from './veloxa-social-publisher';
 import type { ChannelConnectionState, MetaAdsAccountConnection } from './veloxa-types';
 
 const ALL_CONNECTED_CHANNELS: ChannelConnectionState[] = [
@@ -240,4 +249,63 @@ test('calculateTenantUnitEconomics and quota guards protect SaaS gross margins a
   ]);
   assert.equal(adminSummary.totalMrrIdr, 1_000_000);
   assert.equal(adminSummary.averageGrossMarginPct, 88);
+});
+
+test('5 specialized OpenAI Agents and Multi-Channel Publisher execute end-to-end', async () => {
+  assert.equal(Object.keys(VELOXA_OPENAI_AGENTS).length, 5);
+  assert.equal(VELOXA_OPENAI_AGENTS.styleDnaVision.agentId, 'agt_veloxa_style_dna_vision_v1');
+  assert.equal(VELOXA_OPENAI_AGENTS.metaAdsArchitect.agentId, 'agt_veloxa_meta_ads_architect_v1');
+
+  const visionRes = await runStyleDnaVisionAgent({
+    title: 'Poster Event Lari 10K',
+    description: 'High contrast dynamic runner',
+    mediaType: 'photo',
+    category: 'running_event',
+  });
+  assert.ok(visionRes.styleDna.layoutPattern.length > 5);
+
+  const creatorRes = await runContentCreatorAndCriticAgent({
+    brand: BRAND_PRESETS.running_event,
+    format: 'short_video',
+    source: 'manual_studio',
+    vaultAssets: [],
+    connections: ALL_CONNECTED_CHANNELS,
+    planId: 'pro_1500k',
+  });
+  assert.equal(creatorRes.draft.qualityReview.passed, true);
+  assert.equal(creatorRes.draft.targetChannels.length, 4);
+
+  const publishRes = await publishDraftToConnectedChannels({
+    draft: creatorRes.draft,
+  });
+  assert.equal(publishRes.receipts.length, 4);
+  assert.ok(publishRes.receipts.every((r) => r.status === 'published'));
+
+  const metaPlan = buildMetaAdCampaignPlan({
+    brand: BRAND_PRESETS.running_event,
+    metaAccount: {
+      connected: true,
+      adAccountId: 'act_889900112233',
+      adAccountName: 'Nusantara Run Ads Manager',
+      businessPortfolioName: 'PT Nusantara Sportainment',
+      currency: 'IDR',
+      paymentMethodLabel: 'Visa Corporate •• 4821',
+      dailyHardCapIdr: 250_000,
+      monthlyHardCapIdr: 5_000_000,
+      autoOptimizeEnabled: true,
+      autoBoostOrganicWinners: true,
+    },
+    objective: 'WHATSAPP_MESSAGES',
+    promotedOfferingTitle: 'Bandung Sunrise Run 10K',
+    requestedDailyBudgetIdr: 150_000,
+    durationDays: 7,
+  });
+
+  const metaReceipt = await executeMetaAdsCampaignOnGraphApi({
+    campaign: metaPlan,
+    adAccountId: 'act_889900112233',
+    targetStatus: 'ACTIVE',
+  });
+  assert.equal(metaReceipt.status, 'ACTIVE');
+  assert.equal(metaReceipt.metaAdRemoteIds.length, 2);
 });
