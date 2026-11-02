@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -96,24 +96,29 @@ export default function VeloxaOnboardingWizardPage() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [userEmail, setUserEmail] = useState<string>('');
   const [alreadyOnboarded, setAlreadyOnboarded] = useState<boolean>(false);
+  const hasUserEditedRef = useRef<boolean>(false);
 
   useEffect(() => {
     const applyUser = (u: ReturnType<typeof getInitialAuthenticatedUser>) => {
       if (!u) return;
       setUserEmail(u.email);
-      if (u.businessName) setBusinessName(u.businessName);
-      if (u.city) setCity(u.city);
-      if (u.category) setCategory(u.category);
-      if (u.targetAudience) setTargetAudience(u.targetAudience);
-      if (u.brandTone) setBrandTone(u.brandTone);
-      if (u.selectedChannels && u.selectedChannels.length > 0) {
-        setSelectedChannels(u.selectedChannels);
-      }
-      if (u.subscriptionPlanId) {
-        setSelectedPlanId(u.subscriptionPlanId);
-      }
       if (u.onboardingCompleted) {
         setAlreadyOnboarded(true);
+      }
+      // Only prefill form inputs if the user hasn't started editing or stepping through the wizard,
+      // and only if the user already completed onboarding previously (not the placeholder "${displayName} Brand")
+      if (!hasUserEditedRef.current && u.onboardingCompleted) {
+        if (u.businessName) setBusinessName(u.businessName);
+        if (u.city) setCity(u.city);
+        if (u.category) setCategory(u.category);
+        if (u.targetAudience) setTargetAudience(u.targetAudience);
+        if (u.brandTone) setBrandTone(u.brandTone);
+        if (u.selectedChannels && u.selectedChannels.length > 0) {
+          setSelectedChannels(u.selectedChannels);
+        }
+        if (u.subscriptionPlanId) {
+          setSelectedPlanId(u.subscriptionPlanId);
+        }
       }
     };
 
@@ -316,7 +321,10 @@ export default function VeloxaOnboardingWizardPage() {
                     type="text"
                     required
                     value={businessName}
-                    onChange={(e) => setBusinessName(e.target.value)}
+                    onChange={(e) => {
+                      hasUserEditedRef.current = true;
+                      setBusinessName(e.target.value);
+                    }}
                     placeholder="Contoh: Kopi Senja & Artisan Bakery"
                     data-testid="onboard-business-name-input"
                     className="veloxa-auth-input w-full rounded-2xl border border-neutral-200 bg-white py-3.5 pl-10 pr-4 text-sm font-semibold text-neutral-900"
