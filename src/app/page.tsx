@@ -958,7 +958,7 @@ export default function VeloxaAiPlatformPage() {
   const i18nCopy = VELOXA_I18N_COPY[locale];
 
   return (
-    <div className="min-h-dvh bg-[#FAFAFA] pb-28 text-neutral-900">
+    <div className="min-h-dvh bg-white pb-28 text-neutral-900">
       {/* Top Global Header — Dipisah Murni Berdasarkan Status Login + Global Multi-Language Switcher */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">

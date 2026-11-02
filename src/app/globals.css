@@ -7,17 +7,66 @@
   --veloxa-pink-hover: #df608a;
   --veloxa-pink-soft: #fdf2f6;
   --veloxa-surface-white: #ffffff;
-  --veloxa-surface-subtle: #fafafa;
+  --veloxa-surface-subtle: #ffffff;
   --veloxa-border-neutral: #e5e7eb;
   --veloxa-text-primary: #171717;
   --veloxa-text-muted: #6b7280;
 }
 
 body {
-  background-color: #fafafa;
+  background-color: #ffffff;
   color: var(--veloxa-text-primary);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   -webkit-font-smoothing: antialiased;
+}
+
+/* Luxury Pure-White Architectural Shadows for Landing Page Sections & Cards */
+.veloxa-luxury-section {
+  background-color: #ffffff;
+  box-shadow:
+    0 22px 54px -12px rgba(15, 23, 42, 0.12),
+    0 10px 26px -8px rgba(15, 23, 42, 0.07),
+    0 2px 6px 0 rgba(15, 23, 42, 0.04);
+}
+
+.veloxa-luxury-card {
+  background-color: #ffffff;
+  box-shadow:
+    0 14px 32px -6px rgba(15, 23, 42, 0.13),
+    0 6px 14px -4px rgba(15, 23, 42, 0.08),
+    0 1px 4px 0 rgba(15, 23, 42, 0.05);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s ease,
+    border-color 0.28s ease;
+}
+
+.veloxa-luxury-card-pink {
+  background-color: #ffffff;
+  box-shadow:
+    0 18px 40px -8px rgba(236, 116, 155, 0.25),
+    0 8px 20px -4px rgba(15, 23, 42, 0.11),
+    0 2px 5px 0 rgba(15, 23, 42, 0.05);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s ease,
+    border-color 0.28s ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .veloxa-luxury-card:hover {
+    transform: translate3d(0, -5px, 0);
+    box-shadow:
+      0 24px 48px -10px rgba(15, 23, 42, 0.18),
+      0 10px 22px -6px rgba(236, 116, 155, 0.15);
+  }
+
+  .veloxa-luxury-card-pink:hover {
+    transform: translate3d(0, -5px, 0);
+    box-shadow:
+      0 26px 52px -10px rgba(236, 116, 155, 0.32),
+      0 12px 24px -6px rgba(15, 23, 42, 0.14);
+  }
 }
 
 /* Fluid typography with clamp() (modern-web-guidance: responsive-design) */

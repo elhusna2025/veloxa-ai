@@ -603,14 +603,14 @@ export function VeloxaLuxuryLanding({
   return (
     <div
       dir={localeMeta.dir}
-      className={`space-y-10 pb-8 ${isMotionActive ? 'veloxa-motion-active' : ''}`}
+      className={`space-y-12 bg-white pb-10 ${isMotionActive ? 'veloxa-motion-active' : ''}`}
       data-testid="veloxa-sales-landing-page"
     >
       {/* ============================================================================
          SECTION 1: ULTRA-LUXURY GLOBAL HERO + LIVE REELS, CAROUSEL & META ADS BENTO
-         90% Pure Clean White (#FFFFFF / #FAFAFA) + Crisp Neutral Typography + 10% Soft Pink (#EC749B)
+         100% Pure Clean White (#FFFFFF) + Strong Luxury Card Shadows + 10% Soft Pink (#EC749B)
          ============================================================================ */}
-      <section className="relative overflow-hidden rounded-[2rem] border border-neutral-200/90 bg-white p-6 shadow-xs sm:p-10 lg:p-12">
+      <section className="veloxa-luxury-section relative overflow-hidden rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10 lg:p-12">
         {/* Top Global Language, Currency & Motion Control Bar inside Hero */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-5">
           <div className="flex flex-wrap items-center gap-2">
@@ -624,7 +624,7 @@ export function VeloxaLuxuryLanding({
               type="button"
               data-testid="toggle-kinetic-motion-btn"
               onClick={() => setIsMotionActive((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-[#FAFAFA] px-3 py-1 text-[11px] font-bold text-neutral-700 transition hover:border-pink-200 hover:text-[#D85A88]"
+              className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-bold text-neutral-700 shadow-xs transition hover:border-pink-200 hover:text-[#D85A88]"
             >
               {isMotionActive ? (
                 <>
@@ -659,8 +659,8 @@ export function VeloxaLuxuryLanding({
                   onClick={() => onSelectLocale(item.code)}
                   className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition ${
                     isSelected
-                      ? 'bg-[#EC749B] text-white shadow-2xs'
-                      : 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
+                      ? 'bg-[#EC749B] text-white shadow-sm'
+                      : 'border border-neutral-200 bg-white text-neutral-700 shadow-2xs hover:border-pink-200 hover:text-[#D85A88]'
                   }`}
                 >
                   <span>{item.flag}</span>
@@ -677,7 +677,7 @@ export function VeloxaLuxuryLanding({
           <div className="text-left">
             <h1 className="text-3xl font-black leading-[1.12] tracking-tight text-neutral-900 sm:text-5xl">
               {copy.heroTitlePre}
-              <span className="inline-block rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-0.5 text-[#EC749B]">
+              <span className="inline-block rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-0.5 text-[#EC749B] shadow-xs">
                 {copy.heroTitleHighlight}
               </span>
               {copy.heroTitlePost}
@@ -693,7 +693,7 @@ export function VeloxaLuxuryLanding({
                 type="button"
                 data-testid="landing-cta-start-btn"
                 onClick={() => onOpenOnboarding('pro_1500k')}
-                className="veloxa-card-hover inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-6 py-4 text-sm font-black text-white shadow-sm transition hover:bg-[#DF608A]"
+                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-6 py-4 text-sm font-black text-white transition hover:bg-[#DF608A]"
               >
                 <Rocket className="h-4 w-4 shrink-0" />
                 <span className="veloxa-trim-text">{copy.heroPrimaryCta}</span>
@@ -703,14 +703,14 @@ export function VeloxaLuxuryLanding({
                 type="button"
                 data-testid="landing-open-login-btn"
                 onClick={onOpenAuthModal}
-                className="veloxa-card-hover inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-6 py-4 text-sm font-bold text-neutral-800 transition hover:border-pink-200 hover:text-[#D85A88]"
+                className="veloxa-luxury-card inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-6 py-4 text-sm font-bold text-neutral-800 transition hover:border-pink-200 hover:text-[#D85A88]"
               >
                 <span className="veloxa-trim-text">{copy.heroSecondaryCta}</span>
               </button>
             </div>
 
             {/* 4 Trust Pills */}
-            <div className="mt-7 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[
                 copy.heroTrustPill1,
                 copy.heroTrustPill2,
@@ -719,7 +719,7 @@ export function VeloxaLuxuryLanding({
               ].map((pill) => (
                 <div
                   key={pill}
-                  className="veloxa-card-hover flex items-center gap-2 rounded-xl border border-neutral-200/80 bg-[#FAFAFA] px-3 py-2.5 text-xs font-bold text-neutral-800"
+                  className="veloxa-luxury-card flex items-center gap-2 rounded-xl border border-neutral-200/90 bg-white px-3.5 py-3 text-xs font-bold text-neutral-800"
                 >
                   <CheckCircle2 className="h-4 w-4 shrink-0 text-[#EC749B]" />
                   <span className="truncate">{pill}</span>
@@ -728,12 +728,12 @@ export function VeloxaLuxuryLanding({
             </div>
 
             {/* Supported Global Platforms Strip */}
-            <div className="mt-7 rounded-2xl border border-neutral-200/80 bg-[#FAFAFA] p-4">
+            <div className="veloxa-luxury-card mt-7 rounded-2xl border border-neutral-200/90 bg-white p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[11px] font-black uppercase tracking-wider text-neutral-400">
+                <span className="text-[11px] font-black uppercase tracking-wider text-neutral-500">
                   4-Channel Official OAuth + Meta Marketing API
                 </span>
-                <span className="rounded-full border border-pink-200 bg-white px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
                   ✓ Zero API Key Setup For Users
                 </span>
               </div>
@@ -747,7 +747,7 @@ export function VeloxaLuxuryLanding({
                 ].map((ch) => (
                   <span
                     key={ch}
-                    className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-800 shadow-2xs"
+                    className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-bold text-neutral-800 shadow-xs"
                   >
                     {ch}
                   </span>
@@ -757,9 +757,9 @@ export function VeloxaLuxuryLanding({
           </div>
 
           {/* Right Column: Kinetic Animated Visual Showcase (Floating 9:16 Reels Phone + Auto-Cycling 4:5 Carousel + Meta Ads ROAS Card) */}
-          <div className="grid gap-4 sm:grid-cols-[0.95fr_1.05fr]">
+          <div className="grid gap-5 sm:grid-cols-[0.95fr_1.05fr]">
             {/* Visual Card A: Floating 9:16 Instagram/TikTok Vertical Reels Phone with Ken Burns Video Motion & Dancing Audio Equalizer */}
-            <div className="veloxa-float-slow relative flex flex-col justify-between overflow-hidden rounded-[2rem] border-2 border-neutral-900 bg-neutral-900 p-3 text-white shadow-xl">
+            <div className="veloxa-float-slow relative flex flex-col justify-between overflow-hidden rounded-[2rem] border-2 border-neutral-900 bg-neutral-900 p-3 text-white shadow-2xl">
               {/* Top Phone Speaker & Live Badge */}
               <div className="relative z-10 flex items-center justify-between gap-1 px-1 pt-1">
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-black text-white">
@@ -880,9 +880,9 @@ export function VeloxaLuxuryLanding({
             </div>
 
             {/* Visual Card B: Floating Auto-Playing 4:5 Multi-Slide Carousel + AI Meta Ads ROAS Card */}
-            <div className="veloxa-float-delayed flex flex-col justify-between gap-4">
+            <div className="veloxa-float-delayed flex flex-col justify-between gap-5">
               {/* Auto-Cycling 4:5 Carousel Preview Card */}
-              <div className="veloxa-card-hover rounded-[1.75rem] border border-neutral-200 bg-white p-4 shadow-sm">
+              <div className="veloxa-luxury-card rounded-[1.75rem] border border-neutral-200/90 bg-white p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
                     {copy.bentoCarouselBadge}
@@ -921,7 +921,7 @@ export function VeloxaLuxuryLanding({
                 </div>
 
                 {/* 4:5 Carousel Visual Slide with Auto-Slide Progress Bar */}
-                <div className="relative mt-3 aspect-[4/3] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-900">
+                <div className="relative mt-3 aspect-[4/3] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-900 shadow-md">
                   <img
                     src={heroCurrentSlide.photoUrl}
                     alt={heroCurrentSlide.headline}
@@ -973,7 +973,7 @@ export function VeloxaLuxuryLanding({
               </div>
 
               {/* Live AI Meta Ads Media Buyer Telemetry Card */}
-              <div className="veloxa-card-hover rounded-[1.75rem] border border-pink-200 bg-white p-4 shadow-sm ring-1 ring-pink-100/80">
+              <div className="veloxa-luxury-card-pink rounded-[1.75rem] border border-pink-200 bg-white p-4 ring-1 ring-pink-100/80">
                 <div className="flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-black text-white">
                     <TrendingUp className="h-3 w-3" />
@@ -985,7 +985,7 @@ export function VeloxaLuxuryLanding({
                   </span>
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl border border-neutral-100 bg-[#FAFAFA] p-2.5 text-center">
+                <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-2.5 text-center shadow-2xs">
                   <div>
                     <p className="text-[10px] font-bold text-neutral-400">ROAS</p>
                     <p className="text-sm font-black text-neutral-900">6.8x</p>
@@ -1016,19 +1016,19 @@ export function VeloxaLuxuryLanding({
       <section
         aria-label="Live Global Autonomous Production Feed"
         data-testid="landing-live-marquee-ticker"
-        className="overflow-hidden rounded-3xl border border-neutral-200/90 bg-white py-3.5 shadow-2xs"
+        className="veloxa-luxury-section overflow-hidden rounded-3xl border border-neutral-200/90 bg-white py-4"
       >
         <div className="veloxa-marquee-track flex items-center gap-4 px-4">
           {[...LIVE_GLOBAL_TICKER_ITEMS, ...LIVE_GLOBAL_TICKER_ITEMS].map((item, idx) => (
             <div
               key={`${item.badge}-${idx}`}
-              className="flex shrink-0 items-center gap-2.5 rounded-2xl border border-neutral-200/80 bg-[#FAFAFA] px-4 py-2 text-xs"
+              className="veloxa-luxury-card flex shrink-0 items-center gap-2.5 rounded-2xl border border-neutral-200/90 bg-white px-4 py-2.5 text-xs"
             >
               <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-black text-white">
                 {item.badge}
               </span>
               <span className="font-semibold text-neutral-800">{item.text}</span>
-              <span className="rounded-full border border-pink-200 bg-white px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+              <span className="rounded-full border border-pink-200 bg-pink-50/60 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
                 {item.metric}
               </span>
             </div>
@@ -1040,7 +1040,7 @@ export function VeloxaLuxuryLanding({
          SECTION 2: INTERACTIVE INDUSTRY VISUAL SHOWCASE (REELS + CAROUSEL + SINGLE POST)
          ============================================================================ */}
       <section
-        className="veloxa-deferred-section veloxa-scroll-reveal rounded-[2rem] border border-neutral-200/90 bg-white p-6 shadow-xs sm:p-10"
+        className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10"
         data-testid="landing-visual-gallery-section"
       >
         <div className="mx-auto max-w-3xl text-center">
@@ -1055,7 +1055,7 @@ export function VeloxaLuxuryLanding({
         </div>
 
         {/* Industry Selector Tabs */}
-        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
           {INDUSTRY_SHOWCASES.map((ind) => {
             const active = ind.id === activeIndustryId;
             return (
@@ -1067,10 +1067,10 @@ export function VeloxaLuxuryLanding({
                   setActiveIndustryId(ind.id);
                   setGalleryCarouselIndex(0);
                 }}
-                className={`veloxa-card-hover rounded-2xl px-4 py-2.5 text-xs font-black transition ${
+                className={`rounded-2xl px-4 py-2.5 text-xs font-black transition ${
                   active
-                    ? 'bg-[#EC749B] text-white shadow-xs'
-                    : 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
+                    ? 'veloxa-luxury-card-pink bg-[#EC749B] text-white'
+                    : 'veloxa-luxury-card border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
                 }`}
               >
                 {ind.tabLabel[locale]}
@@ -1080,7 +1080,7 @@ export function VeloxaLuxuryLanding({
         </div>
 
         {/* Selected Brand Identity Bar */}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200/80 bg-[#FAFAFA] px-4 py-3 text-xs">
+        <div className="veloxa-luxury-card mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200/90 bg-white px-4 py-3 text-xs">
           <div className="flex items-center gap-2.5">
             <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#EC749B] font-black text-white">
               {activeIndustry.brandName.slice(0, 2).toUpperCase()}
@@ -1093,7 +1093,7 @@ export function VeloxaLuxuryLanding({
               </p>
             </div>
           </div>
-          <span className="rounded-full border border-pink-200 bg-white px-3 py-1 text-[11px] font-black text-[#D85A88]">
+          <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-[11px] font-black text-[#D85A88]">
             ✓ Diproduksi Otomatis oleh 5 Agen OpenAI + Dual Brand Vault
           </span>
         </div>
@@ -1101,7 +1101,7 @@ export function VeloxaLuxuryLanding({
         {/* 3-Column Visual Output Comparison: 1. 9:16 Reels, 2. 4:5 Carousel, 3. 4:5 Single Poster + Meta Ad */}
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
           {/* COLUMN 1: 9:16 VERTICAL REELS / TIKTOK / SHORTS */}
-          <article className="veloxa-card-hover flex flex-col justify-between rounded-3xl border border-neutral-200 bg-[#FAFAFA] p-5">
+          <article className="veloxa-luxury-card flex flex-col justify-between rounded-3xl border border-neutral-200/90 bg-white p-5">
             <div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-black text-neutral-900">{copy.formatReelsTitle}</span>
@@ -1110,7 +1110,7 @@ export function VeloxaLuxuryLanding({
                 </span>
               </div>
 
-              <div className="relative mt-3.5 aspect-[9/13] w-full overflow-hidden rounded-2xl border border-neutral-900 bg-neutral-900 shadow-md">
+              <div className="relative mt-3.5 aspect-[9/13] w-full overflow-hidden rounded-2xl border border-neutral-900 bg-neutral-900 shadow-lg">
                 <img
                   src={activeIndustry.reel.photoUrl}
                   alt={activeIndustry.reel.captionTitle}
@@ -1159,18 +1159,18 @@ export function VeloxaLuxuryLanding({
           </article>
 
           {/* COLUMN 2: 4:5 MULTI-SLIDE INTERACTIVE CAROUSEL */}
-          <article className="veloxa-card-hover flex flex-col justify-between rounded-3xl border border-neutral-200 bg-[#FAFAFA] p-5">
+          <article className="veloxa-luxury-card flex flex-col justify-between rounded-3xl border border-neutral-200/90 bg-white p-5">
             <div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-black text-neutral-900">
                   {copy.formatCarouselTitle}
                 </span>
-                <span className="rounded-full border border-pink-200 bg-white px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
                   Slide {galleryCurrentSlide.slideNumber}/4
                 </span>
               </div>
 
-              <div className="relative mt-3.5 aspect-[4/4.6] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-900 shadow-md">
+              <div className="relative mt-3.5 aspect-[4/4.6] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-900 shadow-lg">
                 <img
                   src={galleryCurrentSlide.photoUrl}
                   alt={galleryCurrentSlide.headline}
@@ -1208,7 +1208,7 @@ export function VeloxaLuxuryLanding({
                     onClick={() => setGalleryCarouselIndex(idx)}
                     className={`rounded-xl py-1.5 text-[11px] font-black transition ${
                       idx === galleryCarouselIndex
-                        ? 'bg-[#EC749B] text-white shadow-2xs'
+                        ? 'bg-[#EC749B] text-white shadow-sm'
                         : 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200'
                     }`}
                   >
@@ -1225,7 +1225,7 @@ export function VeloxaLuxuryLanding({
           </article>
 
           {/* COLUMN 3: 4:5 SINGLE FEED POSTER + AI META ADS PERFORMANCE */}
-          <article className="veloxa-card-hover flex flex-col justify-between rounded-3xl border border-pink-200 bg-white p-5 ring-2 ring-pink-100/70">
+          <article className="veloxa-luxury-card-pink flex flex-col justify-between rounded-3xl border border-pink-200 bg-white p-5 ring-2 ring-pink-100/70">
             <div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-black text-neutral-900">{copy.formatSingleTitle}</span>
@@ -1234,7 +1234,7 @@ export function VeloxaLuxuryLanding({
                 </span>
               </div>
 
-              <div className="relative mt-3.5 aspect-[4/4.1] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-900 shadow-md">
+              <div className="relative mt-3.5 aspect-[4/4.1] w-full overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-900 shadow-lg">
                 <img
                   src={activeIndustry.singlePost.photoUrl}
                   alt={activeIndustry.singlePost.headline}
@@ -1270,7 +1270,7 @@ export function VeloxaLuxuryLanding({
               </div>
 
               {/* Meta Ads Targeting Telemetry Box */}
-              <div className="mt-3 rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-3 text-xs">
+              <div className="mt-3 rounded-2xl border border-neutral-200/90 bg-white p-3 text-xs shadow-2xs">
                 <div className="flex items-center justify-between font-bold text-neutral-900">
                   <span>Biaya per Konversi (CPR):</span>
                   <span className="text-[#D85A88]">{activeIndustry.singlePost.metaAdCpr}</span>
@@ -1282,7 +1282,7 @@ export function VeloxaLuxuryLanding({
                   {activeIndustry.singlePost.validatedInterests.map((intItem) => (
                     <span
                       key={intItem}
-                      className="rounded-lg border border-pink-200 bg-white px-2 py-0.5 text-[10px] font-bold text-[#D85A88]"
+                      className="rounded-lg border border-pink-200 bg-pink-50/50 px-2 py-0.5 text-[10px] font-bold text-[#D85A88]"
                     >
                       {intItem}
                     </span>
@@ -1302,7 +1302,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 3: DUAL BRAND VAULT & 5 OPENAI AGENTS ARCHITECTURE
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal rounded-[2rem] border border-neutral-200/90 bg-white p-6 shadow-xs sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
         <div className="mx-auto max-w-3xl text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
             <Bot className="h-3.5 w-3.5 text-[#EC749B]" />
@@ -1314,14 +1314,14 @@ export function VeloxaLuxuryLanding({
           <p className="mt-2 text-sm text-neutral-600">{copy.vaultSubtitle}</p>
         </div>
 
-        <div className="mt-8 grid gap-5 lg:grid-cols-3">
-          <div className="veloxa-card-hover rounded-3xl border border-neutral-200 bg-[#FAFAFA] p-6">
-            <span className="inline-block rounded-full border border-pink-200 bg-white px-3 py-1 text-xs font-black text-[#D85A88]">
+        <div className="mt-8 grid gap-6 lg:grid-cols-3">
+          <div className="veloxa-luxury-card rounded-3xl border border-neutral-200/90 bg-white p-6">
+            <span className="inline-block rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-black text-[#D85A88]">
               STEP 01 · VISION AI
             </span>
             <h3 className="mt-3 text-lg font-black text-neutral-900">{copy.vaultDrawer1Title}</h3>
             <p className="mt-2 text-xs leading-relaxed text-neutral-600">{copy.vaultDrawer1Desc}</p>
-            <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-3 text-xs">
+            <div className="mt-4 rounded-2xl border border-neutral-200/80 bg-white p-3 text-xs shadow-2xs">
               <p className="font-bold text-neutral-900">Diekstrak Otomatis oleh Brand Brain:</p>
               <p className="mt-1 text-[11px] text-neutral-500">
                 • Palet Warna & Kontras Tipografi · • Posisi Hook 3 Detik Pertama · • Struktur Call-to-Action
@@ -1329,13 +1329,13 @@ export function VeloxaLuxuryLanding({
             </div>
           </div>
 
-          <div className="veloxa-card-hover rounded-3xl border border-neutral-200 bg-[#FAFAFA] p-6">
-            <span className="inline-block rounded-full border border-pink-200 bg-white px-3 py-1 text-xs font-black text-[#D85A88]">
+          <div className="veloxa-luxury-card rounded-3xl border border-neutral-200/90 bg-white p-6">
+            <span className="inline-block rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-black text-[#D85A88]">
               STEP 02 · REAL ASSETS
             </span>
             <h3 className="mt-3 text-lg font-black text-neutral-900">{copy.vaultDrawer2Title}</h3>
             <p className="mt-2 text-xs leading-relaxed text-neutral-600">{copy.vaultDrawer2Desc}</p>
-            <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-3 text-xs">
+            <div className="mt-4 rounded-2xl border border-neutral-200/80 bg-white p-3 text-xs shadow-2xs">
               <p className="font-bold text-neutral-900">Sinkronisasi Kamera HP & Galeri:</p>
               <p className="mt-1 text-[11px] text-neutral-500">
                 • Foto Produk / Menu Asli · • Dokumentasi Event / Klinik · • 100% Bebas Halusinasi Produk Palsu
@@ -1343,7 +1343,7 @@ export function VeloxaLuxuryLanding({
             </div>
           </div>
 
-          <div className="veloxa-card-hover rounded-3xl border border-pink-300 bg-white p-6 ring-2 ring-pink-100">
+          <div className="veloxa-luxury-card-pink rounded-3xl border border-pink-300 bg-white p-6 ring-2 ring-pink-100">
             <span className="inline-block rounded-full bg-[#EC749B] px-3 py-1 text-xs font-black text-white">
               STEP 03 · 0-ERROR PUBLISH & ADS
             </span>
@@ -1362,7 +1362,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 4: NATIVE MOBILE (iOS & ANDROID) + LOCAL-FIRST SHOWCASE
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal rounded-[2rem] border border-neutral-200/90 bg-white p-6 shadow-xs sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
         <div className="grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
@@ -1376,8 +1376,8 @@ export function VeloxaLuxuryLanding({
               {copy.nativeSubtitle}
             </p>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <div className="veloxa-card-hover rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-4">
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="veloxa-luxury-card rounded-2xl border border-neutral-200/90 bg-white p-4">
                 <p className="text-xs font-black text-neutral-900">
                   📱 iOS & Android Native Shell (Capacitor)
                 </p>
@@ -1385,7 +1385,7 @@ export function VeloxaLuxuryLanding({
                   Unggah stok foto produk langsung dari kamera HP, terima notifikasi kampanye, dan kelola jadwal tayang dengan navigasi bawah yang ergonomis.
                 </p>
               </div>
-              <div className="veloxa-card-hover rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-4">
+              <div className="veloxa-luxury-card rounded-2xl border border-neutral-200/90 bg-white p-4">
                 <p className="text-xs font-black text-neutral-900">
                   ⚡ Local-First Sync Engine (Hemat 99% Firestore)
                 </p>
@@ -1397,7 +1397,7 @@ export function VeloxaLuxuryLanding({
           </div>
 
           {/* Native Phone Frame Preview Card */}
-          <div className="veloxa-float-slow mx-auto w-full max-w-sm rounded-[2.25rem] border-2 border-neutral-900 bg-white p-4 shadow-lg">
+          <div className="veloxa-float-slow veloxa-luxury-card mx-auto w-full max-w-sm rounded-[2.25rem] border-2 border-neutral-900 bg-white p-4">
             <div className="flex items-center justify-between border-b border-neutral-100 pb-2.5 text-[11px] font-bold text-neutral-700">
               <span>9:41 · Veloxa Native</span>
               <span className="rounded-full bg-pink-50 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
@@ -1405,7 +1405,7 @@ export function VeloxaLuxuryLanding({
               </span>
             </div>
             <div className="mt-3 space-y-2.5">
-              <div className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-3 text-xs">
+              <div className="rounded-2xl border border-neutral-200/90 bg-white p-3 text-xs shadow-2xs">
                 <div className="flex items-center justify-between">
                   <span className="font-black text-neutral-900">Jadwal Otonom Hari Ini</span>
                   <span className="font-black text-[#EC749B]">3x Tayang</span>
@@ -1414,7 +1414,7 @@ export function VeloxaLuxuryLanding({
                   07:00 WIB (Reels) · 12:30 WIB (Carousel) · 19:00 WIB (Single Post)
                 </p>
               </div>
-              <div className="rounded-2xl border border-pink-200 bg-pink-50/40 p-3 text-xs">
+              <div className="rounded-2xl border border-pink-200 bg-pink-50/40 p-3 text-xs shadow-2xs">
                 <div className="flex items-center justify-between">
                   <span className="font-black text-neutral-900">AI Meta Ads · Pagar Budget</span>
                   <span className="font-black text-[#D85A88]">Aman ✓</span>
@@ -1424,7 +1424,7 @@ export function VeloxaLuxuryLanding({
                 </p>
               </div>
             </div>
-            <div className="mt-4 grid grid-cols-5 gap-1 rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-1.5 text-center text-[9px] font-black">
+            <div className="mt-4 grid grid-cols-5 gap-1 rounded-2xl border border-neutral-200/90 bg-white p-1.5 text-center text-[9px] font-black shadow-2xs">
               <div className="rounded-xl bg-[#EC749B] py-1.5 text-white">
                 {copy.mobileTabs.overview}
               </div>
@@ -1440,7 +1440,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 5: GLOBAL COST COMPARISON (AGENCY VS VELOXA AI)
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal rounded-[2rem] border border-neutral-200/90 bg-white p-6 shadow-xs sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
         <div className="mx-auto max-w-3xl text-center">
           <h2 className="text-2xl font-black tracking-tight text-neutral-900 sm:text-3xl">
             {copy.compareTitle}
@@ -1448,8 +1448,8 @@ export function VeloxaLuxuryLanding({
           <p className="mt-2 text-sm text-neutral-600">{copy.compareSubtitle}</p>
         </div>
 
-        <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <div className="veloxa-card-hover rounded-3xl border border-neutral-200 bg-[#FAFAFA] p-6 text-xs">
+        <div className="mt-6 grid gap-6 sm:grid-cols-2">
+          <div className="veloxa-luxury-card rounded-3xl border border-neutral-200/90 bg-white p-6 text-xs">
             <span className="inline-block rounded-full border border-neutral-200 bg-white px-3 py-1 font-bold text-neutral-500">
               {copy.compareOldBadge}
             </span>
@@ -1466,7 +1466,7 @@ export function VeloxaLuxuryLanding({
             </ul>
           </div>
 
-          <div className="veloxa-card-hover rounded-3xl border border-pink-300 bg-white p-6 text-xs ring-2 ring-pink-100">
+          <div className="veloxa-luxury-card-pink rounded-3xl border border-pink-300 bg-white p-6 text-xs ring-2 ring-pink-100">
             <span className="inline-block rounded-full bg-[#EC749B] px-3 py-1 font-black text-white">
               {copy.compareNewBadge}
             </span>
@@ -1488,7 +1488,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 6: GLOBAL MULTI-CURRENCY PRICING TIERS
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal rounded-[2rem] border border-neutral-200/90 bg-white p-6 shadow-xs sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
         <div className="mx-auto max-w-3xl text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
             <ShieldCheck className="h-3.5 w-3.5 text-[#EC749B]" />
@@ -1500,17 +1500,17 @@ export function VeloxaLuxuryLanding({
           <p className="mt-2 text-sm text-neutral-600">{copy.pricingSubtitle}</p>
         </div>
 
-        <div className="mt-8 grid gap-5 md:grid-cols-3">
+        <div className="mt-8 grid gap-6 md:grid-cols-3">
           {Object.values(SUBSCRIPTION_PLANS).map((plan) => {
             const localizedPrice = getPlanLocalizedPrice(plan.id, locale);
             const isPopular = plan.id === 'pro_1500k';
             return (
               <div
                 key={plan.id}
-                className={`veloxa-card-hover flex flex-col justify-between rounded-3xl border p-6 transition ${
+                className={`flex flex-col justify-between rounded-3xl border bg-white p-6 transition ${
                   isPopular
-                    ? 'border-pink-300 bg-white shadow-sm ring-2 ring-pink-100'
-                    : 'border-neutral-200 bg-white'
+                    ? 'veloxa-luxury-card-pink border-pink-300 ring-2 ring-pink-100'
+                    : 'veloxa-luxury-card border-neutral-200/90'
                 }`}
               >
                 <div>
@@ -1572,7 +1572,7 @@ export function VeloxaLuxuryLanding({
                   type="button"
                   data-testid={`landing-select-plan-${plan.id}`}
                   onClick={() => onOpenOnboarding(plan.id)}
-                  className="mt-6 w-full rounded-2xl bg-[#EC749B] py-3.5 text-xs font-black text-white shadow-2xs transition hover:bg-[#DF608A]"
+                  className="mt-6 w-full rounded-2xl bg-[#EC749B] py-3.5 text-xs font-black text-white shadow-sm transition hover:bg-[#DF608A]"
                 >
                   <Zap className="mr-1.5 inline h-3.5 w-3.5" />
                   {copy.pricingStartBtn} {plan.name}
@@ -1588,13 +1588,13 @@ export function VeloxaLuxuryLanding({
          ============================================================================ */}
       <footer
         data-testid="veloxa-global-footer"
-        className="veloxa-deferred-section overflow-hidden rounded-[2rem] border border-neutral-200/90 bg-white shadow-xs"
+        className="veloxa-deferred-section veloxa-luxury-section overflow-hidden rounded-[2rem] border border-neutral-200/90 bg-white"
       >
         {/* Top Conversion Banner inside Footer */}
-        <div className="border-b border-neutral-100 bg-gradient-to-r from-[#FAFAFA] via-pink-50/40 to-[#FAFAFA] p-6 sm:p-10">
+        <div className="border-b border-neutral-100 bg-white p-6 sm:p-10">
           <div className="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
             <div className="max-w-2xl">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-white px-3 py-1 text-[11px] font-black text-[#D85A88]">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-[11px] font-black text-[#D85A88]">
                 <Sparkles className="h-3.5 w-3.5 text-[#EC749B]" />
                 VELOXA AI GLOBAL CLOUD · WEB · ANDROID · iOS
               </span>
@@ -1611,7 +1611,7 @@ export function VeloxaLuxuryLanding({
                 type="button"
                 data-testid="footer-cta-start-btn"
                 onClick={() => onOpenOnboarding('pro_1500k')}
-                className="veloxa-card-hover inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-6 py-3.5 text-xs font-black text-white shadow-sm hover:bg-[#DF608A] sm:text-sm"
+                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-6 py-3.5 text-xs font-black text-white hover:bg-[#DF608A] sm:text-sm"
               >
                 <Rocket className="h-4 w-4" />
                 <span>{footerCopy.ctaBannerPrimary}</span>
@@ -1620,7 +1620,7 @@ export function VeloxaLuxuryLanding({
                 type="button"
                 data-testid="footer-cta-login-btn"
                 onClick={onOpenAuthModal}
-                className="veloxa-card-hover rounded-2xl border border-neutral-200 bg-white px-5 py-3.5 text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88] sm:text-sm"
+                className="veloxa-luxury-card rounded-2xl border border-neutral-200 bg-white px-5 py-3.5 text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88] sm:text-sm"
               >
                 {footerCopy.ctaBannerSecondary}
               </button>
@@ -1629,7 +1629,7 @@ export function VeloxaLuxuryLanding({
         </div>
 
         {/* Main 5-Column Global Footer Directory */}
-        <div className="grid gap-8 p-6 sm:grid-cols-2 sm:p-10 lg:grid-cols-[1.45fr_1fr_1fr_1fr_1.15fr]">
+        <div className="grid gap-8 bg-white p-6 sm:grid-cols-2 sm:p-10 lg:grid-cols-[1.45fr_1fr_1fr_1fr_1.15fr]">
           {/* Column 1: Brand Identity, Global Hubs & Live Uptime Status */}
           <div className="space-y-3.5">
             <div className="flex items-center gap-2.5">
@@ -1755,8 +1755,8 @@ export function VeloxaLuxuryLanding({
                   onClick={() => onSelectLocale(loc.code)}
                   className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-left text-[11px] font-bold transition ${
                     loc.code === locale
-                      ? 'border-[#EC749B] bg-pink-50/80 text-[#D85A88]'
-                      : 'border-neutral-200 bg-[#FAFAFA] text-neutral-700 hover:border-pink-200'
+                      ? 'border-[#EC749B] bg-pink-50/80 text-[#D85A88] shadow-2xs'
+                      : 'border-neutral-200 bg-white text-neutral-700 shadow-2xs hover:border-pink-200'
                   }`}
                 >
                   <span>{loc.flag}</span>
@@ -1770,7 +1770,7 @@ export function VeloxaLuxuryLanding({
         </div>
 
         {/* Bottom Copyright & Official Compliance Bar */}
-        <div className="border-t border-neutral-100 bg-[#FAFAFA] px-6 py-4 text-[11px] text-neutral-500 sm:px-10">
+        <div className="border-t border-neutral-100 bg-white px-6 py-4 text-[11px] text-neutral-500 sm:px-10">
           <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
             <p className="font-semibold text-neutral-600">{footerCopy.copyright}</p>
             <div className="flex flex-wrap items-center gap-4 font-semibold">
