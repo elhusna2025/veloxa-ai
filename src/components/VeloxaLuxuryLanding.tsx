@@ -603,14 +603,14 @@ export function VeloxaLuxuryLanding({
   return (
     <div
       dir={localeMeta.dir}
-      className={`space-y-12 bg-white pb-10 ${isMotionActive ? 'veloxa-motion-active' : ''}`}
+      className={`space-y-16 bg-white pb-12 ${isMotionActive ? 'veloxa-motion-active' : ''}`}
       data-testid="veloxa-sales-landing-page"
     >
       {/* ============================================================================
          SECTION 1: ULTRA-LUXURY GLOBAL HERO + LIVE REELS, CAROUSEL & META ADS BENTO
-         100% Pure Clean White (#FFFFFF) + Strong Luxury Card Shadows + 10% Soft Pink (#EC749B)
+         Open Full-Width Pure White Canvas (#FFFFFF) + Strong Individual Card Shadows
          ============================================================================ */}
-      <section className="veloxa-luxury-section relative overflow-hidden rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10 lg:p-12">
+      <section className="relative bg-white pt-2">
         {/* Top Global Language, Currency & Motion Control Bar inside Hero */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-5">
           <div className="flex flex-wrap items-center gap-2">
@@ -1016,9 +1016,9 @@ export function VeloxaLuxuryLanding({
       <section
         aria-label="Live Global Autonomous Production Feed"
         data-testid="landing-live-marquee-ticker"
-        className="veloxa-luxury-section overflow-hidden rounded-3xl border border-neutral-200/90 bg-white py-4"
+        className="overflow-hidden border-y border-neutral-100 bg-white py-5"
       >
-        <div className="veloxa-marquee-track flex items-center gap-4 px-4">
+        <div className="veloxa-marquee-track flex items-center gap-4 px-2">
           {[...LIVE_GLOBAL_TICKER_ITEMS, ...LIVE_GLOBAL_TICKER_ITEMS].map((item, idx) => (
             <div
               key={`${item.badge}-${idx}`}
@@ -1040,7 +1040,7 @@ export function VeloxaLuxuryLanding({
          SECTION 2: INTERACTIVE INDUSTRY VISUAL SHOWCASE (REELS + CAROUSEL + SINGLE POST)
          ============================================================================ */}
       <section
-        className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10"
+        className="veloxa-deferred-section veloxa-scroll-reveal bg-white pt-4"
         data-testid="landing-visual-gallery-section"
       >
         <div className="mx-auto max-w-3xl text-center">
@@ -1302,7 +1302,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 3: DUAL BRAND VAULT & 5 OPENAI AGENTS ARCHITECTURE
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal border-t border-neutral-100 bg-white pt-12">
         <div className="mx-auto max-w-3xl text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
             <Bot className="h-3.5 w-3.5 text-[#EC749B]" />
@@ -1362,7 +1362,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 4: NATIVE MOBILE (iOS & ANDROID) + LOCAL-FIRST SHOWCASE
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal border-t border-neutral-100 bg-white pt-12">
         <div className="grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
@@ -1440,7 +1440,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 5: GLOBAL COST COMPARISON (AGENCY VS VELOXA AI)
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal border-t border-neutral-100 bg-white pt-12">
         <div className="mx-auto max-w-3xl text-center">
           <h2 className="text-2xl font-black tracking-tight text-neutral-900 sm:text-3xl">
             {copy.compareTitle}
@@ -1488,7 +1488,7 @@ export function VeloxaLuxuryLanding({
       {/* ============================================================================
          SECTION 6: GLOBAL MULTI-CURRENCY PRICING TIERS
          ============================================================================ */}
-      <section className="veloxa-deferred-section veloxa-scroll-reveal veloxa-luxury-section rounded-[2rem] border border-neutral-200/90 bg-white p-6 sm:p-10">
+      <section className="veloxa-deferred-section veloxa-scroll-reveal border-t border-neutral-100 bg-white pt-12">
         <div className="mx-auto max-w-3xl text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
             <ShieldCheck className="h-3.5 w-3.5 text-[#EC749B]" />
@@ -1588,10 +1588,10 @@ export function VeloxaLuxuryLanding({
          ============================================================================ */}
       <footer
         data-testid="veloxa-global-footer"
-        className="veloxa-deferred-section veloxa-luxury-section overflow-hidden rounded-[2rem] border border-neutral-200/90 bg-white"
+        className="veloxa-deferred-section border-t border-neutral-200/80 bg-white pt-10"
       >
-        {/* Top Conversion Banner inside Footer */}
-        <div className="border-b border-neutral-100 bg-white p-6 sm:p-10">
+        {/* Top Conversion Banner inside Footer (Elevated Card with Strong Luxury Shadow) */}
+        <div className="veloxa-luxury-card-pink rounded-3xl border border-pink-200/90 bg-white p-6 ring-1 ring-pink-100 sm:p-10">
           <div className="flex flex-col items-start justify-between gap-6 lg:flex-row lg:items-center">
             <div className="max-w-2xl">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-[11px] font-black text-[#D85A88]">
@@ -1629,7 +1629,7 @@ export function VeloxaLuxuryLanding({
         </div>
 
         {/* Main 5-Column Global Footer Directory */}
-        <div className="grid gap-8 bg-white p-6 sm:grid-cols-2 sm:p-10 lg:grid-cols-[1.45fr_1fr_1fr_1fr_1.15fr]">
+        <div className="mt-8 grid gap-8 bg-white py-8 sm:grid-cols-2 lg:grid-cols-[1.45fr_1fr_1fr_1fr_1.15fr]">
           {/* Column 1: Brand Identity, Global Hubs & Live Uptime Status */}
           <div className="space-y-3.5">
             <div className="flex items-center gap-2.5">
@@ -1770,7 +1770,7 @@ export function VeloxaLuxuryLanding({
         </div>
 
         {/* Bottom Copyright & Official Compliance Bar */}
-        <div className="border-t border-neutral-100 bg-white px-6 py-4 text-[11px] text-neutral-500 sm:px-10">
+        <div className="border-t border-neutral-100 bg-white py-5 text-[11px] text-neutral-500">
           <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
             <p className="font-semibold text-neutral-600">{footerCopy.copyright}</p>
             <div className="flex flex-wrap items-center gap-4 font-semibold">

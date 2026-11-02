@@ -11,7 +11,7 @@ async function runVerification() {
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
     const page = await context.newPage();
 
-    await page.goto('https://veloxa-ai-saas.web.app/?v=white_shadow_audit', {
+    await page.goto('https://veloxa-ai-saas.web.app/?v=open_wide_audit', {
       waitUntil: 'domcontentloaded',
     });
 
@@ -22,29 +22,32 @@ async function runVerification() {
       const bodyBg = window.getComputedStyle(document.body).backgroundColor;
       const landingEl = document.querySelector('[data-testid="veloxa-sales-landing-page"]');
       const landingBg = landingEl ? window.getComputedStyle(landingEl).backgroundColor : '';
-      const sectionEl = document.querySelector('.veloxa-luxury-section');
-      const sectionShadow = sectionEl ? window.getComputedStyle(sectionEl).boxShadow : '';
+      const heroSectionEl = landingEl?.querySelector('section');
+      const heroSectionShadow = heroSectionEl ? window.getComputedStyle(heroSectionEl).boxShadow : '';
       const cardEl = document.querySelector('.veloxa-luxury-card');
       const cardShadow = cardEl ? window.getComputedStyle(cardEl).boxShadow : '';
       const pinkCardEl = document.querySelector('.veloxa-luxury-card-pink');
       const pinkCardShadow = pinkCardEl ? window.getComputedStyle(pinkCardEl).boxShadow : '';
-      return { bodyBg, landingBg, sectionShadow, cardShadow, pinkCardShadow };
+      const ctaEl = document.querySelector('[data-testid="landing-cta-start-btn"]');
+      const ctaBg = ctaEl ? window.getComputedStyle(ctaEl).backgroundColor : '';
+      return { bodyBg, landingBg, heroSectionShadow, cardShadow, pinkCardShadow, ctaBg };
     });
 
-    console.log('Computed Luxury Styles:', styles);
+    console.log('Computed Open-Wide Luxury Styles:', styles);
     assert.equal(styles.bodyBg, 'rgb(255, 255, 255)');
     assert.equal(styles.landingBg, 'rgb(255, 255, 255)');
-    assert.notEqual(styles.sectionShadow, 'none');
+    assert.equal(styles.heroSectionShadow, 'none');
+    assert.equal(styles.ctaBg, 'rgb(236, 116, 155)');
     assert.notEqual(styles.cardShadow, 'none');
     assert.notEqual(styles.pinkCardShadow, 'none');
 
-    // 1. Screenshot Hero + Live Marquee Ticker on Pure White Background
+    // 1. Screenshot Open Full-Width Hero + Live Marquee Ticker on Pure White Background
     await page.screenshot({
       path: path.join(ARTIFACT_DIR, 'luxury_10_pure_white_strong_shadow_hero.png'),
       fullPage: false,
     });
 
-    // 2. Scroll to Interactive Industry Visual Gallery (Reels 9:16 + Carousel 4:5 + Single Feed 4:5)
+    // 2. Scroll to Open Interactive Industry Visual Gallery (Reels 9:16 + Carousel 4:5 + Single Feed 4:5)
     const gallerySection = page.getByTestId('landing-visual-gallery-section');
     await gallerySection.scrollIntoViewIfNeeded();
     await page.waitForTimeout(800);
@@ -53,7 +56,7 @@ async function runVerification() {
       fullPage: false,
     });
 
-    // 3. Scroll to Global Footer & Pricing Cards
+    // 3. Scroll to Open Global Footer & Pricing Cards
     const footerSection = page.getByTestId('veloxa-global-footer');
     await footerSection.scrollIntoViewIfNeeded();
     await page.waitForTimeout(800);
@@ -62,7 +65,7 @@ async function runVerification() {
       fullPage: false,
     });
 
-    console.log('✅ All Pure White Background & Strong Multi-Layered Card Shadow checks passed!');
+    console.log('✅ All Open-Wide Pure White Background & Strong Card Shadow checks passed!');
   } finally {
     await browser.close();
   }

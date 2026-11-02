@@ -961,7 +961,7 @@ export default function VeloxaAiPlatformPage() {
     <div className="min-h-dvh bg-white pb-28 text-neutral-900">
       {/* Top Global Header — Dipisah Murni Berdasarkan Status Login + Global Multi-Language Switcher */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
+        <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-8 lg:px-12">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-xs">
               V
@@ -1082,7 +1082,7 @@ export default function VeloxaAiPlatformPage() {
         {/* Status Toast Strip — Hanya tampil saat sudah Login ke dalam Aplikasi */}
         {authUser && (
           <div className="border-t border-neutral-100 bg-white px-4 py-1.5 text-xs text-neutral-600">
-            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
+            <div className="mx-auto flex max-w-[1480px] flex-wrap items-center justify-between gap-2 sm:px-4 lg:px-8">
               <span className="flex items-center gap-2 truncate">
                 <span className="h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
                 {statusBanner}
@@ -1101,8 +1101,8 @@ export default function VeloxaAiPlatformPage() {
         )}
       </header>
 
-      {/* Main Content Container — Responsif Otomatis (Desktop & Mobile Tanpa Bingkai Simulator Palsu) */}
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+      {/* Main Content Container — Responsif Otomatis & Luas (1480px Wide Tanpa Card Pembungkus Sempit) */}
+      <main className="mx-auto max-w-[1480px] px-4 py-6 sm:px-8 lg:px-12">
         <div>
           {!authUser ? (
             /* ======================================================================
