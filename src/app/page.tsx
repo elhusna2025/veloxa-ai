@@ -47,6 +47,7 @@ import {
 import {
   SUPER_ADMIN_EMAIL,
   getInitialAuthenticatedUser,
+  signInQuickRoleSession,
   signInWithEmailPasswordOrRegister,
   signInWithGooglePopup,
   signOutVeloxaUser,
@@ -138,7 +139,6 @@ function formatIdr(value: number): string {
 export default function VeloxaAiPlatformPage() {
   const [activeRole, setActiveRole] = useState<VeloxaRole>('user');
   const [activeTab, setActiveTab] = useState<UserTabId>('overview');
-  const [viewportMode, setViewportMode] = useState<'desktop_web' | 'mobile_native'>('desktop_web');
   const [selectedPresetKey, setSelectedPresetKey] = useState<'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom'>('running_event');
 
   // Multi-tenant workspace state
@@ -200,13 +200,10 @@ export default function VeloxaAiPlatformPage() {
   const billingDialogRef = useRef<HTMLDialogElement | null>(null);
   const authDialogRef = useRef<HTMLDialogElement | null>(null);
 
-  // Stage 5A & 5B: Firebase Authentication & Commercial Landing Page State
-  const [authUser, setAuthUser] = useState<VeloxaAuthenticatedUser>(() =>
-    getInitialAuthenticatedUser(),
-  );
+  // Stage 5A & 5B: Production Authentication & Role Separation State
+  const [authUser, setAuthUser] = useState<VeloxaAuthenticatedUser | null>(null);
   const [authEmailInput, setAuthEmailInput] = useState<string>(SUPER_ADMIN_EMAIL);
   const [authPasswordInput, setAuthPasswordInput] = useState<string>('VeloxaAdmin2026!');
-  const [showLandingPage, setShowLandingPage] = useState<boolean>(false);
 
   // Stage 1: New Business Onboarding Form State
   const [onboardBusinessName, setOnboardBusinessName] = useState<string>('');
@@ -243,8 +240,16 @@ export default function VeloxaAiPlatformPage() {
   useEffect(() => {
     const savedCfg = loadSavedFirebaseConfig();
     setFirebaseCfg(savedCfg);
+    const savedSession = getInitialAuthenticatedUser();
+    if (savedSession) {
+      setAuthUser(savedSession);
+      setActiveRole(savedSession.isSuperAdmin ? 'admin' : 'user');
+    }
     const unsubAuth = subscribeToFirebaseAuthChanges((fbUser) => {
-      if (fbUser) setAuthUser(fbUser);
+      if (fbUser) {
+        setAuthUser(fbUser);
+        setActiveRole(fbUser.isSuperAdmin ? 'admin' : 'user');
+      }
     });
     void loadWorkspaceSnapshotFromStore(BRAND_PRESETS.running_event.workspaceId, savedCfg).then(
       ({ snapshot: snap, telemetry }) => {
@@ -401,6 +406,15 @@ export default function VeloxaAiPlatformPage() {
     setSelectedPresetKey('custom');
     setOnboardBusinessName('');
     setOnboardOfferingTitle('');
+    if (!authUser) {
+      const createdUser = signInQuickRoleSession('user');
+      setAuthUser({
+        ...createdUser,
+        email: onboardOwnerEmail.trim() || 'owner@bisnisbaru.id',
+        displayName: cleanName,
+      });
+      setActiveRole('user');
+    }
     onboardingDialogRef.current?.close();
     setStatusBanner(
       `Selamat datang! Workspace bisnis baru "${cleanName}" (${cleanCity}) berhasil dibuat dengan paket ${planSpec.name}!`,
@@ -439,7 +453,7 @@ export default function VeloxaAiPlatformPage() {
           newAssetDrawer === 'style_reference' ? 'style-dna' : 'aset-asli-device',
           brand.category,
         ],
-        uploadedFrom: viewportMode === 'mobile_native' ? 'ios' : 'web',
+        uploadedFrom: 'web',
         createdAt: 'Baru saja (File Perangkat)',
         usedInPostsCount: 1,
         extractedStyleDna:
@@ -569,12 +583,11 @@ export default function VeloxaAiPlatformPage() {
     });
     setAuthUser(signedIn);
     setActiveRole(signedIn.isSuperAdmin ? 'admin' : 'user');
-    setShowLandingPage(false);
     authDialogRef.current?.close();
     setStatusBanner(
       signedIn.isSuperAdmin
-        ? `Login Firebase berhasil sebagai Super Admin (${signedIn.email})!`
-        : `Login Firebase berhasil sebagai Pelanggan (${signedIn.email})!`,
+        ? `Login berhasil sebagai Super Admin (${signedIn.email})!`
+        : `Login berhasil sebagai Pelanggan (${signedIn.email})!`,
     );
   };
 
@@ -582,17 +595,27 @@ export default function VeloxaAiPlatformPage() {
     const signedIn = await signInWithGooglePopup();
     setAuthUser(signedIn);
     setActiveRole(signedIn.isSuperAdmin ? 'admin' : 'user');
-    setShowLandingPage(false);
     authDialogRef.current?.close();
     setStatusBanner(`Login Google OAuth berhasil sebagai ${signedIn.email}!`);
   };
 
+  const handleQuickLoginRole = (targetRole: 'admin' | 'user') => {
+    const signedIn = signInQuickRoleSession(targetRole);
+    setAuthUser(signedIn);
+    setActiveRole(targetRole);
+    authDialogRef.current?.close();
+    setStatusBanner(
+      targetRole === 'admin'
+        ? `Masuk sebagai Owner / Super Admin (${signedIn.email}).`
+        : `Masuk ke Workspace Pelanggan (${signedIn.email}).`,
+    );
+  };
+
   const handleSignOutClick = async () => {
-    const guest = await signOutVeloxaUser();
-    setAuthUser(guest);
+    await signOutVeloxaUser();
+    setAuthUser(null);
     setActiveRole('user');
     authDialogRef.current?.close();
-    setStatusBanner(`Beralih ke sesi akun pelanggan: ${guest.email}`);
   };
 
   const handlePlayDraftVoiceover = (draft: ContentDraft) => {
@@ -644,7 +667,7 @@ export default function VeloxaAiPlatformPage() {
       newAssetDrawer === 'style_reference'
         ? 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80'
         : 'https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80';
-    let uploadedFrom: 'web' | 'android' | 'ios' = viewportMode === 'mobile_native' ? 'ios' : 'web';
+    let uploadedFrom: 'web' | 'android' | 'ios' = 'web';
 
     if (useDevicePicker) {
       const picked = await pickBrandAssetFromDevice({ mediaType: newAssetMediaType });
@@ -920,7 +943,7 @@ export default function VeloxaAiPlatformPage() {
 
   return (
     <div className="min-h-dvh bg-[#FAFAFA] pb-24 text-neutral-900">
-      {/* Top Global Control Header — Dominan Putih Bersih + Aksen Soft Pink */}
+      {/* Top Global Header — Dipisah Murni Berdasarkan Status Login (Tanpa Bar Simulator Prototipe) */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-6">
           <div className="flex items-center gap-3">
@@ -930,9 +953,19 @@ export default function VeloxaAiPlatformPage() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-black tracking-tight text-neutral-900">VELOXA AI</span>
-                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
-                  Web · Android · iOS
-                </span>
+                {!authUser ? (
+                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
+                    SaaS Otonom 4 Sosmed & Meta Ads
+                  </span>
+                ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
+                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
+                    Super Admin Control Center
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
+                    Workspace: {brand.businessName} ({brand.city})
+                  </span>
+                )}
               </div>
               <p className="text-xs text-neutral-500">
                 Autonomous Social Content Studio & AI Meta Ads Marketing Agent
@@ -940,91 +973,85 @@ export default function VeloxaAiPlatformPage() {
             </div>
           </div>
 
-          {/* Role Switcher, Landing Page Switcher, Firebase Auth, & Viewport Mode Switcher */}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              data-testid="toggle-landing-page-btn"
-              onClick={() => setShowLandingPage((v) => !v)}
-              className={`rounded-2xl border px-3.5 py-2 text-xs font-bold transition ${
-                showLandingPage
-                  ? 'border-[#EC749B] bg-[#EC749B] text-white shadow-xs'
-                  : 'border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
-              }`}
-            >
-              {showLandingPage ? '← Kembali ke Dashboard' : '🌐 Landing Page Penjualan'}
-            </button>
-
-            <div
-              role="group"
-              aria-label="Pilih Peran Aplikasi"
-              className="flex rounded-2xl border border-neutral-200 bg-neutral-50 p-1"
-            >
+          {/* Right Navigation Actions — Clean Separation: Public vs Authenticated */}
+          {!authUser ? (
+            <div className="flex flex-wrap items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => {
-                  setActiveRole('user');
-                  setShowLandingPage(false);
-                }}
-                className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                  activeRole === 'user' && !showLandingPage
-                    ? 'bg-[#EC749B] text-white shadow-xs'
-                    : 'text-neutral-600 hover:bg-white hover:text-neutral-900'
-                }`}
+                data-testid="open-auth-modal-btn"
+                onClick={() => authDialogRef.current?.showModal()}
+                className="rounded-2xl border border-neutral-200 bg-white px-4 py-2 text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
               >
-                <Sparkles className="h-3.5 w-3.5" />
-                Role: USER Workspace
+                Masuk Akun
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setActiveRole('admin');
-                  setShowLandingPage(false);
-                }}
-                className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                  activeRole === 'admin' && !showLandingPage
-                    ? 'bg-[#EC749B] text-white shadow-xs'
-                    : 'text-neutral-600 hover:bg-white hover:text-neutral-900'
-                }`}
+                data-testid="open-onboarding-public-btn"
+                onClick={() => onboardingDialogRef.current?.showModal()}
+                className="rounded-2xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-[#DF608A]"
               >
-                <ShieldCheck className="h-3.5 w-3.5" />
-                Role: SUPER ADMIN
+                Daftar Bisnis Baru
               </button>
             </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {authUser.isSuperAdmin && activeRole === 'user' && (
+                <button
+                  type="button"
+                  data-testid="back-to-admin-btn"
+                  onClick={() => setActiveRole('admin')}
+                  className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-300 bg-pink-50/80 px-3.5 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  ← Kembali ke Panel Super Admin
+                </button>
+              )}
 
-            <button
-              type="button"
-              data-testid="open-auth-modal-btn"
-              onClick={() => authDialogRef.current?.showModal()}
-              className="flex items-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-xs font-bold text-[#D85A88] hover:bg-pink-100/70"
-            >
-              <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
-              {authUser.email}
-            </button>
+              {activeRole === 'user' && (
+                <button
+                  type="button"
+                  data-testid="open-billing-modal-btn"
+                  onClick={() => {
+                    setSelectedCheckoutPlanId(activePlanId);
+                    billingDialogRef.current?.showModal();
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-xs font-bold text-[#D85A88] hover:bg-pink-100/70"
+                >
+                  <CreditCard className="h-3.5 w-3.5 text-[#EC749B]" />
+                  {currentPlan.name} · Kuota {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} · Upgrade
+                </button>
+              )}
 
-            <button
-              type="button"
-              onClick={() =>
-                setViewportMode((m) => (m === 'desktop_web' ? 'mobile_native' : 'desktop_web'))
-              }
-              className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
-            >
-              <Smartphone className="h-3.5 w-3.5 text-[#EC749B]" />
-              {viewportMode === 'desktop_web'
-                ? 'Tampilan: Web Desktop'
-                : 'Tampilan: Native Mobile (Android/iOS)'}
-            </button>
-          </div>
+              <button
+                type="button"
+                data-testid="open-auth-modal-btn"
+                onClick={() => authDialogRef.current?.showModal()}
+                className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+              >
+                <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
+                {authUser.email}
+              </button>
+
+              <button
+                type="button"
+                data-testid="logout-btn"
+                onClick={() => void handleSignOutClick()}
+                className="rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
+              >
+                Keluar
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Status Toast Strip — Clean White with Soft Pink Dot + Local-First & Billing Trigger */}
-        <div className="border-t border-neutral-100 bg-white px-4 py-1.5 text-xs text-neutral-600">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
-            <span className="flex items-center gap-2 truncate">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
-              {statusBanner}
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
+        {/* Status Toast Strip — Hanya tampil saat sudah Login ke dalam Aplikasi */}
+        {authUser && (
+          <div className="border-t border-neutral-100 bg-white px-4 py-1.5 text-xs text-neutral-600">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-2 truncate">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
+                {statusBanner}
+              </span>
               <button
                 type="button"
                 data-testid="local-first-sync-btn"
@@ -1034,48 +1061,17 @@ export default function VeloxaAiPlatformPage() {
                 <RefreshCw className="h-3 w-3 text-[#EC749B]" />
                 Local-First Hemat {firestoreSavingsPct}% Firestore · Sinkronkan Cloud
               </button>
-              {activeRole === 'user' && (
-                <button
-                  type="button"
-                  data-testid="open-billing-modal-btn"
-                  onClick={() => {
-                    setSelectedCheckoutPlanId(activePlanId);
-                    billingDialogRef.current?.showModal();
-                  }}
-                  className="inline-flex items-center gap-1 rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88] hover:bg-pink-100/70"
-                >
-                  <CreditCard className="h-3 w-3 text-[#EC749B]" />
-                  Paket: {currentPlan.name} ({formatIdr(currentPlan.priceMonthlyIdr)}/bln) · Kuota{' '}
-                  {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} · Upgrade
-                </button>
-              )}
             </div>
           </div>
-        </div>
+        )}
       </header>
 
-      {/* Main Content Container (Supports Wide Desktop Web OR Native Phone Shell Preview) */}
-      <main
-        className={`mx-auto transition-all duration-300 ${
-          viewportMode === 'mobile_native'
-            ? 'my-6 max-w-[430px] overflow-hidden rounded-[42px] border-[10px] border-neutral-200 bg-white shadow-xl'
-            : 'max-w-7xl px-4 py-6 sm:px-6'
-        }`}
-      >
-        {viewportMode === 'mobile_native' && (
-          <div className="flex items-center justify-between border-b border-neutral-100 bg-white px-6 py-2.5 text-[11px] font-bold text-neutral-800">
-            <span>09:41</span>
-            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-0.5 text-[10px] font-extrabold text-[#D85A88]">
-              Veloxa iOS / Android Shell
-            </span>
-            <span>5G · 100%</span>
-          </div>
-        )}
-
-        <div className={viewportMode === 'mobile_native' ? 'bg-[#FAFAFA] p-4 pb-24' : ''}>
-          {showLandingPage ? (
+      {/* Main Content Container — Responsif Otomatis (Desktop & Mobile Tanpa Bingkai Simulator Palsu) */}
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        <div>
+          {!authUser ? (
             /* ======================================================================
-               TAHAP 5B: COMMERCIAL SALES LANDING PAGE (DOMINAN PUTIH + SOFT PINK)
+               KONDISI 1 (BELUM LOGIN): MURNI LANDING PAGE RESMI VELOXA AI
                ====================================================================== */
             <div className="space-y-8" data-testid="veloxa-sales-landing-page">
               {/* Hero Section */}
@@ -1095,10 +1091,7 @@ export default function VeloxaAiPlatformPage() {
                   <button
                     type="button"
                     data-testid="landing-cta-start-btn"
-                    onClick={() => {
-                      setShowLandingPage(false);
-                      onboardingDialogRef.current?.showModal();
-                    }}
+                    onClick={() => onboardingDialogRef.current?.showModal()}
                     className="rounded-2xl bg-[#EC749B] px-6 py-3.5 text-sm font-black text-white shadow-2xs hover:bg-[#DF608A]"
                   >
                     <Rocket className="mr-1.5 inline h-4 w-4" />
@@ -1106,10 +1099,11 @@ export default function VeloxaAiPlatformPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowLandingPage(false)}
+                    data-testid="landing-open-login-btn"
+                    onClick={() => authDialogRef.current?.showModal()}
                     className="rounded-2xl border border-neutral-200 bg-white px-6 py-3.5 text-sm font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
                   >
-                    Lihat Live Demo Workspace →
+                    Masuk ke Akun / Demo Workspace →
                   </button>
                 </div>
 
@@ -1213,28 +1207,28 @@ export default function VeloxaAiPlatformPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setSelectedCheckoutPlanId(plan.id);
-                          setShowLandingPage(false);
-                          billingDialogRef.current?.showModal();
+                          setOnboardPlanId(plan.id);
+                          onboardingDialogRef.current?.showModal();
                         }}
                         className="mt-5 w-full rounded-xl bg-[#EC749B] py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                       >
-                        Pilih {plan.name} (QRIS / VA)
+                        Mulai dengan {plan.name}
                       </button>
                     </div>
                   ))}
                 </div>
               </section>
             </div>
-          ) : activeRole === 'admin' ? (
+          ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
             /* ======================================================================
-               ROLE 1: SUPER ADMIN COMMAND CENTER — DOMINAN PUTIH + AKSEN SOFT PINK
+               KONDISI 2 (LOGIN SEBAGAI SUPER ADMIN sosrospg@gmail.com):
+               MURNI SUPER ADMIN COMMAND CENTER
                ====================================================================== */
             <div className="space-y-6" data-testid="super-admin-dashboard">
               <div className="flex flex-col justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-6 text-neutral-900 shadow-2xs sm:flex-row sm:items-center">
                 <div>
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                    <ShieldCheck className="h-3.5 w-3.5 text-[#EC749B]" /> Super Admin Control Center
+                    <ShieldCheck className="h-3.5 w-3.5 text-[#EC749B]" /> Super Admin Control Center ({authUser.email})
                   </span>
                   <h1 className="veloxa-hero-title mt-2 font-black tracking-tight text-neutral-900">
                     Manajemen Bisnis SaaS Veloxa AI
@@ -1342,7 +1336,7 @@ export default function VeloxaAiPlatformPage() {
                       Daftar Pelanggan (Tenants) & Kontrol Kuota
                     </h2>
                     <p className="text-xs text-neutral-500">
-                      Ubah paket pelanggan secara instan atau pantau margin pemakaian API masing-masing brand.
+                      Ubah paket pelanggan secara instan, pantau margin pemakaian API, atau klik &ldquo;Inspeksi Workspace&rdquo; untuk mengecek studio brand pelanggan.
                     </p>
                   </div>
                 </div>
@@ -1363,6 +1357,7 @@ export default function VeloxaAiPlatformPage() {
                         <th className="px-4 py-3.5">Kanal & Meta Ads</th>
                         <th className="px-4 py-3.5">Biaya API vs Harga</th>
                         <th className="px-4 py-3.5">Ubah Paket</th>
+                        <th className="px-4 py-3.5">Aksi Super Admin</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200 bg-white">
@@ -1415,6 +1410,25 @@ export default function VeloxaAiPlatformPage() {
                               <option value="growth_1000k">Growth (Rp1jt)</option>
                               <option value="pro_1500k">Pro + Ads (Rp1,5jt)</option>
                             </select>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <button
+                              type="button"
+                              data-testid={`inspect-tenant-btn-${t.workspaceId}`}
+                              onClick={() => {
+                                const presetMap: Record<string, 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom'> = {
+                                  running_event: 'running_event',
+                                  cafe_fnb: 'cafe_fnb',
+                                  clinic_beauty: 'clinic_beauty',
+                                };
+                                handleSelectBrandPreset(presetMap[t.category] || 'custom');
+                                setActivePlanId(t.planId);
+                                setActiveRole('user');
+                              }}
+                              className="rounded-xl border border-pink-200 bg-pink-50/70 px-3 py-1.5 text-xs font-bold text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                            >
+                              Inspeksi Workspace →
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -1676,39 +1690,37 @@ export default function VeloxaAiPlatformPage() {
               </div>
 
               {/* Desktop Horizontal Navigation Tabs */}
-              {viewportMode === 'desktop_web' && (
-                <nav
-                  aria-label="Menu Utama User Workspace"
-                  className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-2 shadow-2xs sm:grid-cols-5"
-                >
-                  {(
-                    [
-                      { id: 'overview', label: '1. Beranda & Kanal', icon: LayoutDashboard },
-                      { id: 'brand_vault', label: '2. Brand & Referensi', icon: Camera },
-                      { id: 'studio', label: '3. Studio Konten', icon: Wand2 },
-                      { id: 'autonomy', label: '4. Agent Otonom', icon: Bot },
-                      { id: 'meta_ads', label: '5. AI Meta Ads', icon: Megaphone },
-                    ] as const
-                  ).map((tab) => {
-                    const Icon = tab.icon;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-xs font-black transition ${
-                          activeTab === tab.id
-                            ? 'bg-[#EC749B] text-white shadow-2xs'
-                            : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
-                        }`}
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span>{tab.label}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
-              )}
+              <nav
+                aria-label="Menu Utama User Workspace"
+                className="grid grid-cols-2 gap-2 rounded-2xl border border-neutral-200/80 bg-white p-2 shadow-2xs sm:grid-cols-5"
+              >
+                {(
+                  [
+                    { id: 'overview', label: '1. Beranda & Kanal', icon: LayoutDashboard },
+                    { id: 'brand_vault', label: '2. Brand & Referensi', icon: Camera },
+                    { id: 'studio', label: '3. Studio Konten', icon: Wand2 },
+                    { id: 'autonomy', label: '4. Agent Otonom', icon: Bot },
+                    { id: 'meta_ads', label: '5. AI Meta Ads', icon: Megaphone },
+                  ] as const
+                ).map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-xs font-black transition ${
+                        activeTab === tab.id
+                          ? 'bg-[#EC749B] text-white shadow-2xs'
+                          : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
 
               {/* ====================================================================
                  TAB 1: BERANDA & KONEKSI 4 KANAL SOSMED + META ADS
@@ -1717,13 +1729,7 @@ export default function VeloxaAiPlatformPage() {
                 <div className="space-y-6">
                   {/* Organic Winner Auto-Boost Alert Banner — Pure White Card + Soft Pink CTA */}
                   {organicWinnerDraft && (
-                    <div
-                      className={`flex justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-5 shadow-2xs ${
-                        viewportMode === 'mobile_native'
-                          ? 'flex-col'
-                          : 'flex-col sm:flex-row sm:items-center'
-                      }`}
-                    >
+                    <div className="flex flex-col justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-5 shadow-2xs sm:flex-row sm:items-center">
                       <div className="flex items-start gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-pink-50 text-[#EC749B] border border-pink-100">
                           <Flame className="h-5 w-5" />
@@ -1767,13 +1773,7 @@ export default function VeloxaAiPlatformPage() {
                       </span>
                     </div>
 
-                    <div
-                      className={`mt-4 grid gap-4 ${
-                        viewportMode === 'mobile_native'
-                          ? 'grid-cols-1'
-                          : 'sm:grid-cols-2 lg:grid-cols-4'
-                      }`}
-                    >
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       {connections.map((conn) => {
                         const meta = CHANNEL_META[conn.channel];
                         return (
@@ -1835,11 +1835,7 @@ export default function VeloxaAiPlatformPage() {
                   </section>
 
                   {/* Meta Ads Account Connection & Quick Summary */}
-                  <div
-                    className={`grid gap-5 ${
-                      viewportMode === 'mobile_native' ? 'grid-cols-1' : 'lg:grid-cols-2'
-                    }`}
-                  >
+                  <div className="grid gap-5 lg:grid-cols-2">
                     <div className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                       <div className="flex items-center justify-between">
                         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
@@ -1932,13 +1928,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
                 <div className="space-y-6">
-                  <div
-                    className={`grid gap-6 ${
-                      viewportMode === 'mobile_native'
-                        ? 'grid-cols-1'
-                        : 'lg:grid-cols-[1.05fr_0.95fr]'
-                    }`}
-                  >
+                  <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
                     {/* Brand Brain Configuration */}
                     <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                       <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
@@ -2156,13 +2146,7 @@ export default function VeloxaAiPlatformPage() {
                     <h3 className="text-base font-black text-neutral-900">
                       Isi Brand Vault Anda ({vaultAssets.length} Aset Tersimpan)
                     </h3>
-                    <div
-                      className={`mt-4 grid gap-4 ${
-                        viewportMode === 'mobile_native'
-                          ? 'grid-cols-1'
-                          : 'sm:grid-cols-2 lg:grid-cols-4'
-                      }`}
-                    >
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       {vaultAssets.map((asset) => (
                         <article
                           key={asset.id}
@@ -2386,13 +2370,7 @@ export default function VeloxaAiPlatformPage() {
 
                         {/* Storyboard / Slides Preview — Clean White Cards */}
                         {draft.videoScenes && (
-                          <div
-                            className={`mt-4 grid gap-3 ${
-                              viewportMode === 'mobile_native'
-                                ? 'grid-cols-1'
-                                : 'sm:grid-cols-2 lg:grid-cols-4'
-                            }`}
-                          >
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {draft.videoScenes.map((scene) => (
                               <div
                                 key={scene.sceneNumber}
@@ -2419,13 +2397,7 @@ export default function VeloxaAiPlatformPage() {
                         )}
 
                         {draft.slides && (
-                          <div
-                            className={`mt-4 grid gap-3 ${
-                              viewportMode === 'mobile_native'
-                                ? 'grid-cols-1'
-                                : 'sm:grid-cols-2 lg:grid-cols-4'
-                            }`}
-                          >
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {draft.slides.map((slide) => (
                               <div
                                 key={slide.slideNumber}
@@ -2457,13 +2429,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'autonomy' && (
                 <div className="space-y-6">
-                  <div
-                    className={`grid gap-6 ${
-                      viewportMode === 'mobile_native'
-                        ? 'grid-cols-1'
-                        : 'lg:grid-cols-[1.1fr_0.9fr]'
-                    }`}
-                  >
+                  <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
                     {/* User-Controlled Autonomous Schedule */}
                     <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs">
                       <div className="flex items-center justify-between">
@@ -2705,13 +2671,7 @@ export default function VeloxaAiPlatformPage() {
                       </div>
                     </div>
 
-                    <div
-                      className={`mt-5 grid gap-4 text-xs ${
-                        viewportMode === 'mobile_native'
-                          ? 'grid-cols-1'
-                          : 'sm:grid-cols-2 lg:grid-cols-4'
-                      }`}
-                    >
+                    <div className="mt-5 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
                       <div>
                         <label className="font-bold text-neutral-700">Tujuan Kampanye (Objective)</label>
                         <select
@@ -2925,11 +2885,7 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         {/* 3 Pillars of Meta Ads: Demographics, Validated Interests, Budget & Outcome */}
-                        <div
-                          className={`mt-4 grid gap-4 ${
-                            viewportMode === 'mobile_native' ? 'grid-cols-1' : 'lg:grid-cols-3'
-                          }`}
-                        >
+                        <div className="mt-4 grid gap-4 lg:grid-cols-3">
                           {/* Column 1: Demografi & Geo */}
                           <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
                             <p className="font-black uppercase tracking-wider text-neutral-400">
@@ -3017,11 +2973,7 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         {/* A/B Creative Performance & Auto-Optimizer Split */}
-                        <div
-                          className={`mt-4 grid gap-3 ${
-                            viewportMode === 'mobile_native' ? 'grid-cols-1' : 'sm:grid-cols-2'
-                          }`}
-                        >
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
                           {camp.creatives.map((cr) => (
                             <div
                               key={cr.id}
@@ -3094,11 +3046,11 @@ export default function VeloxaAiPlatformPage() {
           )}
         </div>
 
-        {/* Native Mobile Bottom Navigation Bar (When in Android/iOS Mode) */}
-        {activeRole === 'user' && viewportMode === 'mobile_native' && (
+        {/* Native Mobile Bottom Navigation Bar — Otomatis Tampil di Layar HP Asli (<768px) */}
+        {authUser && activeRole === 'user' && (
           <nav
             aria-label="Bottom Navigation Android dan iOS"
-            className="sticky bottom-0 z-20 grid grid-cols-5 border-t border-neutral-200 bg-white/95 px-2 py-2.5 backdrop-blur"
+            className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-neutral-200 bg-white/95 px-2 py-2.5 backdrop-blur md:hidden"
           >
             {(
               [
@@ -3495,10 +3447,10 @@ export default function VeloxaAiPlatformPage() {
         <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
           <div>
             <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-              Tahap 5A · Firebase Authentication (veloxa-ai-saas)
+              Autentikasi Resmi Veloxa AI (veloxa-ai-saas)
             </span>
             <h2 id="auth-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
-              Masuk / Beralih Akun Veloxa AI
+              Masuk ke Akun Veloxa AI
             </h2>
           </div>
           <button
@@ -3511,15 +3463,21 @@ export default function VeloxaAiPlatformPage() {
         </div>
 
         <div className="mt-4 space-y-3.5 text-xs">
-          <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
-            <p className="text-[11px] text-neutral-500">Sesi Aktif Saat Ini:</p>
-            <p className="font-black text-neutral-900">
-              {authUser.displayName} ({authUser.email})
-            </p>
-            <span className="mt-1 inline-block rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-bold text-[#D85A88]">
-              {authUser.isSuperAdmin ? '★ Super Admin (Owner SaaS)' : '✓ Customer Workspace Tenant'}
-            </span>
-          </div>
+          {authUser ? (
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
+              <p className="text-[11px] text-neutral-500">Sedang Login Sebagai:</p>
+              <p className="font-black text-neutral-900">
+                {authUser.displayName} ({authUser.email})
+              </p>
+              <span className="mt-1 inline-block rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-bold text-[#D85A88]">
+                {authUser.isSuperAdmin ? '★ Super Admin (Owner SaaS)' : '✓ Pelanggan Bisnis (Workspace)'}
+              </span>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3 text-neutral-600">
+              Masuk dengan email bisnis Anda untuk membuka <strong>Workspace Pelanggan</strong>, atau masuk dengan <code>sosrospg@gmail.com</code> untuk membuka <strong>Super Admin Control Center</strong>.
+            </div>
+          )}
 
           <button
             type="button"
@@ -3533,7 +3491,7 @@ export default function VeloxaAiPlatformPage() {
           <form onSubmit={(e) => void handleEmailSignInSubmit(e)} className="space-y-2.5 border-t border-neutral-100 pt-3">
             <div>
               <label htmlFor="auth-email-input" className="font-bold text-neutral-700">
-                Email Akun (Gunakan <code>sosrospg@gmail.com</code> untuk Super Admin)
+                Email Akun
               </label>
               <input
                 id="auth-email-input"
@@ -3547,7 +3505,7 @@ export default function VeloxaAiPlatformPage() {
             </div>
             <div>
               <label htmlFor="auth-password-input" className="font-bold text-neutral-700">
-                Kata Sandi Firebase Auth
+                Kata Sandi
               </label>
               <input
                 id="auth-password-input"
@@ -3560,23 +3518,49 @@ export default function VeloxaAiPlatformPage() {
                 className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
               />
             </div>
-            <div className="flex justify-between gap-2 pt-2">
+            <button
+              type="submit"
+              data-testid="email-signin-submit-btn"
+              className="w-full rounded-xl bg-[#EC749B] py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+            >
+              Masuk dengan Email & Kata Sandi
+            </button>
+          </form>
+
+          {/* Quick 1-Click Role Login for Instant Testing */}
+          <div className="space-y-2 border-t border-neutral-100 pt-3">
+            <p className="text-[11px] font-bold text-neutral-500">
+              Akses Cepat 1-Klik (Pilih Akun Sesuai Peran):
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={() => void handleSignOutClick()}
-                className="rounded-xl border border-neutral-200 bg-white px-3 py-2 font-bold text-neutral-700"
+                data-testid="quick-login-user-btn"
+                onClick={() => handleQuickLoginRole('user')}
+                className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-left font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
               >
-                Simulasi Akun Pelanggan
+                <span className="block text-[11px] font-black text-neutral-900">
+                  🏢 Masuk sebagai Pelanggan
+                </span>
+                <span className="block text-[10px] text-neutral-500">
+                  owner@nusantararun.id
+                </span>
               </button>
               <button
-                type="submit"
-                data-testid="email-signin-submit-btn"
-                className="rounded-xl bg-[#EC749B] px-4 py-2 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                type="button"
+                data-testid="quick-login-admin-btn"
+                onClick={() => handleQuickLoginRole('admin')}
+                className="rounded-xl border border-pink-200 bg-pink-50/60 px-3 py-2.5 text-left font-bold text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
               >
-                Masuk / Daftar Firebase
+                <span className="block text-[11px] font-black">
+                  🔑 Masuk sebagai Super Admin
+                </span>
+                <span className="block text-[10px] opacity-80">
+                  sosrospg@gmail.com
+                </span>
               </button>
             </div>
-          </form>
+          </div>
         </div>
       </dialog>
     </div>

@@ -1,10 +1,10 @@
 /**
- * Veloxa AI — Multi-Tenant Firebase Authentication Service (Tahap 5A)
+ * Veloxa AI — Multi-Tenant Firebase Authentication Service (Production Auth Flow)
  *
  * Supports:
- * 1. Google Sign-In (`GoogleAuthProvider` + `signInWithPopup`)
- * 2. Email & Password Login / Registration (`signInWithEmailAndPassword` / `createUserWithEmailAndPassword`)
- * 3. Instant Demo / Anonymous Session (`signInAnonymously`)
+ * 1. Public Visitor (Unauthenticated -> Landing Page Only)
+ * 2. Google Sign-In (`GoogleAuthProvider` + `signInWithPopup`)
+ * 3. Email & Password Login / Registration (`signInWithEmailAndPassword` / `createUserWithEmailAndPassword`)
  * 4. Automatic Super Admin role detection for `sosrospg@gmail.com`
  */
 
@@ -33,7 +33,7 @@ export interface VeloxaAuthenticatedUser {
   isSuperAdmin: boolean;
 }
 
-const LOCAL_AUTH_SESSION_KEY = 'veloxa_auth_user_session_v1';
+const LOCAL_AUTH_SESSION_KEY = 'veloxa_prod_auth_session_v2';
 export const SUPER_ADMIN_EMAIL = 'sosrospg@gmail.com';
 
 let cachedAuth: Auth | null = null;
@@ -70,7 +70,7 @@ export function resolveRoleFromEmail(email?: string | null): VeloxaRole {
   return normalized === SUPER_ADMIN_EMAIL ? 'admin' : 'user';
 }
 
-export function getInitialAuthenticatedUser(): VeloxaAuthenticatedUser {
+export function getInitialAuthenticatedUser(): VeloxaAuthenticatedUser | null {
   if (typeof window !== 'undefined' && typeof window.localStorage?.getItem === 'function') {
     try {
       const raw = window.localStorage.getItem(LOCAL_AUTH_SESSION_KEY);
@@ -81,20 +81,17 @@ export function getInitialAuthenticatedUser(): VeloxaAuthenticatedUser {
       // ignore
     }
   }
-  return {
-    uid: 'usr_owner_sosrospg',
-    email: SUPER_ADMIN_EMAIL,
-    displayName: 'Owner Veloxa AI (sosrospg)',
-    role: 'user',
-    provider: 'super_admin_session',
-    isSuperAdmin: true,
-  };
+  return null;
 }
 
-export function persistAuthenticatedUser(user: VeloxaAuthenticatedUser): void {
+export function persistAuthenticatedUser(user: VeloxaAuthenticatedUser | null): void {
   if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
     try {
-      window.localStorage.setItem(LOCAL_AUTH_SESSION_KEY, JSON.stringify(user));
+      if (!user) {
+        window.localStorage.removeItem(LOCAL_AUTH_SESSION_KEY);
+      } else {
+        window.localStorage.setItem(LOCAL_AUTH_SESSION_KEY, JSON.stringify(user));
+      }
     } catch {
       // ignore
     }
@@ -196,7 +193,32 @@ export async function signInWithGooglePopup(): Promise<VeloxaAuthenticatedUser> 
   return fallback;
 }
 
-export async function signOutVeloxaUser(): Promise<VeloxaAuthenticatedUser> {
+export function signInQuickRoleSession(targetRole: 'admin' | 'user'): VeloxaAuthenticatedUser {
+  if (targetRole === 'admin') {
+    const adminUser: VeloxaAuthenticatedUser = {
+      uid: 'usr_owner_sosrospg',
+      email: SUPER_ADMIN_EMAIL,
+      displayName: 'Owner Veloxa AI (sosrospg)',
+      role: 'admin',
+      provider: 'super_admin_session',
+      isSuperAdmin: true,
+    };
+    persistAuthenticatedUser(adminUser);
+    return adminUser;
+  }
+  const tenantUser: VeloxaAuthenticatedUser = {
+    uid: 'usr_tenant_nusantara',
+    email: 'owner@nusantararun.id',
+    displayName: 'Dimas Pratama (Nusantara Run)',
+    role: 'user',
+    provider: 'demo_tenant',
+    isSuperAdmin: false,
+  };
+  persistAuthenticatedUser(tenantUser);
+  return tenantUser;
+}
+
+export async function signOutVeloxaUser(): Promise<null> {
   const auth = getFirebaseAuthInstance();
   if (auth) {
     try {
@@ -205,16 +227,8 @@ export async function signOutVeloxaUser(): Promise<VeloxaAuthenticatedUser> {
       // ignore
     }
   }
-  const guest: VeloxaAuthenticatedUser = {
-    uid: 'usr_demo_tenant',
-    email: 'owner@nusantararun.id',
-    displayName: 'Dimas Pratama (Nusantara Run)',
-    role: 'user',
-    provider: 'demo_tenant',
-    isSuperAdmin: false,
-  };
-  persistAuthenticatedUser(guest);
-  return guest;
+  persistAuthenticatedUser(null);
+  return null;
 }
 
 export function subscribeToFirebaseAuthChanges(
@@ -223,7 +237,7 @@ export function subscribeToFirebaseAuthChanges(
   const auth = getFirebaseAuthInstance();
   if (!auth) return () => {};
   return onAuthStateChanged(auth, (fbUser) => {
-    if (fbUser) {
+    if (fbUser && !fbUser.isAnonymous) {
       const mapped = mapFirebaseUser(fbUser);
       persistAuthenticatedUser(mapped);
       callback(mapped);
