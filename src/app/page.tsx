@@ -44,6 +44,15 @@ import {
   downloadDraftPosterSvg,
   speakDraftVoiceoverIndonesian,
 } from '@/lib/veloxa-visual-renderer';
+import {
+  SUPER_ADMIN_EMAIL,
+  getInitialAuthenticatedUser,
+  signInWithEmailPasswordOrRegister,
+  signInWithGooglePopup,
+  signOutVeloxaUser,
+  subscribeToFirebaseAuthChanges,
+  type VeloxaAuthenticatedUser,
+} from '@/lib/veloxa-auth';
 import type {
   AutonomyConfig,
   BrandProfile,
@@ -185,10 +194,19 @@ export default function VeloxaAiPlatformPage() {
     'Veloxa AI aktif · Seluruh 4 kanal sosmed (IG, FB, TikTok, YT Shorts) & AI Agent Meta Ads siap dijalankan.',
   );
 
-  // Stage 1-4 Native <dialog> Modal Refs (modern-web-guidance: dialog)
+  // Stage 1-5 Native <dialog> Modal Refs (modern-web-guidance: dialog)
   const onboardingDialogRef = useRef<HTMLDialogElement | null>(null);
   const oauthDialogRef = useRef<HTMLDialogElement | null>(null);
   const billingDialogRef = useRef<HTMLDialogElement | null>(null);
+  const authDialogRef = useRef<HTMLDialogElement | null>(null);
+
+  // Stage 5A & 5B: Firebase Authentication & Commercial Landing Page State
+  const [authUser, setAuthUser] = useState<VeloxaAuthenticatedUser>(() =>
+    getInitialAuthenticatedUser(),
+  );
+  const [authEmailInput, setAuthEmailInput] = useState<string>(SUPER_ADMIN_EMAIL);
+  const [authPasswordInput, setAuthPasswordInput] = useState<string>('VeloxaAdmin2026!');
+  const [showLandingPage, setShowLandingPage] = useState<boolean>(false);
 
   // Stage 1: New Business Onboarding Form State
   const [onboardBusinessName, setOnboardBusinessName] = useState<string>('');
@@ -225,6 +243,9 @@ export default function VeloxaAiPlatformPage() {
   useEffect(() => {
     const savedCfg = loadSavedFirebaseConfig();
     setFirebaseCfg(savedCfg);
+    const unsubAuth = subscribeToFirebaseAuthChanges((fbUser) => {
+      if (fbUser) setAuthUser(fbUser);
+    });
     void loadWorkspaceSnapshotFromStore(BRAND_PRESETS.running_event.workspaceId, savedCfg).then(
       ({ snapshot: snap, telemetry }) => {
         setLocalTelemetry(telemetry);
@@ -242,6 +263,7 @@ export default function VeloxaAiPlatformPage() {
         setTenants(snap.tenants);
       },
     );
+    return () => unsubAuth();
   }, []);
 
   useEffect(() => {
@@ -482,8 +504,29 @@ export default function VeloxaAiPlatformPage() {
     );
   };
 
-  const handleConfirmQrisSubscriptionUpgrade = () => {
+  const handleConfirmQrisSubscriptionUpgrade = async () => {
     const spec = SUBSCRIPTION_PLANS[selectedCheckoutPlanId];
+    let invoiceId = `INV-VLX-${Date.now().toString().slice(-6)}`;
+    try {
+      const res = await fetch('/api/veloxa/billing-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: invoiceId,
+          workspaceId: brand.workspaceId,
+          planId: selectedCheckoutPlanId,
+          transactionStatus: 'PAID',
+          paymentType: paymentMethodTab === 'qris' ? 'qris' : 'bank_transfer_bca',
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { invoiceId?: string };
+        if (data.invoiceId) invoiceId = data.invoiceId;
+      }
+    } catch {
+      // non-blocking fallback for static export
+    }
+
     setActivePlanId(selectedCheckoutPlanId);
     setTenants((prev) =>
       prev.map((t, idx) => {
@@ -504,7 +547,7 @@ export default function VeloxaAiPlatformPage() {
     );
     setBillingReceipts((prev) => [
       {
-        id: `INV-VLX-${Date.now().toString().slice(-6)}`,
+        id: invoiceId,
         workspaceName: brand.businessName,
         planName: spec.name,
         amountIdr: spec.priceMonthlyIdr,
@@ -514,8 +557,42 @@ export default function VeloxaAiPlatformPage() {
     ]);
     billingDialogRef.current?.close();
     setStatusBanner(
-      `Pembayaran Lunas! Paket "${spec.name}" (${formatIdr(spec.priceMonthlyIdr)}/bln · Kuota ${spec.monthlyPostQuota} konten) aktif untuk ${brand.businessName}!`,
+      `Pembayaran Lunas (${invoiceId})! Paket "${spec.name}" (${formatIdr(spec.priceMonthlyIdr)}/bln · Kuota ${spec.monthlyPostQuota} konten) aktif untuk ${brand.businessName}!`,
     );
+  };
+
+  const handleEmailSignInSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const signedIn = await signInWithEmailPasswordOrRegister({
+      email: authEmailInput,
+      password: authPasswordInput,
+    });
+    setAuthUser(signedIn);
+    setActiveRole(signedIn.isSuperAdmin ? 'admin' : 'user');
+    setShowLandingPage(false);
+    authDialogRef.current?.close();
+    setStatusBanner(
+      signedIn.isSuperAdmin
+        ? `Login Firebase berhasil sebagai Super Admin (${signedIn.email})!`
+        : `Login Firebase berhasil sebagai Pelanggan (${signedIn.email})!`,
+    );
+  };
+
+  const handleGoogleSignInClick = async () => {
+    const signedIn = await signInWithGooglePopup();
+    setAuthUser(signedIn);
+    setActiveRole(signedIn.isSuperAdmin ? 'admin' : 'user');
+    setShowLandingPage(false);
+    authDialogRef.current?.close();
+    setStatusBanner(`Login Google OAuth berhasil sebagai ${signedIn.email}!`);
+  };
+
+  const handleSignOutClick = async () => {
+    const guest = await signOutVeloxaUser();
+    setAuthUser(guest);
+    setActiveRole('user');
+    authDialogRef.current?.close();
+    setStatusBanner(`Beralih ke sesi akun pelanggan: ${guest.email}`);
   };
 
   const handlePlayDraftVoiceover = (draft: ContentDraft) => {
@@ -863,8 +940,21 @@ export default function VeloxaAiPlatformPage() {
             </div>
           </div>
 
-          {/* Role Switcher & Viewport Mode Switcher */}
+          {/* Role Switcher, Landing Page Switcher, Firebase Auth, & Viewport Mode Switcher */}
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="toggle-landing-page-btn"
+              onClick={() => setShowLandingPage((v) => !v)}
+              className={`rounded-2xl border px-3.5 py-2 text-xs font-bold transition ${
+                showLandingPage
+                  ? 'border-[#EC749B] bg-[#EC749B] text-white shadow-xs'
+                  : 'border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
+              }`}
+            >
+              {showLandingPage ? '← Kembali ke Dashboard' : '🌐 Landing Page Penjualan'}
+            </button>
+
             <div
               role="group"
               aria-label="Pilih Peran Aplikasi"
@@ -872,9 +962,12 @@ export default function VeloxaAiPlatformPage() {
             >
               <button
                 type="button"
-                onClick={() => setActiveRole('user')}
+                onClick={() => {
+                  setActiveRole('user');
+                  setShowLandingPage(false);
+                }}
                 className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                  activeRole === 'user'
+                  activeRole === 'user' && !showLandingPage
                     ? 'bg-[#EC749B] text-white shadow-xs'
                     : 'text-neutral-600 hover:bg-white hover:text-neutral-900'
                 }`}
@@ -884,9 +977,12 @@ export default function VeloxaAiPlatformPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveRole('admin')}
+                onClick={() => {
+                  setActiveRole('admin');
+                  setShowLandingPage(false);
+                }}
                 className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
-                  activeRole === 'admin'
+                  activeRole === 'admin' && !showLandingPage
                     ? 'bg-[#EC749B] text-white shadow-xs'
                     : 'text-neutral-600 hover:bg-white hover:text-neutral-900'
                 }`}
@@ -895,6 +991,16 @@ export default function VeloxaAiPlatformPage() {
                 Role: SUPER ADMIN
               </button>
             </div>
+
+            <button
+              type="button"
+              data-testid="open-auth-modal-btn"
+              onClick={() => authDialogRef.current?.showModal()}
+              className="flex items-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-xs font-bold text-[#D85A88] hover:bg-pink-100/70"
+            >
+              <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
+              {authUser.email}
+            </button>
 
             <button
               type="button"
@@ -967,7 +1073,160 @@ export default function VeloxaAiPlatformPage() {
         )}
 
         <div className={viewportMode === 'mobile_native' ? 'bg-[#FAFAFA] p-4 pb-24' : ''}>
-          {activeRole === 'admin' ? (
+          {showLandingPage ? (
+            /* ======================================================================
+               TAHAP 5B: COMMERCIAL SALES LANDING PAGE (DOMINAN PUTIH + SOFT PINK)
+               ====================================================================== */
+            <div className="space-y-8" data-testid="veloxa-sales-landing-page">
+              {/* Hero Section */}
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-8 text-center shadow-2xs sm:p-12">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3.5 py-1 text-xs font-black text-[#D85A88]">
+                  <Sparkles className="h-3.5 w-3.5 text-[#EC749B]" /> Platform SaaS Otonom #1 untuk UMKM, Cafe, Klinik & Event di Indonesia
+                </span>
+                <h1 className="mx-auto mt-4 max-w-3xl text-3xl font-black tracking-tight text-neutral-900 sm:text-5xl">
+                  Punya Tim Konten Kreator 4 Sosmed & AI Media Buyer Meta Ads 24/7 Mulai{' '}
+                  <span className="text-[#EC749B]">Rp500.000/Bulan</span>
+                </h1>
+                <p className="mx-auto mt-4 max-w-2xl text-sm text-neutral-600 sm:text-base">
+                  Cukup unggah contoh referensi poster/Reels yang Anda sukai dan stok foto asli bisnis Anda. Veloxa AI memproduksi, memeriksa kualitas hingga 0 kesalahan, memposting otomatis ke <strong>Instagram, Facebook, TikTok, & YouTube Shorts</strong>, serta mengoptimasi iklan <strong>Meta Ads</strong> Anda setiap hari.
+                </p>
+
+                <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    data-testid="landing-cta-start-btn"
+                    onClick={() => {
+                      setShowLandingPage(false);
+                      onboardingDialogRef.current?.showModal();
+                    }}
+                    className="rounded-2xl bg-[#EC749B] px-6 py-3.5 text-sm font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                  >
+                    <Rocket className="mr-1.5 inline h-4 w-4" />
+                    Daftarkan Bisnis Anda Sekarang
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowLandingPage(false)}
+                    className="rounded-2xl border border-neutral-200 bg-white px-6 py-3.5 text-sm font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
+                  >
+                    Lihat Live Demo Workspace →
+                  </button>
+                </div>
+
+                <div className="mt-8 grid gap-4 border-t border-neutral-100 pt-6 text-left sm:grid-cols-3">
+                  <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/50 p-4">
+                    <p className="text-xs font-black uppercase text-[#D85A88]">1. Dual Brand Vault</p>
+                    <p className="mt-1 text-sm font-bold text-neutral-900">
+                      Tiru Gaya Referensi + Pakai Foto Produk Asli Anda
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      AI mengekstrak Style DNA dari contoh yang Anda sukai dan memadukannya dengan foto menu/event asli bisnis Anda.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/50 p-4">
+                    <p className="text-xs font-black uppercase text-[#D85A88]">2. Otonom 4 Kanal Sekaligus</p>
+                    <p className="mt-1 text-sm font-bold text-neutral-900">
+                      IG Reels, FB Page, TikTok, & YouTube Shorts
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Bebas atur jadwal tayang 1x–4x sehari + Mode Kampanye Event hitung mundur (H-30 s.d. Hari-H).
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/50 p-4">
+                    <p className="text-xs font-black uppercase text-[#D85A88]">3. AI Agent Meta Ads</p>
+                    <p className="mt-1 text-sm font-bold text-neutral-900">
+                      Demografi, Validated Interest, & Auto-Optimizer
+                    </p>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Mematikan variasi iklan mahal secara otomatis dan mengalihkan 100% budget ke iklan pemenang di bawah Pagar Budget Anda.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              {/* Cost Comparison Calculator: Agency vs Veloxa AI */}
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs sm:p-8">
+                <h2 className="text-xl font-black text-neutral-900">
+                  Perbandingan Biaya Bulanan: Sewa Agensi Konvensional vs Veloxa AI
+                </h2>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-5 text-xs">
+                    <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 font-bold text-neutral-500">
+                      Cara Lama (Agensi Sosmed + Freelancer Iklan)
+                    </span>
+                    <p className="mt-3 text-2xl font-black text-neutral-800">Rp6.500.000 – Rp9.000.000 / bln</p>
+                    <ul className="mt-3 space-y-1.5 text-neutral-600">
+                      <li>• Admin & Desainer Feed/Reels: ~Rp4.500.000/bulan</li>
+                      <li>• Jasa Advertiser Meta Ads: ~Rp2.500.000/bulan</li>
+                      <li>• Revisi lama & sering terlambat mengejar momentum event</li>
+                    </ul>
+                  </div>
+                  <div className="rounded-2xl border border-pink-300 bg-white p-5 text-xs ring-2 ring-pink-100">
+                    <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 font-bold text-white">
+                      ★ Cara Baru Bersama Veloxa AI (Hemat hingga 85%)
+                    </span>
+                    <p className="mt-3 text-2xl font-black text-[#D85A88]">Rp500.000 – Rp1.500.000 / bln</p>
+                    <ul className="mt-3 space-y-1.5 text-neutral-700">
+                      <li>• <strong>20 hingga 90 konten/bulan</strong> tayang otomatis di 4 platform</li>
+                      <li>• <strong>Self-Healing Quality Gate</strong> memeriksa kualitas visual & caption</li>
+                      <li>• <strong>AI Agent Meta Ads 24/7</strong> + Aplikasi Web, Android (`.apk`), & iOS</li>
+                    </ul>
+                  </div>
+                </div>
+              </section>
+
+              {/* Pricing Cards on Landing Page */}
+              <section className="rounded-3xl border border-neutral-200/80 bg-white p-6 shadow-2xs sm:p-8">
+                <h2 className="text-xl font-black text-neutral-900">
+                  Pilih Paket Langganan Sesuai Skala Bisnis Anda
+                </h2>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  {Object.values(SUBSCRIPTION_PLANS).map((plan) => (
+                    <div
+                      key={plan.id}
+                      className={`flex flex-col justify-between rounded-2xl border p-5 ${
+                        plan.id === 'pro_1500k'
+                          ? 'border-pink-300 bg-white ring-2 ring-pink-100'
+                          : 'border-neutral-200 bg-white'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-black text-neutral-900">{plan.name}</span>
+                          {plan.id === 'pro_1500k' && (
+                            <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-bold text-white">
+                              TERLARIS
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-2xl font-black text-neutral-900">
+                          {formatIdr(plan.priceMonthlyIdr)}
+                          <span className="text-xs font-semibold text-neutral-400">/bulan</span>
+                        </p>
+                        <p className="mt-1 text-xs text-neutral-500">{plan.tagline}</p>
+                        <ul className="mt-3 space-y-1.5 text-xs text-neutral-600">
+                          <li>• Kuota: <strong className="text-neutral-900">{plan.monthlyPostQuota} postingan/bulan</strong></li>
+                          <li>• Kanal: <strong className="text-neutral-900">{plan.allowedChannels.join(', ').toUpperCase()}</strong></li>
+                          <li>• AI Agent Meta Ads: <strong className="text-neutral-900">{plan.includesMetaAdsAgent ? 'Termasuk + Auto-Optimizer' : 'Tidak'}</strong></li>
+                        </ul>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCheckoutPlanId(plan.id);
+                          setShowLandingPage(false);
+                          billingDialogRef.current?.showModal();
+                        }}
+                        className="mt-5 w-full rounded-xl bg-[#EC749B] py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                      >
+                        Pilih {plan.name} (QRIS / VA)
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : activeRole === 'admin' ? (
             /* ======================================================================
                ROLE 1: SUPER ADMIN COMMAND CENTER — DOMINAN PUTIH + AKSEN SOFT PINK
                ====================================================================== */
@@ -3215,12 +3474,109 @@ export default function VeloxaAiPlatformPage() {
             <button
               type="button"
               data-testid="confirm-qris-payment-btn"
-              onClick={handleConfirmQrisSubscriptionUpgrade}
+              onClick={() => void handleConfirmQrisSubscriptionUpgrade()}
               className="rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
             >
               ✓ Simulasikan Pembayaran Lunas QRIS (Aktifkan Paket Instan)
             </button>
           </div>
+        </div>
+      </dialog>
+
+      {/* ========================================================================
+         STAGE 5A MODAL: FIREBASE AUTHENTICATION (GOOGLE & EMAIL/PASSWORD LOGIN)
+         ======================================================================== */}
+      <dialog
+        ref={authDialogRef}
+        aria-labelledby="auth-dialog-title"
+        data-testid="firebase-auth-dialog"
+        className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div>
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+              Tahap 5A · Firebase Authentication (veloxa-ai-saas)
+            </span>
+            <h2 id="auth-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
+              Masuk / Beralih Akun Veloxa AI
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => authDialogRef.current?.close()}
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600"
+          >
+            Tutup
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-3.5 text-xs">
+          <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
+            <p className="text-[11px] text-neutral-500">Sesi Aktif Saat Ini:</p>
+            <p className="font-black text-neutral-900">
+              {authUser.displayName} ({authUser.email})
+            </p>
+            <span className="mt-1 inline-block rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-bold text-[#D85A88]">
+              {authUser.isSuperAdmin ? '★ Super Admin (Owner SaaS)' : '✓ Customer Workspace Tenant'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            data-testid="google-signin-btn"
+            onClick={() => void handleGoogleSignInClick()}
+            className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 font-black text-neutral-800 shadow-2xs hover:border-pink-200 hover:text-[#D85A88]"
+          >
+            G · Masuk dengan Google (Firebase OAuth)
+          </button>
+
+          <form onSubmit={(e) => void handleEmailSignInSubmit(e)} className="space-y-2.5 border-t border-neutral-100 pt-3">
+            <div>
+              <label htmlFor="auth-email-input" className="font-bold text-neutral-700">
+                Email Akun (Gunakan <code>sosrospg@gmail.com</code> untuk Super Admin)
+              </label>
+              <input
+                id="auth-email-input"
+                data-testid="auth-email-input"
+                type="email"
+                required
+                value={authEmailInput}
+                onChange={(e) => setAuthEmailInput(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+              />
+            </div>
+            <div>
+              <label htmlFor="auth-password-input" className="font-bold text-neutral-700">
+                Kata Sandi Firebase Auth
+              </label>
+              <input
+                id="auth-password-input"
+                data-testid="auth-password-input"
+                type="password"
+                required
+                minLength={6}
+                value={authPasswordInput}
+                onChange={(e) => setAuthPasswordInput(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
+              />
+            </div>
+            <div className="flex justify-between gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => void handleSignOutClick()}
+                className="rounded-xl border border-neutral-200 bg-white px-3 py-2 font-bold text-neutral-700"
+              >
+                Simulasi Akun Pelanggan
+              </button>
+              <button
+                type="submit"
+                data-testid="email-signin-submit-btn"
+                className="rounded-xl bg-[#EC749B] px-4 py-2 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+              >
+                Masuk / Daftar Firebase
+              </button>
+            </div>
+          </form>
         </div>
       </dialog>
     </div>

@@ -30,6 +30,7 @@ import {
   computePayloadFingerprint,
 } from './veloxa-local-first';
 import { buildRenderedVisualSvg } from './veloxa-visual-renderer';
+import { resolveRoleFromEmail } from './veloxa-auth';
 import type { ChannelConnectionState, MetaAdsAccountConnection } from './veloxa-types';
 
 const ALL_CONNECTED_CHANNELS: ChannelConnectionState[] = [
@@ -352,5 +353,7 @@ test('Local-First Cost Guard FNV-1a fingerprinting and Visual Poster SVG Rendere
   assert.ok(svg.includes('<svg'));
   assert.ok(svg.includes('#EC749B'));
   assert.ok(svg.includes('Nusantara Run Festival'));
+  assert.equal(resolveRoleFromEmail('sosrospg@gmail.com'), 'admin');
+  assert.equal(resolveRoleFromEmail('owner@kopisenja.id'), 'user');
 });
 

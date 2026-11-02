@@ -1,4 +1,19 @@
 {
+  "auth": {
+    "providers": {
+      "anonymous": true,
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Veloxa AI",
+        "supportEmail": "sosrospg@gmail.com",
+        "authorizedRedirectUris": [
+          "https://veloxa-ai-saas.firebaseapp.com/__/auth/handler",
+          "https://veloxa-ai-saas.web.app/__/auth/handler",
+          "http://localhost:3035"
+        ]
+      }
+    }
+  },
   "hosting": {
     "public": "out",
     "ignore": [
