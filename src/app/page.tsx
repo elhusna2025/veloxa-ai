@@ -252,7 +252,7 @@ export default function VeloxaAiPlatformPage() {
   const [playingVoiceoverDraftId, setPlayingVoiceoverDraftId] = useState<string | null>(null);
 
   // Stage 3: OAuth & Meta Ads Customizer State
-  const [editingChannel, setEditingChannel] = useState<SocialChannelId>('instagram');
+  const [editingChannel, setEditingChannel] = useState<SocialChannelId>('facebook');
   const [editingChannelHandle, setEditingChannelHandle] = useState<string>('');
   const [editingChannelAccountName, setEditingChannelAccountName] = useState<string>('');
   const [editingChannelFollowers, setEditingChannelFollowers] = useState<number>(0);
@@ -1453,7 +1453,7 @@ export default function VeloxaAiPlatformPage() {
                     <button
                       type="button"
                       data-testid="header-connect-social-btn"
-                      onClick={() => handleOpenOAuthConfigModal('instagram')}
+                      onClick={() => handleOpenOAuthConfigModal('facebook')}
                       className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/30 bg-white/15 px-3 py-2 text-xs font-bold text-white hover:bg-white/25 transition"
                     >
                       <span>🔗 Hubungkan 4 Sosmed</span>
@@ -1520,7 +1520,7 @@ export default function VeloxaAiPlatformPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleOpenOAuthConfigModal('instagram')}
+                        onClick={() => handleOpenOAuthConfigModal('facebook')}
                         className="hidden xl:inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50/80 px-3.5 py-1.5 text-xs font-semibold text-neutral-500 hover:border-pink-200 hover:text-[#D85A88] transition"
                       >
                         <span>🔗 Koneksi 4 Sosmed ({connections.filter((c) => c.connected).length}/4)</span>
@@ -3102,7 +3102,9 @@ export default function VeloxaAiPlatformPage() {
               🔗 WIZARD KONEKSI 4 SOSMED &amp; OAUTH 2.0 RESMI
             </span>
             <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-black text-neutral-900">
-              Hubungkan {CHANNEL_META[editingChannel].label} ke {brand.businessName}
+              {editingChannel === 'facebook' || editingChannel === 'instagram'
+                ? `Hubungkan Facebook & Instagram ke ${brand.businessName}`
+                : `Hubungkan ${CHANNEL_META[editingChannel].label} ke ${brand.businessName}`}
             </h2>
           </div>
           <button
@@ -3116,7 +3118,7 @@ export default function VeloxaAiPlatformPage() {
 
         {/* 4-Channel Switcher Tabs inside Modal so User Can Connect All 4 Channels Easily */}
         <div className="mt-4 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {(['instagram', 'facebook', 'tiktok', 'youtube_shorts'] as const).map((ch) => {
+          {(['facebook', 'instagram', 'tiktok', 'youtube_shorts'] as const).map((ch) => {
             const connItem = connections.find((c) => c.channel === ch);
             const isSelected = editingChannel === ch;
             return (

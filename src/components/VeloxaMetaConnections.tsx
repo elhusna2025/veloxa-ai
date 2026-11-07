@@ -24,14 +24,19 @@ export function VeloxaMetaConnections({ workspaceId, onConnections }: { workspac
     finally { setBusy(false); }
   }
   return <section className="mt-5 space-y-4 text-sm" aria-label="Koneksi resmi Meta">
-    <p className="text-neutral-600">Hubungkan Facebook Page yang Anda kelola. Instagram harus berupa akun Business atau Creator yang ditautkan ke Page tersebut. Veloxa meminta izin melalui Meta dan tidak meminta password akun sosial Anda.</p>
+    <p className="text-neutral-600">Masuk melalui Facebook untuk menghubungkan Facebook Page yang Anda kelola dan akun Instagram profesional yang tertaut secara bersamaan. Instagram harus berupa akun Business atau Creator yang ditautkan ke Page tersebut. Veloxa meminta izin melalui Meta dan tidak meminta password akun sosial Anda.</p>
+    <ol className="space-y-2 rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-neutral-700">
+      <li><span className="font-bold text-neutral-900">1.</span> Masuk melalui Facebook</li>
+      <li><span className="font-bold text-neutral-900">2.</span> Pilih Facebook Page</li>
+      <li><span className="font-bold text-neutral-900">3.</span> Pilih Instagram yang tertaut</li>
+    </ol>
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-red-700">{error}</p>}
     {message && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-emerald-800">{message}</p>}
     <ul className="space-y-2">{accounts.connections.map(connection => <li key={connection.channel} className="rounded-xl border p-3"><strong>{connection.channel === 'facebook' ? 'Facebook Page' : 'Instagram'}</strong> · {connection.accountName} — {connection.connected ? 'Terhubung' : 'Perlu dihubungkan ulang'}</li>)}</ul>
     <button type="button" disabled={busy} onClick={() => void perform(async () => {
       const result = await veloxaApi<{ url: string }>('/api/veloxa/meta/start', { method: 'POST', body: JSON.stringify({ workspaceId }) });
       window.location.assign(result.url);
-    })} className="w-full rounded-xl bg-neutral-900 px-5 py-3 font-bold text-white disabled:opacity-50">{busy ? 'Memproses…' : 'Lanjutkan ke Facebook untuk memberikan izin'}</button>
+    })} className="w-full rounded-xl bg-neutral-900 px-5 py-3 font-bold text-white disabled:opacity-50">{busy ? 'Memproses…' : 'Masuk dengan Facebook untuk menghubungkan akun'}</button>
     {accounts.pages.length > 0 && <div className="space-y-3 rounded-xl border p-4">
       <label htmlFor="meta-page" className="block font-bold">Pilih Page untuk workspace ini</label>
       <select id="meta-page" value={pageId} onChange={event => setPageId(event.target.value)} disabled={busy} className="w-full rounded-xl border p-3">
