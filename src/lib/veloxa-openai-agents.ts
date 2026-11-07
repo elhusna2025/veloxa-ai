@@ -61,7 +61,7 @@ export const VELOXA_OPENAI_AGENTS: Record<string, VeloxaOpenAiAgentDefinition> =
     agentId: 'agt_veloxa_content_creator_v1',
     codeName: 'veloxa-content-creator-agent',
     name: 'Veloxa Multi-Platform Content Creator',
-    model: 'gpt-4.1',
+    model: 'gpt-6-luna',
     roleDescription:
       'Merancang konten otonom maupun manual untuk Instagram, Facebook, TikTok, dan YouTube Shorts dengan memadukan foto/video asli bisnis user & kampanye event.',
     systemPrompt: `Anda adalah Veloxa Content Creator Agent. Buat konten media sosial berkonversi tinggi dalam Bahasa Indonesia yang alami, hangat, dan persuasif sesuai Brand Brain user (Cafe/F&B, Event Lari, Klinik Kecantikan, atau Brand Kustom).

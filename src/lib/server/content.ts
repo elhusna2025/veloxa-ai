@@ -5,7 +5,7 @@ import { adminBucket } from './firebase';
 import { requireUser, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
-import { runContentCreatorAndCriticAgent } from '../veloxa-openai-agents';
+import { generateContentWithSavedAgent } from './content-agent';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
 import { publicConnection } from './meta-oauth';
 import { wibDay, wibMonth } from './clock';
@@ -42,7 +42,7 @@ const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim(
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
   storage?: ReturnType<typeof adminBucket>;
-  generate?: typeof runContentCreatorAndCriticAgent;
+  generate?: typeof generateContentWithSavedAgent;
 } = {}) {
   const input = contentInput.parse(await readJson(request));
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
@@ -60,7 +60,7 @@ export async function createSocialContent(request: Request, dependencies: {
     if (!Number.isSafeInteger(used) || used < 0 || used >= SUBSCRIPTION_PLANS[planId].maxPostsPerDay * 3) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.');
     tx.set(dailyUsage, { count: used + 1 });
   });
-  const generated = await (dependencies.generate || runContentCreatorAndCriticAgent)({ brand, format: 'single_post', source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId });
+  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: 'single_post', source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
   const base = sharp(Buffer.from(buildRenderedVisualSvg({ brand, draft })), { limitInputPixels: 5_000_000 });

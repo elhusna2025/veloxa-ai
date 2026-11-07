@@ -2,7 +2,7 @@
   "name": "veloxa-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "Veloxa AI \u2014 Autonomous Multi-Channel Social Content & Meta Ads Marketing SaaS (Web, Android, iOS)",
+  "description": "Veloxa AI — Autonomous Multi-Channel Social Content & Meta Ads Marketing SaaS (Web, Android, iOS)",
   "engines": {
     "node": "22.x"
   },
@@ -33,6 +33,7 @@
     "firebase-admin": "^13.10.0",
     "lucide-react": "^0.475.0",
     "next": "15.5.29",
+    "openai": "7.53.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sharp": "^0.35.5",
