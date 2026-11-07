@@ -1,0 +1,77 @@
+name: Check Firebase deployment access
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/firebase-deploy-check.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the existing deployment credential
+        id: credential
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const present = Boolean(process.env.FIREBASE_TOKEN);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `present=${present}\n`);
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/deployment-check.json`, JSON.stringify({
+            project: 'veloxa-ai-saas', sourceCommit: process.env.GITHUB_SHA,
+            credentialConfigured: present, successful: false,
+            reason: present ? 'checking_firebase_access' : 'missing_firebase_token',
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
+          }, null, 2));
+          console.log(present ? 'Existing Firebase deployment credential is configured.' : 'FIREBASE_TOKEN is not configured in repository secrets.');
+          NODE
+      - name: Verify Firebase access and discover server backends
+        if: steps.credential.outputs.present == 'true'
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        shell: bash
+        run: |
+          set +e
+          npx --yes firebase-tools@15.35.0 apphosting:backends:list --project veloxa-ai-saas --non-interactive --json > "$RUNNER_TEMP/firebase-backends.json" 2> "$RUNNER_TEMP/firebase-check-error.log"
+          probe_status=$?
+          set -e
+          PROBE_EXIT_CODE="$probe_status" node <<'NODE'
+          const fs = require('node:fs');
+          const resultFile = `${process.env.RUNNER_TEMP}/deployment-check.json`;
+          const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+          result.exitCode = Number(process.env.PROBE_EXIT_CODE);
+          let response;
+          try { response = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/firebase-backends.json`, 'utf8')); } catch {}
+          result.successful = result.exitCode === 0 && response?.status === 'success';
+          result.reason = result.successful ? 'firebase_access_ready' : 'firebase_access_check_failed';
+          const error = String(response?.error?.message || response?.error || '');
+          if (/authenticat|invalid_grant|invalid credential|expired|log in|login/i.test(error)) result.reason = 'firebase_authentication_failed';
+          else if (/permission|forbidden|unauthorized/i.test(error)) result.reason = 'firebase_permission_denied';
+          if (result.successful) {
+            const backends = Array.isArray(response.result) ? response.result : response.result?.backends || [];
+            result.backends = backends.map(backend => ({ name: backend.name, url: backend.uri }));
+          }
+          fs.writeFileSync(resultFile, JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(result));
+          NODE
+      - name: Record the result on a separate diagnostics branch
+        if: always()
+        run: |
+          test -f "$RUNNER_TEMP/deployment-check.json"
+          git switch -c "codex/deploy-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cp "$RUNNER_TEMP/deployment-check.json" deployment-check.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add deployment-check.json
+          git commit -m 'chore: record Firebase deployment access check [skip ci]'
+          git push origin HEAD
