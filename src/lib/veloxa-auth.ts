@@ -157,6 +157,18 @@ export function buildWorkspaceIdForUid(uid: string): string {
  * and cross-checks `workspaces/{workspaceId}.onboardingCompleted` so previously onboarded users
  * are automatically migrated and never asked to repeat onboarding.
  */
+export function buildImmutableProfileFields(
+  existingData: Record<string, unknown> | null,
+  initialFields: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!existingData) return initialFields;
+  return Object.fromEntries(
+    Object.keys(initialFields)
+      .filter((field) => Object.prototype.hasOwnProperty.call(existingData, field))
+      .map((field) => [field, existingData[field]]),
+  );
+}
+
 export async function syncUserProfileToFirestore(
   user: VeloxaAuthenticatedUser,
   options?: {
@@ -274,18 +286,21 @@ export async function syncUserProfileToFirestore(
     const planSpec = SUBSCRIPTION_PLANS[resolvedPlan] || SUBSCRIPTION_PLANS.free_trial;
     const immutableRole =
       (existingUserData?.role as VeloxaRole) || (user.isSuperAdmin ? 'admin' : 'user');
-    const immutableCreatedAt = (existingUserData?.createdAt as string) || nowIso;
+    const userImmutableFields = buildImmutableProfileFields(existingUserData, {
+      uid: activeUid,
+      ...(existingUserData && 'id' in existingUserData ? { id: existingUserData.id } : {}),
+      role: immutableRole,
+      createdAt: nowIso,
+    });
     const existingQuotaUsed = Number(
       existingWsData?.quotaUsed ?? existingUserData?.quotaUsed ?? 0,
     );
 
     // Compact 15-16 key document payload for `users/{uid}` (avoids 19+ key rule limit and preserves immutable fields)
     const cleanUserDoc: Record<string, unknown> = {
-      uid: activeUid,
-      ...(existingUserData && 'id' in existingUserData ? { id: existingUserData.id } : {}),
+      ...userImmutableFields,
       email: user.email,
       displayName: user.displayName.slice(0, 110),
-      role: immutableRole,
       provider: user.provider,
       activeWorkspaceId: resolvedWsId,
       subscriptionPlanId: resolvedPlan,
@@ -296,7 +311,6 @@ export async function syncUserProfileToFirestore(
       city: resolvedCity,
       category: resolvedCategory,
       selectedChannels: resolvedChannels,
-      createdAt: immutableCreatedAt,
       updatedAt: nowIso,
     };
 
@@ -311,12 +325,14 @@ export async function syncUserProfileToFirestore(
     // Ensure `workspaces/{resolvedWsId}` exists and is up to date in Cloud Firestore
     if (!existingWsData || options?.forceOnboardingCompleted !== undefined || options?.businessName) {
       const targetWsRef = doc(db, 'workspaces', resolvedWsId);
-      const wsCreatedAt = (existingWsData?.createdAt as string) || nowIso;
-      const wsOwnerUid = (existingWsData?.ownerUid as string) || activeUid;
-      const wsPayload: Record<string, unknown> = {
+      const workspaceImmutableFields = buildImmutableProfileFields(existingWsData, {
         id: resolvedWsId,
-        ownerUid: wsOwnerUid,
-        memberUids: existingWsData?.memberUids || [wsOwnerUid],
+        ownerUid: activeUid,
+        createdAt: nowIso,
+      });
+      const wsPayload: Record<string, unknown> = {
+        ...workspaceImmutableFields,
+        memberUids: existingWsData?.memberUids || [(workspaceImmutableFields.ownerUid as string) || activeUid],
         name: resolvedBusinessName,
         category: resolvedCategory,
         city: resolvedCity,
@@ -332,7 +348,6 @@ export async function syncUserProfileToFirestore(
         ...(typeof existingWsData?.snapshotJson === 'string'
           ? { snapshotJson: existingWsData.snapshotJson }
           : {}),
-        createdAt: wsCreatedAt,
         updatedAt: nowIso,
       };
       if (existingWsData) {
