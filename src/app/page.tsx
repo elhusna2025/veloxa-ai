@@ -1478,6 +1478,15 @@ export default function VeloxaAiPlatformPage() {
                 className="min-w-0 lg:pl-[268px]"
                 data-testid="user-workspace-main"
               >
+                {statusBanner && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="mb-4 rounded-2xl border border-pink-100 bg-pink-50/70 px-4 py-3 text-sm font-semibold leading-relaxed text-neutral-800 shadow-sm"
+                  >
+                    {statusBanner}
+                  </div>
+                )}
                 <div className="mx-auto max-w-[1600px] space-y-5 px-4 py-4 sm:px-6 lg:px-7">
                   {/* 1. Right Top Header Bar (Matching Reference Image Header) */}
                   <div
