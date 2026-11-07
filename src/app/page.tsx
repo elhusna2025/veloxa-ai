@@ -2042,7 +2042,7 @@ export default function VeloxaAiPlatformPage() {
                     </div>
                     <label className="mt-4 block text-xs font-bold text-neutral-700">Foto Brand Vault (opsional)
                       <select value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
-                        <option value="">Gunakan template gambar Veloxa</option>
+                        <option value="">Buat gambar AI dengan Sunburst</option>
                         {vaultAssets.filter(asset => /^[a-f0-9-]{36}$/.test(asset.id) && asset.mediaType === 'photo').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}
                       </select>
                     </label>

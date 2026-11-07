@@ -6,6 +6,7 @@ import { requireUser, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { generateContentWithSavedAgent } from './content-agent';
+import { generateSocialPostImage } from './content-image';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
 import { publicConnection } from './meta-oauth';
 import { wibDay, wibMonth } from './clock';
@@ -43,6 +44,7 @@ export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
   storage?: ReturnType<typeof adminBucket>;
   generate?: typeof generateContentWithSavedAgent;
+  renderImage?: typeof generateSocialPostImage;
 } = {}) {
   const input = contentInput.parse(await readJson(request));
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
@@ -63,16 +65,24 @@ export async function createSocialContent(request: Request, dependencies: {
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: 'single_post', source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
-  const base = sharp(Buffer.from(buildRenderedVisualSvg({ brand, draft })), { limitInputPixels: 5_000_000 });
+  let bytes: Buffer;
   if (input.sourceAssetId) {
+    const base = sharp(Buffer.from(buildRenderedVisualSvg({ brand, draft })), { limitInputPixels: 5_000_000 });
     const asset = (await ref.collection('server_assets').doc(input.sourceAssetId).get()).data();
     if (!asset?.storagePath?.startsWith(`workspaces/${workspaceId}/vault/`)) throw new ApiError(404, 'Foto Brand Vault tidak ditemukan.');
     const [source] = await (dependencies.storage || adminBucket()).file(asset.storagePath).download();
     const photo = await sharp(source, { limitInputPixels: 30_000_000 }).resize(888, 280, { fit: 'cover' }).toBuffer();
     base.composite([{ input: photo, left: 96, top: 220 }]);
     draft.usedRealAssetIds = [input.sourceAssetId];
+    bytes = await base.jpeg({ quality: 92 }).toBuffer();
+  } else {
+    bytes = await (dependencies.renderImage || generateSocialPostImage)({
+      businessName: brand.businessName,
+      title: draft.title,
+      hook: draft.hook,
+      cta: brand.defaultCta || 'Selengkapnya',
+    });
   }
-  const bytes = await base.jpeg({ quality: 92 }).toBuffer();
   const media = await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage);
   draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));

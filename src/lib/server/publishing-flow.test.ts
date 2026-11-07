@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import sharp from 'sharp';
 import { createSocialContent } from './content';
 import { publishSocialContent } from './publishing';
 import { ApiError } from './http';
@@ -64,19 +65,25 @@ function fixture() {
     if (workspaceId !== ref.id) throw new ApiError(403, 'Forbidden workspace');
     return { ref, user: { uid: 'customer-a' }, workspaceId: ref.id, workspace: (await ref.get()).data()! };
   };
+  let renderCalls = 0;
   const create = async () => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: 'Promo akhir pekan', format: 'single_post' }) }), {
     authorize: authorize as never, storage: storage as never,
     generate: async input => ({ draft: generateBrandContentDraft(input), engineMode: 'deterministic_local' }),
+    renderImage: async () => {
+      renderCalls++;
+      return sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    },
   });
   const dependencies = { authorize: authorize as never, database: database as never, storage: storage as never, decrypt: (_value: string, workspaceId: string) => { assert.equal(workspaceId, ref.id); return 'test-token'; } };
   const request = (draftId: string) => new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, draftId }) });
   const count = () => [...database.values.entries()].find(([key]) => key.includes('/publish_usage/'))?.[1].count || 0;
-  return { database, ref, blobs, create, dependencies, request, count };
+  return { database, ref, blobs, create, dependencies, request, count, renderCalls: () => renderCalls };
 }
 
 test('create real JPEG -> save authoritative draft -> publish both channels -> retry without duplicates', async () => {
   const f = fixture(); const { draft } = await f.create();
   assert.equal(draft.status, 'approved'); assert.equal(f.blobs.size, 1);
+  assert.equal(f.renderCalls(), 1);
   assert.deepEqual(draft.targetChannels, ['facebook', 'instagram']);
   const calls: string[] = [];
   const publisher = async (input: any) => { calls.push(input.channel); assert.ok(input.imageBytes.length > 0); return { externalPostId: `remote-${input.channel}`, permalink: `https://example.test/${input.channel}` }; };

@@ -1,7 +1,7 @@
 import { createSocialContent, listSocialContent } from '@/lib/server/content';
 import { errorResponse, noStoreJson } from '@/lib/server/http';
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+export const maxDuration = 300;
 export async function POST(request: Request) {
   try { return noStoreJson({ ok: true, ...await createSocialContent(request) }); }
   catch (error) { return errorResponse(error); }
