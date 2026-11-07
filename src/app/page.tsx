@@ -47,7 +47,6 @@ import { getCentralOAuthCallbackUri, pickBrandAssetFromDevice } from '@/lib/velo
 import {
   buildSocialProfileUrl,
   normalizeSocialHandle,
-  verifyLiveMetaGraphToken,
 } from '@/lib/veloxa-social-publisher';
 import {
   buildRenderedVisualSvgDataUrl,
@@ -73,6 +72,8 @@ import {
   saveVeloxaLocale,
   type VeloxaLocale,
 } from '@/lib/veloxa-i18n';
+import { VeloxaMetaConnections } from '@/components/VeloxaMetaConnections';
+import { veloxaApi } from '@/lib/veloxa-api-client';
 import { VeloxaLuxuryLanding } from '@/components/VeloxaLuxuryLanding';
 import { VeloxaExecutiveDashboardOverview } from '@/components/VeloxaExecutiveDashboardOverview';
 import type {
@@ -166,20 +167,23 @@ export default function VeloxaAiPlatformPage() {
 
   // Multi-tenant workspace state
   const [brand, setBrand] = useState<BrandProfile>(BRAND_PRESETS.running_event);
-  const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>('pro_1500k');
-  const [postsUsedThisMonth, setPostsUsedThisMonth] = useState<number>(52);
-  const [connections, setConnections] = useState<ChannelConnectionState[]>(INITIAL_CHANNEL_CONNECTIONS);
+  const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>('free_trial');
+  const [postsUsedThisMonth, setPostsUsedThisMonth] = useState<number>(0);
+  const [connections, setConnections] = useState<ChannelConnectionState[]>(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
   const [metaAccount, setMetaAccount] = useState<MetaAdsAccountConnection>(INITIAL_META_ADS_ACCOUNT);
-  const [vaultAssets, setVaultAssets] = useState<BrandVaultAsset[]>(INITIAL_VAULT_ASSETS);
+  const [vaultAssets, setVaultAssets] = useState<BrandVaultAsset[]>([]);
   const [autonomyConfig, setAutonomyConfig] = useState<AutonomyConfig>(INITIAL_AUTONOMY_CONFIG);
-  const [eventCampaigns, setEventCampaigns] = useState<EventCampaign[]>(INITIAL_EVENT_CAMPAIGNS);
-  const [drafts, setDrafts] = useState<ContentDraft[]>(() => buildInitialDrafts());
-  const [metaAdCampaigns, setMetaAdCampaigns] = useState<MetaAdCampaignPlan[]>(() =>
-    buildInitialMetaAdCampaigns(buildInitialDrafts()),
-  );
+  const [eventCampaigns, setEventCampaigns] = useState<EventCampaign[]>([]);
+  const [drafts, setDrafts] = useState<ContentDraft[]>([]);
+  const [metaAdCampaigns, setMetaAdCampaigns] = useState<MetaAdCampaignPlan[]>([]);
 
   // Studio form state
-  const [studioFormat, setStudioFormat] = useState<ContentFormat>('short_video');
+  const [studioFormat, setStudioFormat] = useState<ContentFormat>('single_post');
+  const [isCreatingContent, setIsCreatingContent] = useState(false);
+  const hydrationEpoch = useRef(0);
+  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
+  const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null);
+  const [selectedSourceAssetId, setSelectedSourceAssetId] = useState('');
   const [studioTopic, setStudioTopic] = useState<string>('');
   const [newAssetTitle, setNewAssetTitle] = useState<string>('');
   const [newAssetDrawer, setNewAssetDrawer] = useState<VaultDrawerType>('real_asset');
@@ -204,7 +208,7 @@ export default function VeloxaAiPlatformPage() {
   const [adCustomInterest, setAdCustomInterest] = useState<string>('Marathon & Garmin');
 
   // Super Admin & Local-First Telemetry state
-  const [tenants, setTenants] = useState<TenantWorkspaceSummary[]>(INITIAL_TENANT_WORKSPACES);
+  const [tenants, setTenants] = useState<TenantWorkspaceSummary[]>([]);
   const [centralCreds] = useState<CentralPlatformCredentials>(INITIAL_CENTRAL_CREDENTIALS);
   const [firebaseCfg, setFirebaseCfg] = useState<VeloxaFirebaseConnectionConfig>(() =>
     getDefaultFirebaseConnectionConfig(),
@@ -262,15 +266,7 @@ export default function VeloxaAiPlatformPage() {
   const [paymentMethodTab, setPaymentMethodTab] = useState<'qris' | 'va_bca'>('qris');
   const [billingReceipts, setBillingReceipts] = useState<
     Array<{ id: string; workspaceName: string; planName: string; amountIdr: number; paidAtWib: string }>
-  >([
-    {
-      id: 'INV-VLX-20261101',
-      workspaceName: 'Nusantara Run Festival',
-      planName: 'Veloxa Pro + AI Meta Ads',
-      amountIdr: 1_500_000,
-      paidAtWib: '01 Nov 2026, 09:15 WIB',
-    },
-  ]);
+  >([]);
 
   useEffect(() => {
     setLocale(loadSavedVeloxaLocale());
@@ -282,9 +278,9 @@ export default function VeloxaAiPlatformPage() {
       setActivePlanId(snap.activePlanId);
       setPostsUsedThisMonth(snap.postsUsedThisMonth);
       setConnections(snap.connections);
-      setMetaAccount(snap.metaAccount);
+      setMetaAccount({ ...snap.metaAccount, connected: false });
       setVaultAssets(snap.vaultAssets);
-      setAutonomyConfig(snap.autonomyConfig);
+      setAutonomyConfig({ ...snap.autonomyConfig, enabled: false });
       setEventCampaigns(snap.eventCampaigns);
       setDrafts(snap.drafts);
       setMetaAdCampaigns(snap.metaAdCampaigns);
@@ -296,25 +292,26 @@ export default function VeloxaAiPlatformPage() {
       hasHydratedCloudWorkspaceRef.current = snap.brand.workspaceId;
     };
 
-    const hydrateForAuthenticatedUser = async (user: VeloxaAuthenticatedUser) => {
+    const hydrateForAuthenticatedUser = async (user: VeloxaAuthenticatedUser, epoch: number) => {
       if (!user.isSuperAdmin && user.onboardingCompleted === false) {
         router.push('/onboarding');
         return;
       }
 
       const targetWsId =
-        user.activeWorkspaceId || `ws_${user.uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`;
+        user.activeWorkspaceId || `ws_${encodeURIComponent(user.uid)}`;
 
       const { snapshot: cloudSnap, telemetry } = await loadWorkspaceSnapshotFromStore(
         targetWsId,
         savedCfg,
         { forceCloudPull: true },
       );
+      if (epoch !== hydrationEpoch.current) return;
       setLocalTelemetry(telemetry);
 
       if (cloudSnap) {
         applySnapshotToState(cloudSnap);
-      } else if (!user.isSuperAdmin) {
+      } else {
         const builtSnap = buildRealInitialWorkspaceSnapshot({
           workspaceId: targetWsId,
           businessName: user.businessName || user.displayName || 'Bisnis Anda',
@@ -331,52 +328,36 @@ export default function VeloxaAiPlatformPage() {
         void syncWorkspaceSnapshotToStore(builtSnap, savedCfg, { forceCloudPush: true });
       }
 
+      try {
+        const [meta, content, media] = await Promise.all([
+          veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
+          veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
+          veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}`),
+        ]);
+        if (epoch !== hydrationEpoch.current) return;
+        setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => meta.connections.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
+        setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
+        setPostsUsedThisMonth(content.quotaUsed);
+        setVaultAssets(previous => [...media.assets, ...previous.filter(asset => !media.assets.some(item => item.id === asset.id))]);
+      } catch (error) {
+        if (epoch !== hydrationEpoch.current) return;
+        setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
+        setStatusBanner(error instanceof Error ? error.message : 'Koneksi server belum siap.');
+      }
+      if (epoch !== hydrationEpoch.current) return;
+      const callback = new URL(window.location.href);
+      if (callback.searchParams.has('meta')) {
+        setStatusBanner(callback.searchParams.get('meta') === 'connected' ? 'Izin Meta diterima. Pilih Page yang ingin digunakan untuk workspace ini.' : 'Koneksi Meta belum berhasil. Periksa izin aplikasi dan coba kembali.');
+        oauthDialogRef.current?.showModal();
+        callback.searchParams.delete('meta'); window.history.replaceState({}, '', callback.toString());
+      }
       if (user.isSuperAdmin) {
         const realTenants = await loadAllRealTenantsFromFirestore(savedCfg);
-        if (realTenants.length > 0) {
-          setTenants(realTenants);
-        }
+        if (epoch === hydrationEpoch.current) setTenants(realTenants);
       }
     };
 
     const pendingReg = consumePendingRegistrationBrand();
-    const savedSession = getInitialAuthenticatedUser();
-
-    if (savedSession) {
-      setAuthUser(savedSession);
-      setActiveRole(savedSession.isSuperAdmin ? 'admin' : 'user');
-      if (
-        !savedSession.isSuperAdmin &&
-        savedSession.activeWorkspaceId !== 'ws_veloxa_nusantara'
-      ) {
-        const immediateWsId =
-          savedSession.activeWorkspaceId ||
-          `ws_${savedSession.uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`;
-        const immediateCleanSnap = buildRealInitialWorkspaceSnapshot({
-          workspaceId: immediateWsId,
-          businessName:
-            pendingReg?.businessName ||
-            savedSession.businessName ||
-            savedSession.displayName ||
-            'Bisnis Anda',
-          city: pendingReg?.city || savedSession.city || 'Jakarta',
-          category: pendingReg?.category || savedSession.category || 'cafe_fnb',
-          targetAudience: pendingReg?.targetAudience || savedSession.targetAudience,
-          brandTone: pendingReg?.brandTone || savedSession.brandTone,
-          selectedChannels: pendingReg?.selectedChannels || savedSession.selectedChannels,
-          planId:
-            pendingReg?.planId || savedSession.subscriptionPlanId || 'free_trial',
-          ownerName: savedSession.displayName,
-          ownerEmail: savedSession.email,
-        });
-        applySnapshotToState(immediateCleanSnap);
-        hasHydratedCloudWorkspaceRef.current = null; // wait for Firestore pull before auto-pushing
-      }
-      void syncUserProfileToFirestore(savedSession).then((hydrated) => {
-        setAuthUser(hydrated);
-        void hydrateForAuthenticatedUser(hydrated);
-      });
-    }
 
     if (pendingReg) {
       setStatusBanner(
@@ -384,15 +365,20 @@ export default function VeloxaAiPlatformPage() {
       );
     }
 
+    let active = true;
     const unsubAuth = subscribeToFirebaseAuthChanges((fbUser) => {
-      if (fbUser) {
-        setAuthUser(fbUser);
-        setActiveRole(fbUser.isSuperAdmin ? 'admin' : 'user');
-        void hydrateForAuthenticatedUser(fbUser);
-      }
-    });
+      if (!active) return;
+      const epoch = ++hydrationEpoch.current;
+      setIsWorkspaceLoading(!!fbUser);
+      setAuthUser(fbUser);
+      setActiveRole(fbUser?.isSuperAdmin ? 'admin' : 'user');
+      if (fbUser) void hydrateForAuthenticatedUser(fbUser, epoch).catch(error => {
+        if (active && epoch === hydrationEpoch.current) setStatusBanner(error instanceof Error ? error.message : 'Workspace belum dapat dimuat.');
+      }).finally(() => { if (active && epoch === hydrationEpoch.current) setIsWorkspaceLoading(false); });
+      else hasHydratedCloudWorkspaceRef.current = null;
+    }, error => setStatusBanner(error instanceof Error ? error.message : 'Sesi belum dapat diverifikasi.'));
 
-    return () => unsubAuth();
+    return () => { active = false; hydrationEpoch.current++; unsubAuth(); };
   }, [router]);
 
   useEffect(() => {
@@ -465,397 +451,56 @@ export default function VeloxaAiPlatformPage() {
     setStatusBanner(
       res.syncedToFirestore
         ? `Snapshot Local-First (${res.telemetry.lastPayloadHash}) berhasil disinkronkan ke Cloud Firestore (veloxa-ai-saas)!`
-        : `Snapshot tersimpan di Local-First Cache (${res.telemetry.lastPayloadHash}) · Hemat ${firestoreSavingsPct}% operasi Firestore.`,
+        : `Perubahan baru tersimpan di perangkat ini dan belum tersinkron ke cloud. Periksa koneksi sebelum melanjutkan.`,
     );
   };
 
   const handleCompleteNewBusinessOnboarding = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = onboardBusinessName.trim() || 'Kopi Roastery Braga';
-    const cleanCity = onboardCity.trim() || 'Bandung';
-    const cleanOffering = onboardOfferingTitle.trim() || `Paket Spesial ${cleanName}`;
-    const newWsId = `ws_custom_${Date.now()}`;
-    const planSpec = SUBSCRIPTION_PLANS[onboardPlanId];
-
-    const createdBrand: BrandProfile = {
-      workspaceId: newWsId,
-      businessName: cleanName,
-      category: onboardCategory,
-      city: cleanCity,
-      targetAudience: `Pelanggan & komunitas ${cleanName} di ${cleanCity} (18-45 tahun)`,
-      brandTone: 'Ramah, modern, autentik, dan persuasif khas brand lokal populer',
-      primaryColorHex: '#EC749B',
-      accentColorHex: '#FFFFFF',
-      visualVibe: 'Clean bright minimalist dengan fokus foto produk/dokumentasi asli',
-      whatsappNumber: '6281299004411',
-      websiteUrl: `https://veloxa.ai/${cleanName.toLowerCase().replace(/\s+/g, '-')}`,
-      offerings: [
-        {
-          id: `off_${Date.now()}`,
-          title: cleanOffering,
-          category: onboardCategory === 'running_event' ? 'event' : 'product',
-          priceLabel: 'Promo Spesial Minggu Ini',
-          highlight: `Unggulan utama ${cleanName} di ${cleanCity}`,
-        },
-      ],
-      defaultCta: `Klik link bio / WhatsApp ${cleanName} (${cleanCity}) sekarang!`,
-      forbiddenWords: ['murahan', 'abal-abal', 'palsu'],
-      prioritizeRealAssets: true,
-    };
-
-    const econ = calculateTenantUnitEconomics({
-      planId: onboardPlanId,
-      postsPublishedThisMonth: 1,
-    });
-
-    const newTenantSummary: TenantWorkspaceSummary = {
-      workspaceId: newWsId,
-      businessName: cleanName,
-      ownerName: cleanName.split(' ')[0] + ' Owner',
-      ownerEmail: onboardOwnerEmail.trim() || 'owner@bisnisbaru.id',
-      category: onboardCategory,
-      planId: onboardPlanId,
-      subscriptionStatus: 'active',
-      postsPublishedThisMonth: 1,
-      monthlyPostQuota: planSpec.monthlyPostQuota,
-      connectedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
-      metaAdsConnected: true,
-      activeMetaCampaigns: 1,
-      monthlySubscriptionRevenueIdr: planSpec.priceMonthlyIdr,
-      estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
-      grossMarginPct: econ.grossMarginPct,
-    };
-
-    setBrand(createdBrand);
-    setActivePlanId(onboardPlanId);
-    setPostsUsedThisMonth(1);
-    setAdCity(cleanCity);
-    setAdPromoTitle(cleanOffering);
-    setTenants((prev) => [newTenantSummary, ...prev]);
-    setSelectedPresetKey('custom');
-    setOnboardBusinessName('');
-    setOnboardOfferingTitle('');
-    if (!authUser) {
-      const createdUser = signInQuickRoleSession('user');
-      setAuthUser({
-        ...createdUser,
-        email: onboardOwnerEmail.trim() || 'owner@bisnisbaru.id',
-        displayName: cleanName,
-      });
-      setActiveRole('user');
-    }
     onboardingDialogRef.current?.close();
-    setStatusBanner(
-      `Selamat datang! Workspace bisnis baru "${cleanName}" (${cleanCity}) berhasil dibuat dengan paket ${planSpec.name}!`,
-    );
+    router.push(authUser ? '/onboarding' : '/register');
   };
 
-  const handleRealFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRealFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const isVideo = file.type.startsWith('video/');
-    const mediaType: 'photo' | 'video_reel' = isVideo ? 'video_reel' : newAssetMediaType;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl =
-        typeof reader.result === 'string'
-          ? reader.result
-          : 'https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80';
-      const cleanTitle =
-        newAssetTitle.trim() ||
-        file.name.replace(/\.[^.]+$/, '') ||
-        `Upload ${brand.businessName}`;
-
-      const created: BrandVaultAsset = {
-        id: `vault_file_${Date.now()}`,
-        workspaceId: brand.workspaceId,
-        drawer: newAssetDrawer,
-        mediaType,
-        title: cleanTitle,
-        description:
-          newAssetDrawer === 'style_reference'
-            ? `File referensi "${file.name}" diunggah langsung dari perangkat & diekstrak Style DNA-nya.`
-            : `File dokumentasi asli "${file.name}" milik ${brand.businessName} siap dipakai Studio & Agent Otonom.`,
-        previewUrl: dataUrl,
-        aspectRatio: mediaType === 'video_reel' ? '9:16' : '4:5',
-        tags: [
-          newAssetDrawer === 'style_reference' ? 'style-dna' : 'aset-asli-device',
-          brand.category,
-        ],
-        uploadedFrom: 'web',
-        createdAt: 'Baru saja (File Perangkat)',
-        usedInPostsCount: 1,
-        extractedStyleDna:
-          newAssetDrawer === 'style_reference'
-            ? extractStyleDnaFromReference({
-                title: cleanTitle,
-                description: brand.visualVibe,
-                mediaType,
-                category: brand.category,
-              })
-            : undefined,
-      };
-      setVaultAssets((prev) => [created, ...prev]);
-      setNewAssetTitle('');
-      setStatusBanner(
-        `File perangkat "${file.name}" berhasil diunggah ke ${
-          newAssetDrawer === 'style_reference' ? 'Laci 1 (Style DNA)' : 'Laci 2 (Aset Asli Bisnis)'
-        }!`,
-      );
-    };
-    reader.readAsDataURL(file);
     e.target.value = '';
+    if (!file) return;
+    try {
+      setStatusBanner('Mengunggah foto Brand Vault…');
+      const form = new FormData(); form.set('workspaceId', brand.workspaceId); form.set('file', file);
+      const result = await veloxaApi<{ asset: BrandVaultAsset }>('/api/veloxa/media', { method: 'POST', body: form });
+      setVaultAssets(previous => [result.asset, ...previous]);
+      setSelectedSourceAssetId(result.asset.id);
+      setStatusBanner('Foto tersimpan. Anda dapat memakainya untuk membuat post tunggal.');
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Unggah foto gagal.'); }
   };
 
-  const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => {
-    const found = connections.find((c) => c.channel === channel);
-    const isUlinz = brand.businessName.toLowerCase().includes('ulinz');
-    const defaultSlug = isUlinz
-      ? 'ulinz_cafe'
-      : brand.businessName.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 22) || 'brand';
-    const defaultHandle =
-      channel === 'facebook'
-        ? isUlinz
-          ? 'Ulinz Cafe'
-          : `${brand.businessName} Official`
-        : `@${defaultSlug}`;
-    setEditingChannel(channel);
-    setEditingChannelHandle(found?.connected && found.handle ? found.handle : defaultHandle);
-    setEditingChannelAccountName(
-      found?.connected && found.accountName && found.accountName !== 'Belum Terhubung'
-        ? found.accountName
-        : isUlinz
-          ? `Ulinz Cafe (${CHANNEL_META[channel].shortLabel})`
-          : `${brand.businessName} (${CHANNEL_META[channel].shortLabel})`,
-    );
-    setEditingChannelFollowers(found?.connected ? found.followerCount || 0 : 0);
-    setEditingChannelAccessToken('');
-    setEditingMetaAdAccountId(metaAccount.adAccountId || '');
-    setOauthPopupStatus(null);
-  };
-
+  const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => setEditingChannel(channel);
   const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
-    populateOAuthModalFieldsForChannel(channel);
+    setEditingChannel(channel);
     oauthDialogRef.current?.showModal();
   };
 
-  const handleLaunchOfficialOAuthPopup = async (channel: SocialChannelId) => {
-    const cleanHandle =
-      normalizeSocialHandle(channel, editingChannelHandle) ||
-      (brand.businessName.toLowerCase().includes('ulinz')
-        ? '@ulinz_cafe'
-        : `@${brand.businessName.toLowerCase().replace(/[^a-z0-9_]/g, '')}`);
-    setEditingChannelHandle(cleanHandle);
-
-    // If user provided a real Meta Graph API Access Token, verify it live against graph.facebook.com
-    if (
-      editingChannelAccessToken.trim().length >= 15 &&
-      (channel === 'instagram' || channel === 'facebook')
-    ) {
-      setOauthPopupStatus('Sedang memverifikasi Access Token ke server graph.facebook.com...');
-      const verified = await verifyLiveMetaGraphToken(editingChannelAccessToken.trim());
-      if (verified.valid) {
-        if (verified.igUsername && channel === 'instagram') {
-          setEditingChannelHandle(verified.igUsername);
-        }
-        if (verified.accountName) {
-          setEditingChannelAccountName(verified.accountName);
-        }
-        if (typeof verified.followersCount === 'number') {
-          setEditingChannelFollowers(verified.followersCount);
-        }
-        setOauthPopupStatus(
-          `✓ Token Graph API Valid! Terhubung ke "${verified.accountName}" (${verified.igUsername || cleanHandle}). Klik "Simpan & Hubungkan ke Cloud Firestore" di bawah.`,
-        );
-        return;
-      }
-      setOauthPopupStatus(
-        `⚠️ Info Token: ${verified.errorMessage} — Anda tetap dapat menghubungkan ${cleanHandle} secara langsung via Mode Smart Connect di bawah ini!`,
-      );
-      return;
-    }
-
-    // Open the real live social profile URL (never a placeholder App ID error page!)
-    const liveProfileUrl = buildSocialProfileUrl(channel, cleanHandle);
-    if (typeof window !== 'undefined') {
-      window.open(liveProfileUrl, 'veloxa_social_verify_popup', 'width=680,height=760,noopener,noreferrer');
-    }
-
-    setOauthPopupStatus(
-      `✓ Profil ${CHANNEL_META[channel].shortLabel} (${cleanHandle}) siap dihubungkan (${liveProfileUrl}). Klik tombol "✓ Simpan & Hubungkan ke Cloud Firestore" di bawah untuk mengaktifkan koneksi sekarang!`,
-    );
-  };
-
-  const handleSaveOAuthChannelCustomConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanHandle =
-      normalizeSocialHandle(editingChannel, editingChannelHandle) ||
-      (brand.businessName.toLowerCase().includes('ulinz')
-        ? '@ulinz_cafe'
-        : `@${brand.businessName.toLowerCase().replace(/[^a-z0-9_]/g, '')}`);
-    const cleanAccountName =
-      editingChannelAccountName.trim() ||
-      `${brand.businessName} (${CHANNEL_META[editingChannel].shortLabel})`;
-    const cleanFollowers = Math.max(0, Number(editingChannelFollowers || 0));
-    const rawAct = editingMetaAdAccountId.trim();
-    const cleanAct = rawAct
-      ? rawAct.startsWith('act_')
-        ? rawAct
-        : `act_${rawAct.replace(/\D/g, '') || rawAct}`
-      : '';
-
-    const updatedConn: ChannelConnectionState = {
-      channel: editingChannel,
-      connected: true,
-      handle: cleanHandle,
-      accountName: cleanAccountName,
-      followerCount: cleanFollowers,
-      oauthMode: 'direct_publish',
-      tokenExpiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
-      lastPublishedAt: editingChannelAccessToken.trim()
-        ? 'Terhubung via Token API Resmi'
-        : 'Terhubung & Tersinkron Cloud Firestore',
-    };
-
-    const nextConnections = connections.map((c) =>
-      c.channel === editingChannel ? updatedConn : c,
-    );
-    const nextMetaAccount: MetaAdsAccountConnection = cleanAct
-      ? {
-          ...metaAccount,
-          connected: true,
-          adAccountId: cleanAct,
-          adAccountName: `${brand.businessName} Ads Manager`,
-        }
-      : metaAccount;
-
-    setConnections(nextConnections);
-    setMetaAccount(nextMetaAccount);
-    oauthDialogRef.current?.close();
-
-    // Immediately persist to Cloud Firestore (`workspaces/{workspaceId}` & `workspaces/{workspaceId}/connections/{channel}`)
-    void saveChannelConnectionToFirestore(
-      brand.workspaceId,
-      updatedConn,
-      nextMetaAccount,
-      firebaseCfg,
-    );
-    const syncRes = await syncWorkspaceSnapshotToStore(
-      {
-        brand,
-        activePlanId,
-        postsUsedThisMonth,
-        connections: nextConnections,
-        metaAccount: nextMetaAccount,
-        vaultAssets,
-        autonomyConfig,
-        eventCampaigns,
-        drafts,
-        metaAdCampaigns,
-        tenants,
-        updatedAtIso: new Date().toISOString(),
-      },
-      firebaseCfg,
-      { forceCloudPush: true },
-    );
-    setLocalTelemetry(syncRes.telemetry);
-    setStatusBanner(
-      `✓ Akun ${CHANNEL_META[editingChannel].shortLabel} (${cleanHandle}) berhasil terhubung & disimpan ke Cloud Firestore!`,
-    );
-  };
-
   const handleConfirmQrisSubscriptionUpgrade = async () => {
-    const spec = SUBSCRIPTION_PLANS[selectedCheckoutPlanId];
-    let invoiceId = `INV-VLX-${Date.now().toString().slice(-6)}`;
-    try {
-      const res = await fetch('/api/veloxa/billing-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderId: invoiceId,
-          workspaceId: brand.workspaceId,
-          planId: selectedCheckoutPlanId,
-          transactionStatus: 'PAID',
-          paymentType: paymentMethodTab === 'qris' ? 'qris' : 'bank_transfer_bca',
-        }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { invoiceId?: string };
-        if (data.invoiceId) invoiceId = data.invoiceId;
-      }
-    } catch {
-      // non-blocking fallback for static export
-    }
-
-    setActivePlanId(selectedCheckoutPlanId);
-    setTenants((prev) =>
-      prev.map((t, idx) => {
-        if (t.workspaceId !== brand.workspaceId && idx !== 0) return t;
-        const econ = calculateTenantUnitEconomics({
-          planId: selectedCheckoutPlanId,
-          postsPublishedThisMonth: t.postsPublishedThisMonth,
-        });
-        return {
-          ...t,
-          planId: selectedCheckoutPlanId,
-          monthlyPostQuota: spec.monthlyPostQuota,
-          monthlySubscriptionRevenueIdr: spec.priceMonthlyIdr,
-          estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
-          grossMarginPct: econ.grossMarginPct,
-        };
-      }),
-    );
-    setBillingReceipts((prev) => [
-      {
-        id: invoiceId,
-        workspaceName: brand.businessName,
-        planName: spec.name,
-        amountIdr: spec.priceMonthlyIdr,
-        paidAtWib: 'Baru saja · Lunas QRIS',
-      },
-      ...prev,
-    ]);
+    setStatusBanner('Pembayaran belum diaktifkan. Integrasi Duitku akan tersedia kemudian; paket Anda belum berubah.');
     billingDialogRef.current?.close();
-    setStatusBanner(
-      `Pembayaran Lunas (${invoiceId})! Paket "${spec.name}" (${formatIdr(spec.priceMonthlyIdr)}/bln · Kuota ${spec.monthlyPostQuota} konten) aktif untuk ${brand.businessName}!`,
-    );
   };
 
   const handleEmailSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const signedIn = await signInWithEmailPasswordOrRegister({
-      email: authEmailInput,
-      password: authPasswordInput,
-    });
-    setAuthUser(signedIn);
-    setActiveRole(signedIn.isSuperAdmin ? 'admin' : 'user');
-    authDialogRef.current?.close();
-    setStatusBanner(
-      signedIn.isSuperAdmin
-        ? `Login berhasil sebagai Super Admin (${signedIn.email})!`
-        : `Login berhasil sebagai Pelanggan (${signedIn.email})!`,
-    );
+    try {
+      const user = await signInWithEmailPasswordOrRegister({ email: authEmailInput, password: authPasswordInput });
+      setAuthUser(user); setActiveRole(user.isSuperAdmin ? 'admin' : 'user'); authDialogRef.current?.close();
+      if (!user.onboardingCompleted && !user.isSuperAdmin) router.push('/onboarding');
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Login belum berhasil.'); }
   };
-
   const handleGoogleSignInClick = async () => {
-    const signedIn = await signInWithGooglePopup();
-    setAuthUser(signedIn);
-    setActiveRole(signedIn.isSuperAdmin ? 'admin' : 'user');
-    authDialogRef.current?.close();
-    setStatusBanner(`Login Google OAuth berhasil sebagai ${signedIn.email}!`);
+    try {
+      const user = await signInWithGooglePopup(); setAuthUser(user); setActiveRole(user.isSuperAdmin ? 'admin' : 'user'); authDialogRef.current?.close();
+      if (!user.onboardingCompleted && !user.isSuperAdmin) router.push('/onboarding');
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Login Google belum berhasil.'); }
   };
-
-  const handleQuickLoginRole = (targetRole: 'admin' | 'user') => {
-    const signedIn = signInQuickRoleSession(targetRole);
-    setAuthUser(signedIn);
-    setActiveRole(targetRole);
-    authDialogRef.current?.close();
-    setStatusBanner(
-      targetRole === 'admin'
-        ? `Masuk sebagai Owner / Super Admin (${signedIn.email}).`
-        : `Masuk ke Workspace Pelanggan (${signedIn.email}).`,
-    );
-  };
+  const handleQuickLoginRole = (_targetRole: 'admin' | 'user') => router.push('/login');
 
   const handleRequestSignOutClick = () => {
     logoutConfirmDialogRef.current?.showModal();
@@ -863,11 +508,10 @@ export default function VeloxaAiPlatformPage() {
 
   const handleConfirmSignOut = async () => {
     logoutConfirmDialogRef.current?.close();
-    await signOutVeloxaUser();
-    hasHydratedCloudWorkspaceRef.current = null;
-    setAuthUser(null);
-    setActiveRole('user');
-    authDialogRef.current?.close();
+    try {
+      await signOutVeloxaUser(); hydrationEpoch.current++; hasHydratedCloudWorkspaceRef.current = null;
+      setAuthUser(null); setActiveRole('user'); setIsWorkspaceLoading(false); authDialogRef.current?.close();
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Keluar akun belum berhasil. Silakan coba lagi.'); }
   };
 
   const handlePlayDraftVoiceover = (draft: ContentDraft) => {
@@ -890,216 +534,43 @@ export default function VeloxaAiPlatformPage() {
   const handleSelectBrandPreset = (key: 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom') => {
     setSelectedPresetKey(key);
     const nextBrand = BRAND_PRESETS[key];
-    setBrand(nextBrand);
+    setBrand(authUser ? { ...nextBrand, workspaceId: brand.workspaceId } : nextBrand);
     setAdCity(nextBrand.city);
     setAdPromoTitle(nextBrand.offerings[0]?.title || nextBrand.businessName);
     setStatusBanner(`Workspace beralih ke preset "${nextBrand.businessName}" (${nextBrand.city}).`);
   };
 
-  const handleToggleChannel = (channel: SocialChannelId) => {
-    const existing = connections.find((c) => c.channel === channel);
-    if (!existing?.connected) {
-      handleOpenOAuthConfigModal(channel);
-      return;
-    }
+  const handleToggleChannel = (channel: SocialChannelId) => handleOpenOAuthConfigModal(channel);
 
-    const disconnectedConn: ChannelConnectionState = {
-      channel,
-      connected: false,
-      handle: '',
-      accountName: 'Belum Terhubung',
-      followerCount: 0,
-      oauthMode: 'disconnected',
-      tokenExpiresAt: null,
-      lastPublishedAt: null,
-    };
-    const nextConnections = connections.map((c) =>
-      c.channel === channel ? disconnectedConn : c,
-    );
-    setConnections(nextConnections);
-
-    void saveChannelConnectionToFirestore(
-      brand.workspaceId,
-      disconnectedConn,
-      metaAccount,
-      firebaseCfg,
-    );
-    void syncWorkspaceSnapshotToStore(
-      {
-        brand,
-        activePlanId,
-        postsUsedThisMonth,
-        connections: nextConnections,
-        metaAccount,
-        vaultAssets,
-        autonomyConfig,
-        eventCampaigns,
-        drafts,
-        metaAdCampaigns,
-        tenants,
-        updatedAtIso: new Date().toISOString(),
-      },
-      firebaseCfg,
-      { forceCloudPush: true },
-    );
-
-    const info = getCentralOAuthCallbackUri(channel);
-    setStatusBanner(
-      `Koneksi ${CHANNEL_META[channel].shortLabel} telah diputuskan & diperbarui di Cloud Firestore (${info.oauthProviderLabel}).`,
-    );
+  const handleUploadVaultAsset = async (_useDevicePicker = false) => {
+    if (newAssetMediaType !== 'photo') { setStatusBanner('Unggah video akan diaktifkan setelah alur post gambar selesai.'); return; }
+    (document.getElementById('veloxa-real-file-upload') as HTMLInputElement | null)?.click();
   };
 
-  const handleUploadVaultAsset = async (useDevicePicker: boolean) => {
-    let title = newAssetTitle.trim();
-    let previewUrl =
-      newAssetDrawer === 'style_reference'
-        ? 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80'
-        : 'https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80';
-    let uploadedFrom: 'web' | 'android' | 'ios' = 'web';
-
-    if (useDevicePicker) {
-      const picked = await pickBrandAssetFromDevice({ mediaType: newAssetMediaType });
-      if (picked) {
-        title = title || picked.title;
-        previewUrl = picked.previewUrl;
-        uploadedFrom = picked.uploadedFrom;
-      }
-    }
-
-    if (!title) {
-      title =
-        newAssetDrawer === 'style_reference'
-          ? `Referensi ${newAssetMediaType === 'video_reel' ? 'Reels 9:16' : 'Carousel'} · ${brand.businessName}`
-          : `Aset Asli ${brand.businessName} · ${new Date().toLocaleTimeString('id-ID')}`;
-    }
-
-    const created: BrandVaultAsset = {
-      id: `vault_${Date.now()}`,
-      workspaceId: brand.workspaceId,
-      drawer: newAssetDrawer,
-      mediaType: newAssetMediaType,
-      title,
-      description:
-        newAssetDrawer === 'style_reference'
-          ? 'Diekstrak otomatis oleh Veloxa Vision AI untuk panduan komposisi & hook.'
-          : `Aset dokumentasi asli milik ${brand.businessName} untuk dipadukan ke konten otomatis.`,
-      previewUrl,
-      aspectRatio: newAssetMediaType === 'video_reel' ? '9:16' : '4:5',
-      tags: [newAssetDrawer === 'style_reference' ? 'style-dna' : 'aset-asli', brand.category],
-      uploadedFrom,
-      createdAt: 'Baru saja',
-      usedInPostsCount: 0,
-      extractedStyleDna:
-        newAssetDrawer === 'style_reference'
-          ? extractStyleDnaFromReference({
-              title,
-              description: brand.visualVibe,
-              mediaType: newAssetMediaType,
-              category: brand.category,
-            })
-          : undefined,
-    };
-
-    setVaultAssets((prev) => [created, ...prev]);
-    setNewAssetTitle('');
-    setStatusBanner(
-      created.drawer === 'style_reference'
-        ? `Referensi "${created.title}" ditambahkan & Style DNA berhasil diekstrak!`
-        : `Aset asli "${created.title}" masuk ke Brand Vault & siap dipakai Agent Konten!`,
-    );
-  };
-
-  const handleGenerateStudioDraft = async (source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
-    const quotaGuard = canConsumePostingQuota({
-      planId: activePlanId,
-      postsPublishedThisMonth: postsUsedThisMonth,
-    });
-    if (!quotaGuard.allowed) {
-      setStatusBanner(quotaGuard.reason || 'Kuota bulanan habis.');
-      return;
-    }
-
-    const activeCamp = eventCampaigns.find(
-      (c) => c.status === 'active' && c.workspaceId === brand.workspaceId,
-    );
-    let created = generateBrandContentDraft({
-      brand,
-      format: studioFormat,
-      source,
-      customTopic: studioTopic,
-      vaultAssets,
-      connections,
-      planId: activePlanId,
-      activeCampaign: activeCamp,
-      scheduledForWib: scheduledSlotWib,
-    });
-
+  const handleGenerateStudioDraft = async (_source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
+    if (isCreatingContent) return;
+    if (scheduledSlotWib) { setStatusBanner('Penjadwalan belum diaktifkan. Buat dan tinjau post tunggal di Studio dahulu.'); return; }
+    setIsCreatingContent(true); setStatusBanner('Menyusun caption dan menyiapkan gambar post…');
     try {
-      const res = await fetch('/api/veloxa/agents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'content_creator_and_critic',
-          brand,
-          format: studioFormat,
-          source,
-          customTopic: studioTopic,
-          vaultAssets,
-          connections,
-          planId: activePlanId,
-          activeCampaign: activeCamp,
-          scheduledForWib: scheduledSlotWib,
-          openAiApiKey: openAiInputKey.trim() || undefined,
-        }),
-      });
-      if (res.ok) {
-        const payload = (await res.json()) as { ok?: boolean; draft?: ContentDraft };
-        if (payload.ok && payload.draft) {
-          created = payload.draft;
-        }
-      }
-    } catch {
-      // fallback to local deterministic draft
-    }
-
-    setDrafts((prev) => [created, ...prev]);
-    setPostsUsedThisMonth((prev) => prev + 1);
-    setStudioTopic('');
-    setStatusBanner(
-      `Konten "${created.title}" (${created.format}) berhasil dibuat, lolos Quality Gate (${created.qualityReview.score}/100 · 0 issue), dan siap tayang di ${created.targetChannels.length} platform!`,
-    );
+      const saved = await syncWorkspaceSnapshotToStore({ brand, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
+      if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, ...(selectedSourceAssetId ? { sourceAssetId: selectedSourceAssetId } : {}) }) });
+      setDrafts(previous => [result.draft, ...previous]); setStudioTopic('');
+      setStatusBanner(`Draf dan gambar siap ditinjau. ${result.engineMode === 'openai_live' ? 'Caption disusun dengan AI.' : 'Caption memakai template lokal; AI belum tersedia.'} Belum ada konten diterbitkan.`);
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Konten belum dapat dibuat.'); }
+    finally { setIsCreatingContent(false); }
   };
-
   const handlePublishDraftNow = async (draftId: string) => {
-    const targetDraft = drafts.find((d) => d.id === draftId);
-    if (targetDraft) {
-      try {
-        await fetch('/api/veloxa/publish', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ draft: targetDraft }),
-        });
-      } catch {
-        // non-blocking fallback
-      }
-    }
-    setDrafts((prev) =>
-      prev.map((d) =>
-        d.id === draftId
-          ? {
-              ...d,
-              status: 'published',
-              publishedAtWib: 'Baru saja · Tayang Serentak',
-              channelStatuses: d.channelStatuses.map((cs) => ({
-                ...cs,
-                status: 'published',
-                publishedAt: 'Baru saja',
-              })),
-            }
-          : d,
-      ),
-    );
-    setStatusBanner('Konten berhasil diterbitkan serentak ke seluruh kanal medsos yang terhubung!');
+    const draft = drafts.find(item => item.id === draftId);
+    if (!draft || publishingDraftId) return;
+    if (!window.confirm(`Terbitkan "${draft.title}" ke ${draft.publishTargets?.map(target => `${target.channel}: ${target.accountName} (${target.handle})`).join(' dan ') || draft.targetChannels.join(' dan ')} untuk ${brand.businessName}? Pastikan caption dan gambar sudah ditinjau.`)) return;
+    setPublishingDraftId(draftId); setStatusBanner('Mengirim konten ke Meta. Jangan menutup halaman selama proses berlangsung…');
+    try {
+      const result = await veloxaApi<{ draft: ContentDraft; receipts: { channel: string; status: string; error?: string }[]; quotaUsed: number }>('/api/veloxa/publish', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, draftId }) });
+      setDrafts(previous => previous.map(item => item.id === draftId ? result.draft : item)); setPostsUsedThisMonth(result.quotaUsed);
+      setStatusBanner(result.receipts.map(receipt => `${receipt.channel}: ${receipt.status === 'published' ? 'berhasil diterbitkan' : receipt.error || 'belum berhasil'}`).join(' · '));
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Publikasi belum dapat dipastikan. Periksa akun Meta sebelum mencoba ulang.'); }
+    finally { setPublishingDraftId(null); }
   };
 
   const handleCreateEventCampaign = () => {
@@ -1126,6 +597,7 @@ export default function VeloxaAiPlatformPage() {
   };
 
   const handleDesignMetaAdsWithAi = (fromOrganicDraft?: ContentDraft) => {
+    try {
     const plan = buildMetaAdCampaignPlan({
       brand,
       metaAccount,
@@ -1147,84 +619,24 @@ export default function VeloxaAiPlatformPage() {
         ? `Rancangan AI Meta Ads selesai dibuat! Pagar Budget mengunci budget harian ke ${formatIdr(plan.budget.appliedDailyBudgetIdr)}/hari.`
         : `Rancangan AI Meta Ads "${plan.campaignName}" selesai disusun lengkap dengan demografi, interest resmi Meta, & A/B creative!`,
     );
+    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Rancangan budget belum valid.'); }
   };
 
-  const handleToggleMetaCampaignRun = async (campaignId: string) => {
-    const targetCamp = metaAdCampaigns.find((c) => c.id === campaignId);
-    if (targetCamp) {
-      try {
-        await fetch('/api/veloxa/meta-ads', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            campaign: targetCamp,
-            adAccountId: metaAccount.adAccountId,
-            targetStatus: targetCamp.status === 'active_running' ? 'PAUSED' : 'ACTIVE',
-          }),
-        });
-      } catch {
-        // non-blocking fallback
-      }
-    }
-    setMetaAdCampaigns((prev) =>
-      prev.map((c) =>
-        c.id === campaignId
-          ? {
-              ...c,
-              status: c.status === 'active_running' ? 'draft_paused' : 'active_running',
-            }
-          : c,
-      ),
-    );
-    setStatusBanner('Status tayangan kampanye di Meta Ads Manager berhasil diperbarui.');
+  const handleToggleMetaCampaignRun = async (_campaignId: string) => {
+    setStatusBanner('Eksekusi iklan belum diaktifkan. Tidak ada kampanye yang dikirim ke Meta.');
   };
 
-  const handleRunMetaAutoOptimizer = (campaignId: string) => {
-    setMetaAdCampaigns((prev) =>
-      prev.map((c) => (c.id === campaignId ? runMetaAdsAutonomousOptimizer(c) : c)),
-    );
-    setStatusBanner(
-      'AI Media Buyer selesai menganalisa Meta Ads Insights: variasi iklan mahal dimatikan & 100% budget dialihkan ke pemenang!',
-    );
+  const handleRunMetaAutoOptimizer = (_campaignId: string) => {
+    setStatusBanner('Optimizer iklan belum diaktifkan. Metrik kampanye tidak diubah.');
   };
 
-  const handleAdminChangeTenantPlan = (workspaceId: string, nextPlanId: SubscriptionPlanId) => {
-    const spec = SUBSCRIPTION_PLANS[nextPlanId];
-    setTenants((prev) =>
-      prev.map((t) => {
-        if (t.workspaceId !== workspaceId) return t;
-        const econ = calculateTenantUnitEconomics({
-          planId: nextPlanId,
-          postsPublishedThisMonth: t.postsPublishedThisMonth,
-        });
-        return {
-          ...t,
-          planId: nextPlanId,
-          monthlyPostQuota: spec.monthlyPostQuota,
-          monthlySubscriptionRevenueIdr: spec.priceMonthlyIdr,
-          estimatedMonthlyApiCostIdr: econ.estimatedApiCostIdr,
-          grossMarginPct: econ.grossMarginPct,
-        };
-      }),
-    );
-    if (workspaceId === brand.workspaceId) {
-      setActivePlanId(nextPlanId);
-    }
-    setStatusBanner(`Paket langganan tenant berhasil diperbarui ke ${spec.name} (${formatIdr(spec.priceMonthlyIdr)}/bln).`);
+  const handleAdminChangeTenantPlan = (_workspaceId: string, _nextPlanId: SubscriptionPlanId) => {
+    setStatusBanner('Perubahan paket menunggu integrasi Duitku dan verifikasi pembayaran server.');
   };
 
   const handleSaveCloudConnectionConfig = () => {
-    const nextCfg = saveFirebaseConnectionConfig({
-      ...firebaseCfg,
-      openAiConnected: Boolean(openAiInputKey.trim() || firebaseCfg.openAiConnected),
-      openAiApiKeyMasked: openAiInputKey.trim()
-        ? `${openAiInputKey.trim().slice(0, 8)}••••••••••••••••`
-        : firebaseCfg.openAiApiKeyMasked,
-    });
-    setFirebaseCfg(nextCfg);
-    setStatusBanner(
-      `Konfigurasi Cloud Firebase (${nextCfg.projectId}) & 5 OpenAI Agent berhasil disimpan (${nextCfg.lastSyncedAtWib}).`,
-    );
+    setOpenAiInputKey('');
+    setStatusBanner('Konfigurasi produksi dikelola melalui environment dan Secret Manager backend. Kunci API tidak disimpan di browser.');
   };
 
   const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
@@ -1240,6 +652,7 @@ export default function VeloxaAiPlatformPage() {
         isUserWorkspaceView ? 'bg-[#F8F9FC]' : 'bg-white'
       }`}
     >
+      {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-bold text-neutral-800">Menyiapkan workspace Anda…</p></div></div>}
       {/* Top Global Header — Ditampilkan pada Landing Page, Super Admin, & Mobile (<1024px). Pada Desktop User Workspace, Header menyatu di sisi kanan Sidebar Pink */}
       <header
         className={`sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur ${
@@ -2582,14 +1995,14 @@ export default function VeloxaAiPlatformPage() {
                           onChange={(e) => setStudioFormat(e.target.value as ContentFormat)}
                           className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-xs font-bold text-neutral-900"
                         >
-                          <option value="short_video">
+                          <option value="short_video" disabled>
                             Video Pendek 9:16 (IG Reels + FB Reels + TikTok + YT Shorts)
                           </option>
-                          <option value="carousel">
+                          <option value="carousel" disabled>
                             Carousel Multi-Slide 4:5 (IG + FB + TikTok Photo Mode)
                           </option>
                           <option value="single_post">
-                            Poster Tunggal 4:5 (IG + FB + TikTok)
+                            Post Tunggal 4:5 (Instagram + Facebook)
                           </option>
                         </select>
                       </div>
@@ -2608,6 +2021,7 @@ export default function VeloxaAiPlatformPage() {
                           />
                           <button
                             type="button"
+                            disabled={isCreatingContent}
                             onClick={() => handleGenerateStudioDraft('manual_studio')}
                             className="shrink-0 rounded-xl bg-[#EC749B] px-5 py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                           >
@@ -2617,6 +2031,13 @@ export default function VeloxaAiPlatformPage() {
                         </div>
                       </div>
                     </div>
+                    <label className="mt-4 block text-xs font-bold text-neutral-700">Foto Brand Vault (opsional)
+                      <select value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
+                        <option value="">Gunakan template gambar Veloxa</option>
+                        {vaultAssets.filter(asset => /^[a-f0-9-]{36}$/.test(asset.id) && asset.mediaType === 'photo').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}
+                      </select>
+                    </label>
+                    <p className="mt-3 text-xs text-neutral-500">Publikasi saat ini mendukung post gambar tunggal Instagram/Facebook. Carousel, Reels, dan jadwal otomatis menyusul setelah alur ini terverifikasi.</p>
                   </section>
 
                   {/* Generated Drafts List */}
@@ -2630,7 +2051,7 @@ export default function VeloxaAiPlatformPage() {
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-black text-[#D85A88]">
-                                {draft.status === 'published' ? '✓ Sudah Tayang' : '✓ Lolos Pemeriksaan AI'}
+                                {draft.status === 'published' ? '✓ Sudah Tayang' : draft.status === 'needs_attention' ? 'Perlu diperiksa di Meta' : draft.status === 'partially_published' ? 'Sebagian kanal berhasil' : draft.status === 'publish_failed' ? 'Publikasi gagal' : draft.status === 'publishing' ? 'Sedang mengirim' : 'Draf — tinjau sebelum terbit'}
                               </span>
                               <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs font-bold text-neutral-700">
                                 {draft.format === 'short_video'
@@ -2652,6 +2073,7 @@ export default function VeloxaAiPlatformPage() {
                             {draft.status !== 'published' && (
                               <button
                                 type="button"
+                                disabled={!!publishingDraftId || ['needs_attention', 'publishing'].includes(draft.status) || !draft.renderedMedia}
                                 onClick={() => handlePublishDraftNow(draft.id)}
                                 className="rounded-xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                               >
@@ -2663,8 +2085,13 @@ export default function VeloxaAiPlatformPage() {
                               type="button"
                               data-testid={`download-poster-btn-${draft.id}`}
                               onClick={() => {
-                                downloadDraftPosterSvg(draft, brand);
-                                setStatusBanner(`Visual poster "${draft.title}" berhasil diunduh ke perangkat Anda!`);
+                                if (draft.renderedMedia) {
+                                  window.open(draft.renderedMedia.url, '_blank', 'noopener,noreferrer');
+                                  setStatusBanner('Gambar JPEG final dibuka. Gunakan menu simpan gambar pada perangkat Anda.');
+                                } else {
+                                  downloadDraftPosterSvg(draft, brand);
+                                  setStatusBanner('Template SVG draf lama dibuka untuk diunduh. Buat ulang melalui Studio untuk menyiapkan JPEG publikasi.');
+                                }
                               }}
                               className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                             >
@@ -2698,7 +2125,7 @@ export default function VeloxaAiPlatformPage() {
                           <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-2">
                             <img
                               data-testid={`rendered-poster-img-${draft.id}`}
-                              src={buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })}
+                              src={draft.renderedMedia?.url || buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })}
                               alt={`Pratinjau Visual ${draft.title}`}
                               className="mx-auto max-h-60 w-auto rounded-xl border border-neutral-200 object-contain"
                             />
@@ -2725,7 +2152,9 @@ export default function VeloxaAiPlatformPage() {
                                 >
                                   {CHANNEL_META[cs.channel].shortLabel}:{' '}
                                   <span className="text-[#D85A88]">
-                                    {cs.status === 'published' ? '✓ Sudah Tayang' : '● Siap Kirim'}
+                                    {cs.status === 'published' ? '✓ Sudah Tayang' : cs.status === 'failed' ? 'Gagal dikirim' : cs.status === 'unknown' ? 'Perlu diperiksa' : 'Belum diterbitkan'}
+                                    {cs.permalink && <a href={cs.permalink} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Lihat posting ↗</a>}
+                                    {cs.note && <span className="ml-2 text-red-700">{cs.note}</span>}
                                   </span>
                                 </span>
                               ))}
@@ -2807,7 +2236,7 @@ export default function VeloxaAiPlatformPage() {
                         <button
                           type="button"
                           onClick={() =>
-                            setAutonomyConfig((c) => ({ ...c, enabled: !c.enabled }))
+                            setStatusBanner('Penjadwalan otomatis belum diaktifkan. Gunakan Studio untuk meninjau dan menerbitkan post tunggal dahulu.')
                           }
                           className={`rounded-full px-3.5 py-1 text-xs font-black ${
                             autonomyConfig.enabled
@@ -3706,184 +3135,9 @@ export default function VeloxaAiPlatformPage() {
           })}
         </div>
 
-        {/* Platform-Specific Step-by-Step Guide + Live Profile URL Verification */}
-        <div className="mt-3.5 rounded-2xl border border-pink-200 bg-[#FFF9FB] p-3.5 text-xs">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-black text-neutral-900">
-              Koneksi Langsung {CHANNEL_META[editingChannel].label} (Tanpa Error App ID):
-            </p>
-            <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
-              ✓ Siap Ditautkan
-            </span>
-          </div>
-
-          <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">
-            {editingChannel === 'instagram' &&
-              'Masukkan username Instagram bisnis Anda (contoh: @ulinz_cafe). Sistem menautkan akun ke Cloud Firestore & menyiapkan distribusi Reels 9:16, Carousel 4:5, serta Feed Poster.'}
-            {editingChannel === 'facebook' &&
-              'Masukkan Nama Halaman / Username Facebook Page bisnis Anda (contoh: Ulinz Cafe) untuk menautkan ke Cloud Firestore.'}
-            {editingChannel === 'tiktok' &&
-              'Masukkan username TikTok bisnis Anda (contoh: @ulinz_cafe) untuk mengaktifkan distribusi Video 9:16 & Photo Carousel.'}
-            {editingChannel === 'youtube_shorts' &&
-              'Masukkan handle Channel YouTube bisnis Anda (contoh: @ulinz_cafe) untuk mengaktifkan distribusi YouTube Shorts 9:16.'}
-          </p>
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-pink-100 bg-white px-3 py-2">
-            <div className="truncate">
-              <span className="block text-[10px] font-bold uppercase text-neutral-400">
-                URL Profil Resmi Terdeteksi:
-              </span>
-              <a
-                href={buildSocialProfileUrl(editingChannel, editingChannelHandle)}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="oauth-live-profile-preview-link"
-                className="font-mono text-[11px] font-black text-[#EC749B] hover:underline"
-              >
-                {buildSocialProfileUrl(editingChannel, editingChannelHandle)} ↗
-              </a>
-            </div>
-
-            <button
-              type="button"
-              data-testid="launch-oauth-popup-btn"
-              onClick={() => void handleLaunchOfficialOAuthPopup(editingChannel)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3.5 py-2 text-[11px] font-black text-white shadow-2xs hover:bg-neutral-800 transition shrink-0"
-            >
-              <span>
-                🔍 Buka &amp; Verifikasi Profil{' '}
-                {normalizeSocialHandle(editingChannel, editingChannelHandle) || '@ulinz_cafe'}
-              </span>
-            </button>
-          </div>
-
-          {oauthPopupStatus && (
-            <div className="mt-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-800">
-              {oauthPopupStatus}
-            </div>
-          )}
-        </div>
-
-        <form onSubmit={(e) => void handleSaveOAuthChannelCustomConfig(e)} className="mt-4 space-y-3 text-xs">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="oauth-handle-input" className="font-bold text-neutral-700">
-                Username / Handle {CHANNEL_META[editingChannel].shortLabel} Resmi *
-              </label>
-              <input
-                id="oauth-handle-input"
-                data-testid="oauth-handle-input"
-                type="text"
-                required
-                autoFocus
-                placeholder="Contoh: @ulinz_cafe"
-                value={editingChannelHandle}
-                onChange={(e) => setEditingChannelHandle(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="oauth-account-name-input" className="font-bold text-neutral-700">
-                Nama Halaman / Channel Bisnis
-              </label>
-              <input
-                id="oauth-account-name-input"
-                data-testid="oauth-account-name-input"
-                type="text"
-                placeholder={`Contoh: ${brand.businessName} Official`}
-                value={editingChannelAccountName}
-                onChange={(e) => setEditingChannelAccountName(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="oauth-followers-input" className="font-bold text-neutral-700">
-                Jumlah Followers Saat Ini (Data Asli)
-              </label>
-              <input
-                id="oauth-followers-input"
-                data-testid="oauth-followers-input"
-                type="number"
-                min={0}
-                value={editingChannelFollowers}
-                onChange={(e) => setEditingChannelFollowers(Math.max(0, Number(e.target.value || 0)))}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="oauth-token-input" className="font-bold text-neutral-700">
-                Page ID / Access Token API (Opsional)
-              </label>
-              <input
-                id="oauth-token-input"
-                data-testid="oauth-token-input"
-                type="password"
-                placeholder="Opsional (Otomatis jika via OAuth)"
-                value={editingChannelAccessToken}
-                onChange={(e) => setEditingChannelAccessToken(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          {(editingChannel === 'instagram' || editingChannel === 'facebook') && (
-            <div>
-              <label htmlFor="oauth-meta-act-input" className="font-bold text-neutral-700">
-                ID Akun Iklan Meta Ads Manager (act_... · Opsional untuk AI Meta Ads)
-              </label>
-              <input
-                id="oauth-meta-act-input"
-                data-testid="oauth-meta-act-input"
-                type="text"
-                placeholder="Contoh: act_1029384756 (Kosongkan jika hanya posting organik)"
-                value={editingMetaAdAccountId}
-                onChange={(e) => setEditingMetaAdAccountId(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono font-semibold text-neutral-900 focus:border-[#EC749B] focus:outline-hidden"
-              />
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
-            {connections.find((c) => c.channel === editingChannel)?.connected ? (
-              <button
-                type="button"
-                onClick={() => {
-                  handleToggleChannel(editingChannel);
-                  oauthDialogRef.current?.close();
-                }}
-                className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 font-bold text-rose-700 hover:bg-rose-100"
-              >
-                Putuskan Koneksi {CHANNEL_META[editingChannel].shortLabel}
-              </button>
-            ) : (
-              <span className="text-[11px] text-neutral-500">
-                Langsung tersimpan ke Cloud Firestore (<code>workspaces/{brand.workspaceId}</code>)
-              </span>
-            )}
-
-            <div className="flex items-center gap-2 ml-auto">
-              <button
-                type="button"
-                onClick={() => oauthDialogRef.current?.close()}
-                className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-bold text-neutral-700 hover:border-pink-200"
-              >
-                Batal
-              </button>
-              <button
-                type="submit"
-                data-testid="save-oauth-config-btn"
-                className="veloxa-luxury-card-pink rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
-              >
-                ✓ Simpan &amp; Hubungkan ke Cloud Firestore
-              </button>
-            </div>
-          </div>
-        </form>
+        {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} onConnections={verified => {
+          setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => verified.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
+        }} />}
       </dialog>
 
       {/* ========================================================================

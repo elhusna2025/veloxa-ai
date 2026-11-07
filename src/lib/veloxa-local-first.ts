@@ -73,14 +73,7 @@ export function persistLocalFirstTelemetry(telemetry: LocalFirstTelemetry): void
 }
 
 export function calculateFirestoreCostSavingsPct(telemetry: LocalFirstTelemetry): number {
-  const totalOps =
-    telemetry.localReads +
-    telemetry.localWrites +
-    telemetry.firestoreOpsSaved +
-    telemetry.firestoreReads +
-    telemetry.firestoreWrites;
-  const cloudOps = telemetry.firestoreReads + telemetry.firestoreWrites;
-  if (totalOps <= 0) return 95;
-  const savedRatio = Math.max(0.85, Math.min(0.99, 1 - cloudOps / Math.max(totalOps, cloudOps + 10)));
-  return Math.round(savedRatio * 100);
+  const saved = Math.max(0, telemetry.firestoreOpsSaved);
+  const total = saved + Math.max(0, telemetry.firestoreReads) + Math.max(0, telemetry.firestoreWrites);
+  return total > 0 ? Math.round(saved / total * 100) : 0;
 }

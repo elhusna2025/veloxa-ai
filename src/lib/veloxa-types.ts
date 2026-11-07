@@ -142,7 +142,7 @@ export interface QualityReviewReport {
 
 export interface ChannelPublishStatus {
   channel: SocialChannelId;
-  status: 'scheduled' | 'publishing' | 'published' | 'skipped' | 'failed';
+  status: 'pending' | 'scheduled' | 'publishing' | 'published' | 'skipped' | 'failed' | 'unknown';
   permalink?: string;
   publishedAt?: string;
   note?: string;
@@ -170,7 +170,9 @@ export interface ContentDraft {
   hashtags: string[];
   targetChannels: SocialChannelId[];
   channelStatuses: ChannelPublishStatus[];
-  status: 'draft' | 'repairing' | 'approved' | 'scheduled' | 'published';
+  status: 'draft' | 'repairing' | 'approved' | 'scheduled' | 'published' | 'publishing' | 'publish_failed' | 'partially_published' | 'needs_attention';
+  renderedMedia?: { url: string; mimeType: 'image/jpeg'; width: number; height: number };
+  publishTargets?: { channel: SocialChannelId; accountId: string; accountName: string; handle: string }[];
   scheduledForWib?: string;
   publishedAtWib?: string;
   slides?: SlideSpec[];

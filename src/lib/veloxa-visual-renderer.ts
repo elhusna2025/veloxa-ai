@@ -105,7 +105,7 @@ export function buildRenderedVisualSvg(params: {
   <rect x="96" y="110" width="90" height="90" rx="26" fill="#EC749B"/>
   <text x="141" y="168" text-anchor="middle" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="40" font-weight="900" fill="#FFFFFF">${escapeXml(brand.businessName.slice(0, 2).toUpperCase())}</text>
   <text x="210" y="152" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="34" font-weight="800" fill="#171717">${escapeXml(brand.businessName)}</text>
-  <text x="210" y="192" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="24" font-weight="600" fill="#EC749B">${escapeXml(brand.city)} · Kualitas AI ${draft.qualityReview.score}/100</text>
+  <text x="210" y="192" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="24" font-weight="600" fill="#EC749B">${escapeXml(brand.city)}</text>
 
   <!-- Format Badge -->
   <rect x="96" y="340" width="520" height="62" rx="31" fill="#FDF2F7" stroke="#FBCFE8" stroke-width="2"/>

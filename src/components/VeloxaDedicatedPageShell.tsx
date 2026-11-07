@@ -31,10 +31,12 @@ export function VeloxaDedicatedPageShell({
   pageSubtitle,
   maxWidthClass = 'max-w-[1480px]',
 }: VeloxaDedicatedPageShellProps) {
+  const [hydrated, setHydrated] = useState(false);
   const [internalLocale, setInternalLocale] = useState<VeloxaLocale>('id');
   const locale = externalLocale ?? internalLocale;
 
   useEffect(() => {
+    setHydrated(true);
     const saved = loadSavedVeloxaLocale();
     setInternalLocale(saved);
     onLocaleChange?.(saved);
@@ -47,7 +49,7 @@ export function VeloxaDedicatedPageShell({
   };
 
   return (
-    <div className="min-h-dvh bg-white text-neutral-900 flex flex-col justify-between">
+    <div data-client-ready={hydrated} className="min-h-dvh bg-white text-neutral-900 flex flex-col justify-between">
       {/* Top Minimalist Global Header — 1-row sleek layout on Mobile & Desktop */}
       <header className="sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1480px] flex-nowrap items-center justify-between gap-2 px-3.5 py-3 sm:px-8 sm:py-3.5 lg:px-12">

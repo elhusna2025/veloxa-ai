@@ -1,3 +1,4 @@
+import { hasWorkspaceAccess, isVerifiedAdmin } from '../../src/lib/veloxa-workspace-policy';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -32,10 +33,20 @@ if (getApps().length === 0) {
 const REGION = 'asia-southeast2';
 
 function requireAuth(request: { auth?: { uid: string; token?: Record<string, unknown> } }) {
-  if (!request.auth?.uid) {
+  const provider = request.auth?.token?.firebase as { sign_in_provider?: string } | undefined;
+  if (!request.auth?.uid || provider?.sign_in_provider === 'anonymous') {
     throw new HttpsError('unauthenticated', 'Silakan login ke Veloxa AI terlebih dahulu.');
   }
   return request.auth;
+}
+
+async function requireWorkspaceAccess(request: { auth?: { uid: string; token?: Record<string, unknown> } }, workspaceId: unknown) {
+  const actor = requireAuth(request);
+  if (typeof workspaceId !== 'string' || !workspaceId || workspaceId.length > 512 || workspaceId.includes('/')) throw new HttpsError('invalid-argument', 'workspaceId tidak valid.');
+  const snapshot = await getFirestore().collection('workspaces').doc(workspaceId).get();
+  const workspace = snapshot.data();
+  if (!workspace || !hasWorkspaceAccess(actor.uid, workspace, isVerifiedAdmin(actor.token || {}))) throw new HttpsError('permission-denied', 'Anda tidak memiliki akses ke workspace ini.');
+  return workspace;
 }
 
 /**
@@ -47,6 +58,7 @@ export const saveVeloxaBrandProfile = onCall({ region: REGION, memory: '512MiB' 
   if (!profile?.workspaceId || !profile?.businessName) {
     throw new HttpsError('invalid-argument', 'Profil Brand Brain wajib memuat workspaceId dan nama bisnis.');
   }
+  await requireWorkspaceAccess(request, profile.workspaceId);
   const db = getFirestore();
   await db
     .collection('workspaces')
@@ -67,6 +79,7 @@ export const registerVeloxaVaultAsset = onCall({ region: REGION, memory: '512MiB
   if (!asset?.workspaceId || !asset?.id) {
     throw new HttpsError('invalid-argument', 'Data aset Brand Vault belum lengkap.');
   }
+  await requireWorkspaceAccess(request, asset.workspaceId);
   const enriched: BrandVaultAsset =
     asset.drawer === 'style_reference'
       ? {
@@ -104,8 +117,8 @@ export const generateVeloxaStudioDraft = onCall(
       customTopic,
       vaultAssets = [],
       connections = [],
-      planId = 'pro_1500k',
-      postsPublishedThisMonth = 0,
+      planId: _clientPlan,
+      postsPublishedThisMonth: _clientUsage,
     } = request.data as {
       brand: BrandProfile;
       format: ContentFormat;
@@ -116,6 +129,9 @@ export const generateVeloxaStudioDraft = onCall(
       postsPublishedThisMonth: number;
     };
 
+    const workspace = await requireWorkspaceAccess(request, brand?.workspaceId);
+    const planId = (Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId : 'free_trial') as SubscriptionPlanId;
+    const postsPublishedThisMonth = Number(workspace.quotaUsed || 0);
     const quotaCheck = canConsumePostingQuota({ planId, postsPublishedThisMonth });
     if (!quotaCheck.allowed) {
       throw new HttpsError('resource-exhausted', quotaCheck.reason || 'Kuota bulanan habis.');
@@ -148,7 +164,7 @@ export const generateVeloxaStudioDraft = onCall(
  */
 export const updateVeloxaAutonomyConfig = onCall({ region: REGION, memory: '512MiB' }, async (request) => {
   requireAuth(request);
-  const { config, planId = 'pro_1500k' } = request.data as {
+  const { config, planId: _clientPlan } = request.data as {
     config: AutonomyConfig;
     planId: SubscriptionPlanId;
   };
@@ -156,6 +172,8 @@ export const updateVeloxaAutonomyConfig = onCall({ region: REGION, memory: '512M
     throw new HttpsError('invalid-argument', 'workspaceId wajib diisi.');
   }
 
+  const workspace = await requireWorkspaceAccess(request, config.workspaceId);
+  const planId = (Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId : 'free_trial') as SubscriptionPlanId;
   const validation = validateAutonomyScheduleAgainstPlan(config, planId);
   const normalized: AutonomyConfig = {
     ...config,
@@ -193,7 +211,7 @@ export const designVeloxaMetaAdCampaign = onCall(
       ageMin,
       ageMax,
       customInterestKeyword,
-      planId = 'pro_1500k',
+      planId: _clientPlan,
     } = request.data as {
       brand: BrandProfile;
       metaAccount: MetaAdsAccountConnection;
@@ -209,6 +227,8 @@ export const designVeloxaMetaAdCampaign = onCall(
       planId?: SubscriptionPlanId;
     };
 
+    const workspace = await requireWorkspaceAccess(request, brand?.workspaceId);
+    const planId = (Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId : 'free_trial') as SubscriptionPlanId;
     if (!SUBSCRIPTION_PLANS[planId]?.includesMetaAdsAgent) {
       throw new HttpsError(
         'permission-denied',
@@ -258,23 +278,8 @@ export const processVeloxaAutonomousEngine = onSchedule(
     timeoutSeconds: 300,
   },
   async () => {
-    const db = getFirestore();
-    const workspacesSnap = await db.collection('workspaces').where('subscriptionStatus', '==', 'active').limit(50).get();
-
-    for (const wsDoc of workspacesSnap.docs) {
-      const campaignsSnap = await wsDoc.ref
-        .collection('meta_ad_campaigns')
-        .where('status', '==', 'active_running')
-        .limit(10)
-        .get();
-
-      for (const campDoc of campaignsSnap.docs) {
-        const current = campDoc.data() as MetaAdCampaignPlan;
-        const optimized = runMetaAdsAutonomousOptimizer(current);
-        if (optimized.optimizationLogs.length !== current.optimizationLogs.length) {
-          await campDoc.ref.set(optimized, { merge: true });
-        }
-      }
-    }
+    // Live ads execution/optimization is intentionally disabled until a verified provider adapter exists.
+    // Organic image publishing is handled by the authenticated Veloxa server.
+    return;
   },
 );

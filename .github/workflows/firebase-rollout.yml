@@ -1,41 +1,33 @@
-name: Rollout Veloxa AI to Firebase (Hosting & Firestore)
+name: Validate Veloxa server and publishing
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  build_and_rollout:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm --prefix functions ci
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm --prefix functions audit --omit=dev --audit-level=high
+      - run: npm test
+      - run: npm run functions:test
+      - name: Check deployed Functions entrypoint exists
+        run: node -e "require('fs').accessSync('functions/' + require('./functions/package.json').main)"
+      - run: npm run build
+      - run: npm run typecheck
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
-
-      - name: Build static web bundle for Firebase Hosting & Capacitor
-        env:
-          NEXT_OUTPUT_EXPORT: 'true'
-          NEXT_PUBLIC_FIREBASE_PROJECT_ID: veloxa-ai-saas
-          NEXT_PUBLIC_FIREBASE_API_KEY: AIzaSyBIszLovRLEazQEmNQoy6w7kN6fLJ-WW3w
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: veloxa-ai-saas.firebaseapp.com
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: veloxa-ai-saas.firebasestorage.app
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: '503587432700'
-          NEXT_PUBLIC_FIREBASE_APP_ID: 1:503587432700:web:64ba9c80619a3692bccf79
-        run: |
-          mv src/app/api /tmp/veloxa_api_backup || true
-          npx next build
-          mv /tmp/veloxa_api_backup src/app/api || true
-
-      - name: Deploy Firestore Rules & Hosting to veloxa-ai-saas
-        if: ${{ env.FIREBASE_TOKEN != '' }}
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        run: npx -y firebase-tools@latest deploy --only firestore,hosting --project veloxa-ai-saas --non-interactive
+# The application now requires a Next.js server (Firebase App Hosting).
+# Do not remove API routes or deploy the web app as static Firebase Hosting output.
+# Production deployment and Meta credentials are configured separately.

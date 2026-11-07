@@ -982,6 +982,7 @@ export function VeloxaExecutiveDashboardOverview({
                 <div className="mt-4 pt-3 border-t border-neutral-100 flex items-center justify-between gap-2">
                   <button
                     type="button"
+                    disabled={['published', 'publishing', 'needs_attention'].includes(draft.status) || !draft.renderedMedia}
                     onClick={() => onPublishDraftNow(draft.id)}
                     className="flex-1 rounded-xl bg-[#EC749B] py-2 text-xs font-black text-white hover:bg-[#DF608A]"
                   >

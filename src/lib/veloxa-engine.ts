@@ -338,7 +338,7 @@ export function runAutonomousQualityRepairLoop(input: {
 
     if (foundForbidden.length > 0) {
       for (const badWord of foundForbidden) {
-        const regex = new RegExp(badWord, 'gi');
+        const regex = new RegExp(badWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
         currentHook = currentHook.replace(regex, 'berkualitas');
         currentCaption = currentCaption.replace(regex, 'terbaik');
       }
@@ -359,21 +359,16 @@ export function runAutonomousQualityRepairLoop(input: {
     break;
   }
 
+  const issues: string[] = [];
+  if (input.brand.forbiddenWords.some(word => word && `${input.title} ${currentHook} ${currentCaption}`.toLowerCase().includes(word.toLowerCase()))) issues.push('Teks masih memuat kata terlarang.');
+  if (!currentCaption.toLowerCase().includes(input.brand.businessName.toLowerCase().split(' ')[0])) issues.push('Caption belum menyebut merek.');
+  if (currentHook.length < 24) issues.push('Hook belum cukup lengkap.');
   return {
-    repairedHook: currentHook,
-    repairedCaption: currentCaption,
+    repairedHook: currentHook, repairedCaption: currentCaption,
     review: {
-      passed: true,
-      score: 96,
-      repairAttempts: attempts,
-      summary: `Lolos pemeriksaan otonom (${attempts} iterasi): pesan sesuai Brand Brain ${input.brand.businessName}, kontras tipografi aman, tanpa kata terlarang, dan mengikuti DNA referensi user.`,
-      issues: [],
-      checkedAspects: {
-        brandAlignment: true,
-        typographyContrast: true,
-        copyAccuracy: true,
-        styleReferenceMatch: true,
-      },
+      passed: issues.length === 0, score: Math.max(0, 90 - issues.length * 25), repairAttempts: attempts,
+      summary: issues.length ? 'Teks perlu diperbaiki sebelum publikasi.' : 'Pemeriksaan teks selesai. Tinjau fakta dan visual sebelum menerbitkan.',
+      issues, checkedAspects: { brandAlignment: !issues.some(issue => issue.includes('merek')), typographyContrast: false, copyAccuracy: false, styleReferenceMatch: false },
     },
   };
 }
@@ -422,12 +417,9 @@ export function generateBrandContentDraft(input: {
   const rawCaption = [
     rawHook,
     '',
-    `Topik fokus: ${topicFocus}.`,
+    `${topicFocus}.`,
     primaryOffering.highlight,
     campaignPhase ? `Status Kampanye: ${campaignPhase.phaseLabel} — ${campaignPhase.contentAngleDirective}` : '',
-    usedRealAssetIds.length > 0
-      ? `Visual diracik menggunakan ${usedRealAssetIds.length} aset foto/video asli dari Brand Vault ${brand.businessName}.`
-      : `Visual dirancang mengikuti komposisi warna ${brand.primaryColorHex} & ${brand.accentColorHex}.`,
     '',
     `${brand.defaultCta} (${primaryOffering.priceLabel})`,
   ]
@@ -442,26 +434,16 @@ export function generateBrandContentDraft(input: {
   });
 
   const targetChannels = resolveTargetChannelsForFormat(format, connections, planId);
-  const channelStatuses: ChannelPublishStatus[] = targetChannels.map((ch) => ({
-    channel: ch,
-    status: input.scheduledForWib ? 'scheduled' : 'published',
-    permalink:
-      ch === 'instagram'
-        ? 'https://www.instagram.com/p/VeloxaLiveDemo/'
-        : ch === 'facebook'
-          ? 'https://www.facebook.com/reel/VeloxaFbLive/'
-          : ch === 'tiktok'
-            ? 'https://www.tiktok.com/@veloxa.ai/video/743000112233'
-            : 'https://www.youtube.com/shorts/VeloxaShort01',
-    publishedAt: input.scheduledForWib || 'Baru saja',
+  const channelStatuses: ChannelPublishStatus[] = targetChannels.map(channel => ({
+    channel, status: input.scheduledForWib ? 'scheduled' : 'pending',
   }));
 
   const baseHashtags =
     brand.category === 'running_event'
-      ? ['#IndoRunners', '#EventLari', `#Lari${brand.city.replace(/\s+/g, '')}`, '#FunRun10K', '#VeloxaAI']
+      ? ['#IndoRunners', '#EventLari', `#Lari${brand.city.replace(/\s+/g, '')}`, '#FunRun10K', `#${brand.businessName.replace(/[^a-zA-Z0-9]/g, '')}`]
       : brand.category === 'cafe_fnb'
-        ? [`#Kopi${brand.city.replace(/\s+/g, '')}`, '#WFCCafe', '#CoffeeShopIndo', '#TempatNongkrong', '#VeloxaAI']
-        : ['#BisnisIndonesia', '#BrandLokal', `#${brand.businessName.replace(/[^a-zA-Z0-9]/g, '')}`, '#VeloxaAI'];
+        ? [`#Kopi${brand.city.replace(/\s+/g, '')}`, '#WFCCafe', '#CoffeeShopIndo', '#TempatNongkrong', `#${brand.businessName.replace(/[^a-zA-Z0-9]/g, '')}`]
+        : ['#BisnisIndonesia', '#BrandLokal', `#${brand.businessName.replace(/[^a-zA-Z0-9]/g, '')}`, `#${brand.businessName.replace(/[^a-zA-Z0-9]/g, '')}`];
 
   if (format === 'short_video') {
     const videoScenes = [
@@ -770,12 +752,14 @@ export function buildMetaAdCampaignPlan(input: {
   originatedFromOrganicDraft?: ContentDraft;
 }): MetaAdCampaignPlan {
   const { brand, metaAccount, objective } = input;
-  const hardCap = Math.max(25_000, metaAccount.dailyHardCapIdr || 500_000);
+  const hardCap = metaAccount.dailyHardCapIdr;
+  if (![hardCap, metaAccount.monthlyHardCapIdr, input.requestedDailyBudgetIdr, input.durationDays].every(Number.isFinite) || hardCap < 25_000 || metaAccount.monthlyHardCapIdr <= 0 || input.requestedDailyBudgetIdr <= 0 || !Number.isInteger(input.durationDays) || input.durationDays < 1 || input.durationDays > 90) throw new Error('Batas budget dan durasi tidak valid. Batas harian minimal Rp25.000 tidak boleh dinaikkan otomatis.');
   const requestedDaily = Math.max(25_000, input.requestedDailyBudgetIdr);
   const appliedDailyBudgetIdr = Math.min(requestedDaily, hardCap);
   const hardCapClamped = requestedDaily > hardCap;
   const durationDays = Math.max(1, Math.min(90, input.durationDays || 7));
   const totalBudgetIdr = appliedDailyBudgetIdr * durationDays;
+  if (totalBudgetIdr > metaAccount.monthlyHardCapIdr) throw new Error('Total rancangan melebihi batas budget bulanan. Kurangi budget atau durasi.');
 
   const city = input.targetCity?.trim() || brand.city || 'Jakarta';
   const radiusKm = Math.max(3, Math.min(80, input.radiusKm ?? (brand.category === 'cafe_fnb' ? 12 : 30)));
@@ -856,15 +840,7 @@ export function buildMetaAdCampaignPlan(input: {
         ctaButton,
         budgetSharePct: 65,
         status: 'active',
-        metrics: {
-          spendIdr: Math.round(appliedDailyBudgetIdr * 0.65),
-          impressions: Math.round(reachMax * 0.7),
-          clicks: Math.round(estimatedClicksMax * 0.72),
-          ctrPct: 2.85,
-          conversions: Math.max(8, Math.round((appliedDailyBudgetIdr * 0.65) / estimatedCostPerResultIdr)),
-          costPerResultIdr: estimatedCostPerResultIdr,
-          frequency: 1.2,
-        },
+        metrics: { spendIdr: 0, impressions: 0, clicks: 0, ctrPct: 0, conversions: 0, costPerResultIdr: 0, frequency: 0 },
       },
       {
         id: 'cr_carousel_b',
@@ -874,15 +850,7 @@ export function buildMetaAdCampaignPlan(input: {
         ctaButton,
         budgetSharePct: 35,
         status: 'active',
-        metrics: {
-          spendIdr: Math.round(appliedDailyBudgetIdr * 0.35),
-          impressions: Math.round(reachMin * 0.45),
-          clicks: Math.round(estimatedClicksMin * 0.35),
-          ctrPct: 1.15,
-          conversions: Math.max(2, Math.round((appliedDailyBudgetIdr * 0.35) / (estimatedCostPerResultIdr * 2.4))),
-          costPerResultIdr: Math.round(estimatedCostPerResultIdr * 2.4),
-          frequency: 1.6,
-        },
+        metrics: { spendIdr: 0, impressions: 0, clicks: 0, ctrPct: 0, conversions: 0, costPerResultIdr: 0, frequency: 0 },
       },
     ],
     optimizationLogs: hardCapClamped
@@ -901,7 +869,7 @@ export function buildMetaAdCampaignPlan(input: {
 }
 
 export function runMetaAdsAutonomousOptimizer(campaign: MetaAdCampaignPlan): MetaAdCampaignPlan {
-  if (campaign.creatives.length < 2) return campaign;
+  if (campaign.status !== 'active_running' || campaign.creatives.filter(c => c.status === 'active' && c.metrics.conversions > 0).length < 2) return campaign;
 
   const sorted = [...campaign.creatives].sort(
     (a, b) => a.metrics.costPerResultIdr - b.metrics.costPerResultIdr,
@@ -923,10 +891,7 @@ export function runMetaAdsAutonomousOptimizer(campaign: MetaAdCampaignPlan): Met
         ...c,
         budgetSharePct: 100,
         status: 'winner_scaled' as const,
-        metrics: {
-          ...c.metrics,
-          conversions: c.metrics.conversions + Math.max(4, Math.round(reallocatedDailyIdr / c.metrics.costPerResultIdr)),
-        },
+        metrics: { ...c.metrics },
       };
     }
     if (c.id === loser.id) {
@@ -959,7 +924,7 @@ export function runMetaAdsAutonomousOptimizer(campaign: MetaAdCampaignPlan): Met
 
   return {
     ...campaign,
-    status: 'active_running',
+    status: campaign.status,
     creatives: updatedCreatives,
     optimizationLogs: newLogs,
   };
@@ -1008,7 +973,8 @@ export function canConsumePostingQuota(input: {
   reason?: string;
 } {
   const plan = SUBSCRIPTION_PLANS[input.planId];
-  const reqCount = Math.max(1, input.requestedPostsCount ?? 1);
+  const reqCount = input.requestedPostsCount ?? 1;
+  if (!plan || !Number.isSafeInteger(input.postsPublishedThisMonth) || input.postsPublishedThisMonth < 0 || !Number.isSafeInteger(reqCount) || reqCount < 1) return { allowed: false, remainingBefore: 0, reason: 'Data pemakaian kuota tidak valid.' };
   const remainingBefore = Math.max(0, plan.monthlyPostQuota - input.postsPublishedThisMonth);
   if (remainingBefore < reqCount) {
     return {
@@ -1061,7 +1027,7 @@ export function calculatePlatformAdminMetrics(tenants: TenantWorkspaceSummary[])
 } {
   const totalMrrIdr = tenants.reduce((sum, t) => sum + t.monthlySubscriptionRevenueIdr, 0);
   const totalApiCostIdr = tenants.reduce((sum, t) => sum + t.estimatedMonthlyApiCostIdr, 0);
-  const totalNetProfitIdr = Math.max(0, totalMrrIdr - totalApiCostIdr);
+  const totalNetProfitIdr = totalMrrIdr - totalApiCostIdr;
   const averageGrossMarginPct =
     totalMrrIdr > 0 ? Math.round((totalNetProfitIdr / totalMrrIdr) * 1000) / 10 : 0;
   const totalPublishedPosts = tenants.reduce((sum, t) => sum + t.postsPublishedThisMonth, 0);

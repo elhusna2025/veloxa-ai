@@ -23,6 +23,10 @@ Platform SaaS **100% TypeScript** lintas 3 platform (**Web**, **Android**, dan *
 
 ## Perintah Menjalankan Aplikasi
 
+Status implementasi terbaru dan konfigurasi akun pelanggan dijelaskan di [Panduan koneksi dan publikasi Meta](docs/meta-publishing.md). Alur produksi yang sedang disiapkan adalah post gambar tunggal Instagram/Facebook melalui backend Next.js; fitur lainnya pada daftar visi produk di atas belum semuanya diaktifkan. Pembayaran ditunda untuk integrasi Duitku.
+
+Gunakan Node 22, jalankan `npm ci --legacy-peer-deps` dan `npm --prefix functions ci`, lalu isi environment backend sesuai `.env.example`. Kredensial Meta dikelola operator Veloxa; pelanggan cukup login dan memberi izin akun bisnis melalui OAuth.
+
 ```bash
 # Jalankan Web Server (Port 3035)
 npm run dev

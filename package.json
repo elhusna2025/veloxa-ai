@@ -2,22 +2,23 @@
   "name": "veloxa-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "Veloxa AI — Autonomous Multi-Channel Social Content & Meta Ads Marketing SaaS (Web, Android, iOS)",
+  "description": "Veloxa AI \u2014 Autonomous Multi-Channel Social Content & Meta Ads Marketing SaaS (Web, Android, iOS)",
   "engines": {
-    "node": "20.x || 22.x"
+    "node": "22.x"
   },
   "scripts": {
-    "dev": "NODE_OPTIONS='--no-experimental-webstorage' next dev -p 3035",
-    "build": "NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production next build",
-    "build:mobile": "NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production NEXT_OUTPUT_EXPORT=true next build",
-    "start": "next start -p 3035",
+    "dev": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache NODE_OPTIONS='--no-experimental-webstorage' next dev -p 3035",
+    "build": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production next build",
+    "build:mobile": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production NEXT_OUTPUT_EXPORT=true next build",
+    "start": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache next start -p 3035",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/lib/veloxa-engine.test.ts",
+    "test": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache node --import tsx --test src/lib/*.test.ts src/lib/server/*.test.ts",
     "functions:build": "npm --prefix functions run build",
     "functions:test": "npm --prefix functions test",
     "cap:sync": "npm run build:mobile && npx cap sync",
     "cap:open:android": "npx cap open android",
-    "cap:open:ios": "npx cap open ios"
+    "cap:open:ios": "npx cap open ios",
+    "test:browser": "node --import tsx e2e/veloxa-local.spec.ts"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",
@@ -29,13 +30,15 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "firebase": "^12.16.0",
+    "firebase-admin": "^13.10.0",
     "lucide-react": "^0.475.0",
-    "next": "15.3.8",
+    "next": "15.5.29",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sharp": "^0.35.5",
     "tailwind-merge": "^3.0.1",
     "tailwindcss-animate": "^1.0.7",
-    "zod": "^3.24.2"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@capacitor/android": "^8.5.2",
@@ -46,8 +49,14 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "playwright": "^1.63.0",
-    "postcss": "^8",
+    "postcss": "^8.5.32",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.23.15",
     "typescript": "^5"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.7",
+    "postcss": "$postcss",
+    "sharp": "$sharp"
   }
 }

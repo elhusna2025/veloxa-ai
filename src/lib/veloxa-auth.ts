@@ -13,6 +13,7 @@
  *    sent back to `/onboarding` after logging out and logging back in.
  */
 
+import { isVerifiedAdmin } from './veloxa-workspace-policy';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
@@ -20,7 +21,6 @@ import {
   getAuth,
   onAuthStateChanged,
   sendPasswordResetEmail,
-  signInAnonymously,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -28,12 +28,14 @@ import {
   type Auth,
   type User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, writeBatch } from 'firebase/firestore';
 import { SUBSCRIPTION_PLANS } from './veloxa-engine';
 import {
   buildRealInitialWorkspaceSnapshot,
   getFirestoreInstance,
   loadSavedFirebaseConfig,
+  loadWorkspaceSnapshotFromStore,
+  mergeOnboardingSnapshot,
   syncWorkspaceSnapshotToStore,
   type VeloxaFirebaseConnectionConfig,
 } from './veloxa-firestore-repo';
@@ -143,8 +145,8 @@ export function persistAuthenticatedUser(user: VeloxaAuthenticatedUser | null): 
 }
 
 export function buildWorkspaceIdForUid(uid: string): string {
-  const clean = uid.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-  return `ws_${clean || 'tenant'}`;
+  if (!uid) throw new Error('Identitas pengguna tidak tersedia.');
+  return `ws_${encodeURIComponent(uid)}`;
 }
 
 /**
@@ -182,41 +184,24 @@ export async function syncUserProfileToFirestore(
   const nowIso = new Date().toISOString();
   const db = getFirestoreInstance();
 
-  if (!db) {
-    const updatedLocal: VeloxaAuthenticatedUser = {
-      ...user,
-      uid: activeUid,
-      activeWorkspaceId: workspaceId,
-      onboardingCompleted:
-        options?.forceOnboardingCompleted ?? user.onboardingCompleted ?? user.isSuperAdmin,
-      subscriptionPlanId: options?.planId ?? user.subscriptionPlanId ?? 'free_trial',
-      businessName: options?.businessName ?? user.businessName,
-      city: options?.city ?? user.city,
-      category: options?.category ?? user.category,
-      targetAudience: options?.targetAudience ?? user.targetAudience,
-      brandTone: options?.brandTone ?? user.brandTone,
-      selectedChannels: options?.selectedChannels ?? user.selectedChannels,
-    };
-    persistAuthenticatedUser(updatedLocal);
-    return updatedLocal;
+  if (!db || !auth?.currentUser || auth.currentUser.isAnonymous || auth.currentUser.uid !== user.uid) {
+    throw new Error('Sesi Firebase tidak valid. Silakan masuk kembali.');
   }
 
   try {
     const userRef = doc(db, 'users', activeUid);
-    const wsRef = doc(db, 'workspaces', workspaceId);
-
-    const [existingUserSnap, existingWsSnap] = await Promise.all([
-      getDoc(userRef),
-      getDoc(wsRef).catch(() => null),
-    ]);
-
+    const existingUserSnap = await getDoc(userRef);
     const existingUserData = existingUserSnap.exists()
-      ? (existingUserSnap.data() as Record<string, unknown>)
-      : null;
-    const existingWsData =
-      existingWsSnap && existingWsSnap.exists()
-        ? (existingWsSnap.data() as Record<string, unknown>)
-        : null;
+      ? (existingUserSnap.data() as Record<string, unknown>) : null;
+    const resolvedWorkspaceId = (existingUserData?.activeWorkspaceId as string) || workspaceId;
+    const wsRef = doc(db, 'workspaces', resolvedWorkspaceId);
+    // A new workspace is not yet readable under owner-based security rules.
+    const existingWsSnap = await getDoc(wsRef).catch((error) => {
+      if (!existingUserData && error?.code === 'permission-denied') return null;
+      throw error;
+    });
+    const existingWsData = existingWsSnap?.exists()
+      ? (existingWsSnap.data() as Record<string, unknown>) : null;
 
     // Onboarding is completed if forced true, or already true in EITHER users/{uid} OR workspaces/{wsId}, or Super Admin
     const alreadyOnboardedInCloud =
@@ -236,10 +221,8 @@ export async function syncUserProfileToFirestore(
     const resolvedWsId =
       (existingUserData?.activeWorkspaceId as string) || workspaceId;
 
-    const resolvedPlan = (options?.planId ||
-      (existingWsData?.subscriptionPlanId as SubscriptionPlanId) ||
+    const resolvedPlan = ((existingWsData?.subscriptionPlanId as SubscriptionPlanId) ||
       (existingUserData?.subscriptionPlanId as SubscriptionPlanId) ||
-      user.subscriptionPlanId ||
       'free_trial') as SubscriptionPlanId;
 
     const resolvedBusinessName = (
@@ -317,7 +300,13 @@ export async function syncUserProfileToFirestore(
       updatedAt: nowIso,
     };
 
-    await setDoc(userRef, cleanUserDoc);
+    if (existingUserData) {
+      delete cleanUserDoc.subscriptionPlanId;
+      delete cleanUserDoc.quotaLimit;
+      delete cleanUserDoc.quotaUsed;
+    }
+    const batch = writeBatch(db);
+    batch.set(userRef, cleanUserDoc, { merge: true });
 
     // Ensure `workspaces/{resolvedWsId}` exists and is up to date in Cloud Firestore
     if (!existingWsData || options?.forceOnboardingCompleted !== undefined || options?.businessName) {
@@ -327,7 +316,7 @@ export async function syncUserProfileToFirestore(
       const wsPayload: Record<string, unknown> = {
         id: resolvedWsId,
         ownerUid: wsOwnerUid,
-        memberUids: [wsOwnerUid],
+        memberUids: existingWsData?.memberUids || [wsOwnerUid],
         name: resolvedBusinessName,
         category: resolvedCategory,
         city: resolvedCity,
@@ -346,13 +335,19 @@ export async function syncUserProfileToFirestore(
         createdAt: wsCreatedAt,
         updatedAt: nowIso,
       };
-      await setDoc(targetWsRef, wsPayload);
+      if (existingWsData) {
+        delete wsPayload.subscriptionPlanId;
+        delete wsPayload.quotaLimit;
+        delete wsPayload.quotaUsed;
+      }
+      batch.set(targetWsRef, wsPayload, { merge: true });
     }
 
+    await batch.commit();
     const hydrated: VeloxaAuthenticatedUser = {
       ...user,
       uid: activeUid,
-      role: immutableRole,
+      role: user.isSuperAdmin ? 'admin' : 'user',
       activeWorkspaceId: resolvedWsId,
       onboardingCompleted: resolvedOnboarding,
       subscriptionPlanId: resolvedPlan,
@@ -366,29 +361,15 @@ export async function syncUserProfileToFirestore(
     };
     persistAuthenticatedUser(hydrated);
     return hydrated;
-  } catch {
-    const fallbackUser: VeloxaAuthenticatedUser = {
-      ...user,
-      uid: activeUid,
-      activeWorkspaceId: workspaceId,
-      onboardingCompleted:
-        options?.forceOnboardingCompleted ?? user.onboardingCompleted ?? user.isSuperAdmin,
-      subscriptionPlanId: options?.planId ?? user.subscriptionPlanId ?? 'free_trial',
-      businessName: options?.businessName ?? user.businessName,
-      city: options?.city ?? user.city,
-      category: options?.category ?? user.category,
-      targetAudience: options?.targetAudience ?? user.targetAudience,
-      brandTone: options?.brandTone ?? user.brandTone,
-      selectedChannels: options?.selectedChannels ?? user.selectedChannels,
-    };
-    persistAuthenticatedUser(fallbackUser);
-    return fallbackUser;
+  } catch (error) {
+    throw error;
   }
 }
 
-function mapFirebaseUser(user: User, fallbackEmail?: string, customName?: string): VeloxaAuthenticatedUser {
+async function mapFirebaseUser(user: User, fallbackEmail?: string, customName?: string): Promise<VeloxaAuthenticatedUser> {
   const email = (user.email || fallbackEmail || 'tenant@veloxa.ai').trim().toLowerCase();
-  const isSuper = email === SUPER_ADMIN_EMAIL;
+  const token = await user.getIdTokenResult();
+  const isSuper = isVerifiedAdmin({ role: token.claims.role, email, email_verified: user.emailVerified });
   const workspaceId = buildWorkspaceIdForUid(user.uid);
   return {
     uid: user.uid,
@@ -415,53 +396,17 @@ export async function registerNewVeloxaAccount(params: {
   password: string;
 }): Promise<{ user: VeloxaAuthenticatedUser; isNewRegistration: boolean }> {
   const cleanEmail = params.email.trim().toLowerCase();
-  const cleanName = params.name.trim() || cleanEmail.split('@')[0] || 'Founder Bisnis';
-  const isSuper = cleanEmail === SUPER_ADMIN_EMAIL;
-  const auth = getFirebaseAuthInstance();
-
-  if (auth && params.password.length >= 6) {
-    try {
-      const created = await createUserWithEmailAndPassword(auth, cleanEmail, params.password);
-      try {
-        await updateProfile(created.user, { displayName: cleanName });
-      } catch {
-        // ignore profile display name update error
-      }
-      const mapped = mapFirebaseUser(created.user, cleanEmail, cleanName);
-      const synced = await syncUserProfileToFirestore(mapped, {
-        forceOnboardingCompleted: isSuper ? true : false,
-        planId: 'free_trial',
-      });
-      return { user: synced, isNewRegistration: true };
-    } catch {
-      const signedIn = await signInWithEmailAndPassword(auth, cleanEmail, params.password);
-      if (cleanName && !signedIn.user.displayName) {
-        try {
-          await updateProfile(signedIn.user, { displayName: cleanName });
-        } catch {
-          // ignore
-        }
-      }
-      const mapped = mapFirebaseUser(signedIn.user, cleanEmail, cleanName);
-      const synced = await syncUserProfileToFirestore(mapped);
-      return { user: synced, isNewRegistration: !synced.onboardingCompleted };
-    }
+  const cleanName = params.name.trim() || cleanEmail.split('@')[0];
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || params.password.length < 6) {
+    throw new Error('Gunakan email valid dan kata sandi minimal 6 karakter.');
   }
-
-  const fallbackUid = `usr_${Date.now().toString(36)}`;
-  const localUser: VeloxaAuthenticatedUser = {
-    uid: fallbackUid,
-    email: cleanEmail,
-    displayName: cleanName,
-    role: isSuper ? 'admin' : 'user',
-    provider: 'email_password',
-    isSuperAdmin: isSuper,
-    onboardingCompleted: isSuper ? true : false,
-    activeWorkspaceId: buildWorkspaceIdForUid(fallbackUid),
-    subscriptionPlanId: 'free_trial',
-  };
-  persistAuthenticatedUser(localUser);
-  return { user: localUser, isNewRegistration: true };
+  const auth = getFirebaseAuthInstance();
+  if (!auth) throw new Error('Konfigurasi Firebase belum tersedia.');
+  const created = await createUserWithEmailAndPassword(auth, cleanEmail, params.password);
+  await updateProfile(created.user, { displayName: cleanName });
+  const mapped = await mapFirebaseUser(created.user, cleanEmail, cleanName);
+  const synced = await syncUserProfileToFirestore(mapped, { forceOnboardingCompleted: mapped.isSuperAdmin, planId: 'free_trial' });
+  return { user: synced, isNewRegistration: true };
 }
 
 /**
@@ -488,22 +433,8 @@ export async function completeVeloxaOnboarding(params: {
     }
   }
   const fbUser = auth?.currentUser;
-  const current = getInitialAuthenticatedUser();
-
-  const resolvedUid =
-    fbUser && !fbUser.isAnonymous
-      ? fbUser.uid
-      : current?.uid || `usr_${Date.now().toString(36)}`;
-
-  const baseUser: VeloxaAuthenticatedUser = {
-    uid: resolvedUid,
-    email: fbUser?.email || current?.email || 'founder@bisnisanda.id',
-    displayName: fbUser?.displayName || current?.displayName || params.businessName.trim(),
-    role: current?.role || 'user',
-    provider: current?.provider || 'email_password',
-    isSuperAdmin: Boolean(current?.isSuperAdmin),
-    activeWorkspaceId: current?.activeWorkspaceId || buildWorkspaceIdForUid(resolvedUid),
-  };
+  if (!fbUser || fbUser.isAnonymous) throw new Error('Silakan masuk sebelum melengkapi workspace.');
+  const baseUser = await mapFirebaseUser(fbUser);
 
   const workspaceId = baseUser.activeWorkspaceId || buildWorkspaceIdForUid(baseUser.uid);
   const nowIso = new Date().toISOString();
@@ -523,7 +454,7 @@ export async function completeVeloxaOnboarding(params: {
 
   // 1. Update `users/{uid}` and `workspaces/{workspaceId}` in Cloud Firestore with `onboardingCompleted: true`
   const syncedUser = await syncUserProfileToFirestore(baseUser, {
-    forceOnboardingCompleted: true,
+    forceOnboardingCompleted: false,
     businessName: params.businessName.trim(),
     city: params.city.trim(),
     category: params.category,
@@ -534,7 +465,7 @@ export async function completeVeloxaOnboarding(params: {
   });
 
   // 2. Build 100% real initial workspace snapshot for this user's brand and push to Cloud Firestore (`workspaces/{workspaceId}`)
-  const realSnapshot = buildRealInitialWorkspaceSnapshot({
+  const freshSnapshot = buildRealInitialWorkspaceSnapshot({
     workspaceId: syncedUser.activeWorkspaceId || workspaceId,
     businessName: params.businessName.trim(),
     city: params.city.trim(),
@@ -542,12 +473,16 @@ export async function completeVeloxaOnboarding(params: {
     targetAudience: params.targetAudience.trim(),
     brandTone: params.brandTone.trim(),
     selectedChannels: params.selectedChannels,
-    planId: params.planId,
+    planId: syncedUser.subscriptionPlanId || 'free_trial',
     ownerName: syncedUser.displayName,
     ownerEmail: syncedUser.email,
   });
 
-  await syncWorkspaceSnapshotToStore(realSnapshot, undefined, { forceCloudPush: true });
+  const previous = await loadWorkspaceSnapshotFromStore(syncedUser.activeWorkspaceId || workspaceId, undefined, { forceCloudPull: true });
+  const realSnapshot = mergeOnboardingSnapshot(previous.snapshot, freshSnapshot);
+  realSnapshot.activePlanId = syncedUser.subscriptionPlanId || 'free_trial';
+  const result = await syncWorkspaceSnapshotToStore(realSnapshot, undefined, { forceCloudPush: true });
+  if (!result.syncedToFirestore) throw new Error('Workspace belum tersimpan ke cloud. Silakan coba lagi.');
 
   // 3. Write `workspaces/{workspaceId}/brand_brain/main` in Cloud Firestore
   const db = getFirestoreInstance();
@@ -560,6 +495,7 @@ export async function completeVeloxaOnboarding(params: {
         'brand_brain',
         'main',
       );
+      const existingBrain = await getDoc(brandBrainRef);
       await setDoc(brandBrainRef, {
         id: 'main',
         workspaceId: syncedUser.activeWorkspaceId || workspaceId,
@@ -572,15 +508,15 @@ export async function completeVeloxaOnboarding(params: {
         primaryColor: '#EC749B',
         accentColor: '#171717',
         updatedBy: syncedUser.uid,
-        createdAt: nowIso,
+        createdAt: existingBrain.data()?.createdAt || nowIso,
         updatedAt: nowIso,
-      });
-    } catch {
-      // non-blocking if offline
+      }, { merge: true });
+    } catch (error) {
+      throw error;
     }
   }
 
-  return syncedUser;
+  return syncUserProfileToFirestore(syncedUser, { forceOnboardingCompleted: true });
 }
 
 export async function signInWithEmailPasswordOrRegister(params: {
@@ -589,170 +525,55 @@ export async function signInWithEmailPasswordOrRegister(params: {
   displayName?: string;
 }): Promise<VeloxaAuthenticatedUser> {
   const cleanEmail = params.email.trim().toLowerCase();
-  const isSuper = cleanEmail === SUPER_ADMIN_EMAIL;
+  if (!cleanEmail || params.password.length < 6) throw new Error('Email atau kata sandi tidak valid.');
   const auth = getFirebaseAuthInstance();
-
-  if (auth && params.password.length >= 6) {
-    try {
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, params.password);
-      const mapped = mapFirebaseUser(cred.user, cleanEmail, params.displayName);
-      const synced = await syncUserProfileToFirestore(mapped);
-      return synced;
-    } catch {
-      try {
-        const created = await createUserWithEmailAndPassword(auth, cleanEmail, params.password);
-        if (params.displayName?.trim()) {
-          try {
-            await updateProfile(created.user, { displayName: params.displayName.trim() });
-          } catch {
-            // ignore
-          }
-        }
-        const mapped = mapFirebaseUser(created.user, cleanEmail, params.displayName);
-        const synced = await syncUserProfileToFirestore(mapped, {
-          forceOnboardingCompleted: isSuper ? true : false,
-          planId: 'free_trial',
-        });
-        return synced;
-      } catch {
-        // fallback below
-      }
-    }
-  }
-
-  const fallbackUid = `usr_${Date.now()}`;
-  const localUser: VeloxaAuthenticatedUser = {
-    uid: fallbackUid,
-    email: cleanEmail,
-    displayName:
-      params.displayName?.trim() ||
-      (isSuper ? 'Super Admin Veloxa AI' : cleanEmail.split('@')[0] || 'Tenant Veloxa'),
-    role: isSuper ? 'admin' : 'user',
-    provider: 'email_password',
-    isSuperAdmin: isSuper,
-    onboardingCompleted: true,
-    activeWorkspaceId: buildWorkspaceIdForUid(fallbackUid),
-    subscriptionPlanId: isSuper ? 'pro_1500k' : 'free_trial',
-  };
-  persistAuthenticatedUser(localUser);
-  return localUser;
+  if (!auth) throw new Error('Konfigurasi Firebase belum tersedia.');
+  const cred = await signInWithEmailAndPassword(auth, cleanEmail, params.password);
+  return syncUserProfileToFirestore(await mapFirebaseUser(cred.user));
 }
 
-export async function signInWithGooglePopup(options?: {
-  isRegistrationFlow?: boolean;
-}): Promise<VeloxaAuthenticatedUser> {
+export async function signInWithGooglePopup(options?: { isRegistrationFlow?: boolean }): Promise<VeloxaAuthenticatedUser> {
   const auth = getFirebaseAuthInstance();
-  if (auth) {
-    try {
-      const provider = new GoogleAuthProvider();
-      const cred = await signInWithPopup(auth, provider);
-      const mapped = mapFirebaseUser(cred.user);
-      const synced = await syncUserProfileToFirestore(
-        mapped,
-        options?.isRegistrationFlow && !mapped.isSuperAdmin
-          ? { forceOnboardingCompleted: false, planId: 'free_trial' }
-          : undefined,
-      );
-      return synced;
-    } catch {
-      try {
-        const anon = await signInAnonymously(auth);
-        const fallback: VeloxaAuthenticatedUser = {
-          uid: anon.user.uid,
-          email: 'founder@veloxa-brand.id',
-          displayName: 'Founder Brand (Google OAuth)',
-          role: 'user',
-          provider: 'google',
-          isSuperAdmin: false,
-          onboardingCompleted: options?.isRegistrationFlow ? false : true,
-          activeWorkspaceId: buildWorkspaceIdForUid(anon.user.uid),
-          subscriptionPlanId: 'free_trial',
-        };
-        const synced = await syncUserProfileToFirestore(fallback, {
-          forceOnboardingCompleted: options?.isRegistrationFlow ? false : true,
-          planId: 'free_trial',
-        });
-        return synced;
-      } catch {
-        // fallback below
-      }
-    }
-  }
-  const fallback: VeloxaAuthenticatedUser = {
-    uid: 'usr_google_demo',
-    email: 'founder@veloxa-brand.id',
-    displayName: 'Founder Brand (Google OAuth)',
-    role: 'user',
-    provider: 'google',
-    isSuperAdmin: false,
-    onboardingCompleted: options?.isRegistrationFlow ? false : true,
-    activeWorkspaceId: 'ws_google_demo',
-    subscriptionPlanId: 'free_trial',
-  };
-  persistAuthenticatedUser(fallback);
-  return fallback;
+  if (!auth) throw new Error('Konfigurasi Firebase belum tersedia.');
+  const provider = new GoogleAuthProvider();
+  const cred = await signInWithPopup(auth, provider);
+  const mapped = await mapFirebaseUser(cred.user);
+  return syncUserProfileToFirestore(mapped, options?.isRegistrationFlow ? { forceOnboardingCompleted: mapped.isSuperAdmin } : undefined);
 }
 
-export function signInQuickRoleSession(targetRole: 'admin' | 'user'): VeloxaAuthenticatedUser {
-  if (targetRole === 'admin') {
-    const adminUser: VeloxaAuthenticatedUser = {
-      uid: 'usr_owner_sosrospg',
-      email: SUPER_ADMIN_EMAIL,
-      displayName: 'Owner Veloxa AI (sosrospg)',
-      role: 'admin',
-      provider: 'super_admin_session',
-      isSuperAdmin: true,
-      onboardingCompleted: true,
-      activeWorkspaceId: 'ws_super_admin',
-      subscriptionPlanId: 'pro_1500k',
-    };
-    persistAuthenticatedUser(adminUser);
-    return adminUser;
-  }
-  const tenantUser: VeloxaAuthenticatedUser = {
-    uid: 'usr_tenant_nusantara',
-    email: 'owner@nusantararun.id',
-    displayName: 'Dimas Pratama (Nusantara Run)',
-    role: 'user',
-    provider: 'demo_tenant',
-    isSuperAdmin: false,
-    onboardingCompleted: true,
-    activeWorkspaceId: 'ws_nusantara_run',
-    subscriptionPlanId: 'pro_1500k',
-    businessName: 'Nusantara Run Festival',
-    city: 'Bandung',
-    category: 'running_event',
-  };
-  persistAuthenticatedUser(tenantUser);
-  return tenantUser;
+/** Demo sessions must never impersonate authenticated users or administrators. */
+export function signInQuickRoleSession(_targetRole: 'admin' | 'user'): VeloxaAuthenticatedUser {
+  throw new Error('Gunakan login Firebase untuk mengakses workspace.');
 }
 
 export async function signOutVeloxaUser(): Promise<null> {
   const auth = getFirebaseAuthInstance();
-  if (auth) {
-    try {
-      await signOut(auth);
-    } catch {
-      // ignore
-    }
-  }
+  if (auth) await signOut(auth);
   persistAuthenticatedUser(null);
   return null;
 }
 
 export function subscribeToFirebaseAuthChanges(
   callback: (user: VeloxaAuthenticatedUser | null) => void,
+  onError?: (error: unknown) => void,
 ): () => void {
   const auth = getFirebaseAuthInstance();
-  if (!auth) return () => {};
-  return onAuthStateChanged(auth, (fbUser) => {
-    if (fbUser && !fbUser.isAnonymous) {
-      const mapped = mapFirebaseUser(fbUser);
-      void syncUserProfileToFirestore(mapped).then((synced) => {
-        callback(synced);
-      });
+  if (!auth) { callback(null); return () => {}; }
+  let generation = 0;
+  const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+    const current = ++generation;
+    if (!fbUser || fbUser.isAnonymous) {
+      persistAuthenticatedUser(null);
+      callback(null);
+      return;
     }
-  });
+    void mapFirebaseUser(fbUser).then(mapped => syncUserProfileToFirestore(mapped)).then((synced) => {
+      if (current === generation) callback(synced);
+    }).catch((error) => {
+      if (current === generation) { callback(null); onError?.(error); }
+    });
+  }, onError);
+  return () => { generation++; unsubscribe(); };
 }
 
 export async function sendVeloxaPasswordReset(email: string): Promise<{
@@ -762,29 +583,11 @@ export async function sendVeloxaPasswordReset(email: string): Promise<{
   resetReferenceCode: string;
 }> {
   const cleanEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) throw new Error('Masukkan alamat email yang valid.');
   const auth = getFirebaseAuthInstance();
-  const resetReferenceCode = `VLX-RST-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-
-  if (auth && cleanEmail.includes('@')) {
-    try {
-      await sendPasswordResetEmail(auth, cleanEmail);
-      return {
-        ok: true,
-        email: cleanEmail,
-        deliveredViaFirebase: true,
-        resetReferenceCode,
-      };
-    } catch {
-      // Fallback if user is a local-first demo tenant or email enumeration protection is active
-    }
-  }
-
-  return {
-    ok: true,
-    email: cleanEmail,
-    deliveredViaFirebase: false,
-    resetReferenceCode,
-  };
+  if (!auth) throw new Error('Konfigurasi Firebase belum tersedia.');
+  await sendPasswordResetEmail(auth, cleanEmail);
+  return { ok: true, email: cleanEmail, deliveredViaFirebase: true, resetReferenceCode: '' };
 }
 
 export function persistPendingRegistrationBrand(brand: VeloxaPendingRegistrationBrand): void {

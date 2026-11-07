@@ -59,7 +59,7 @@ service cloud.firestore {
 
     // Check if the user is authenticated
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.get('firebase', {}).get('sign_in_provider', '') != 'anonymous';
     }
 
     // Check if user owns the resource (for user-owned documents)
@@ -88,17 +88,12 @@ service cloud.firestore {
     // Check if the caller is the bootstrapped Super Admin email
     function isSuperAdminEmail() {
       return isAuthenticated() &&
-        request.auth.token.get('email', '') == 'sosrospg@gmail.com';
+        request.auth.token.get('email', '') == 'sosrospg@gmail.com' && request.auth.token.get('email_verified', false) == true;
     }
 
     // Check if the caller is a Super Admin via Auth custom claim, bootstrap email, or user profile document
     function isSuperAdmin() {
-      return isAuthenticated() && (
-        isSuperAdminEmail() ||
-        request.auth.token.get('role', '') == 'admin' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin')
-      );
+      return isAuthenticated() && (isSuperAdminEmail() || request.auth.token.get('role', '') == 'admin');
     }
 
     // Workspace access helpers
@@ -241,7 +236,7 @@ service cloud.firestore {
         isValidOptionalUrl(data, 'photoURL') &&
         isValidOptionalUrl(data, 'avatarUrl') &&
         (!( 'role' in data ) || data.role in ['user', 'admin']) &&
-        isValidOptionalString(data, 'activeWorkspaceId', 1, 128) &&
+        isValidOptionalString(data, 'activeWorkspaceId', 1, 512) &&
         isValidOptionalList(data, 'workspaceIds', 50) &&
         isValidOptionalString(data, 'subscriptionPlanId', 1, 64) &&
         isValidOptionalNumber(data, 'quotaLimit', 0, 10000000) &&
@@ -268,7 +263,7 @@ service cloud.firestore {
           'targetAudience', 'toneOfVoice', 'primaryColor', 'accentColor',
           'selectedChannels', 'snapshotJson', 'trialEndsAt', 'createdAt', 'updatedAt'
         ]) &&
-        isValidOptionalString(data, 'id', 1, 128) &&
+        isValidOptionalString(data, 'id', 1, 512) &&
         data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
         isValidOptionalList(data, 'memberUids', 100) &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
@@ -534,47 +529,23 @@ service cloud.firestore {
     // Collection Rules
     // ===============================================================
 
+    function initialTrial(data) {
+      return data.get('subscriptionPlanId', 'free_trial') == 'free_trial' &&
+        data.get('quotaLimit', 10) == 10 && data.get('quotaUsed', 0) == 0;
+    }
+
     // 1. Users Collection
     match /users/{userId} {
       // Users can read only their own profile; Super Admins can read all user docs
       allow read: if isOwner(userId) || isSuperAdmin();
 
-      // Users can create their own profile with role 'user' and onboarding plan/quota bounds;
-      // Super Admins can create any valid user profile.
-      allow create: if isAuthenticated() &&
-        isValidUser(request.resource.data) &&
-        uidUnchanged() && (
-          isSuperAdmin() ||
-          (isOwner(userId) &&
-           request.resource.data.get('role', 'user') == 'user' &&
-           (!('subscriptionPlanId' in request.resource.data) ||
-            request.resource.data.subscriptionPlanId in [
-              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
-            ]) &&
-           (!('quotaLimit' in request.resource.data) ||
-            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
-           (!('quotaUsed' in request.resource.data) ||
-            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
-        );
-
-      // Users can update their own profile (including completing onboarding) EXCEPT they cannot
-      // escalate `role` to 'admin' or exceed plan/quota bounds (`quotaLimit <= 500`).
-      allow update: if isAuthenticated() &&
-        isValidUser(request.resource.data) &&
-        uidNotModified() && (
-          isSuperAdmin() ||
-          (isOwner(userId) &&
-           request.resource.data.get('role', 'user') == 'user' &&
-           areImmutableFieldsUnchanged(['uid', 'id', 'role', 'createdAt']) &&
-           (!('subscriptionPlanId' in request.resource.data) ||
-            request.resource.data.subscriptionPlanId in [
-              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
-            ]) &&
-           (!('quotaLimit' in request.resource.data) ||
-            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
-           (!('quotaUsed' in request.resource.data) ||
-            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
-        );
+      // Entitlements are established as a trial and changed only by the server (Duitku integration later).
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && uidUnchanged() &&
+        isOwner(userId) && initialTrial(request.resource.data) &&
+        (request.resource.data.get('role', 'user') == 'user' || isSuperAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && uidNotModified() &&
+        areImmutableFieldsUnchanged(['uid', 'id', 'role', 'createdAt', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed']) &&
+        (isOwner(userId) || isSuperAdmin());
 
       allow delete: if isSuperAdmin();
     }
@@ -590,37 +561,11 @@ service cloud.firestore {
            request.auth.uid in resource.data.memberUids)
         ));
 
-      // Authenticated user can create a workspace they own (with bounded plan/quota), or Super Admin
-      allow create: if isAuthenticated() &&
-        isValidWorkspace(request.resource.data) && (
-          isSuperAdmin() ||
-          (request.resource.data.ownerUid == request.auth.uid &&
-           (!('subscriptionPlanId' in request.resource.data) ||
-            request.resource.data.subscriptionPlanId in [
-              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
-            ]) &&
-           (!('quotaLimit' in request.resource.data) ||
-            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
-           (!('quotaUsed' in request.resource.data) ||
-            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
-        );
-
-      // Owner can update workspace fields and snapshotJson within plan/quota bounds,
-      // while ownerUid and createdAt remain immutable.
-      allow update: if isAuthenticated() &&
-        isValidWorkspace(request.resource.data) && (
-          isSuperAdmin() ||
-          (resource.data.ownerUid == request.auth.uid &&
-           areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt']) &&
-           (!('subscriptionPlanId' in request.resource.data) ||
-            request.resource.data.subscriptionPlanId in [
-              'free', 'free_trial', 'starter', 'starter_500k', 'growth_1000k', 'pro_1500k'
-            ]) &&
-           (!('quotaLimit' in request.resource.data) ||
-            (request.resource.data.quotaLimit >= 0 && request.resource.data.quotaLimit <= 500)) &&
-           (!('quotaUsed' in request.resource.data) ||
-            (request.resource.data.quotaUsed >= 0 && request.resource.data.quotaUsed <= 500)))
-        );
+      allow create: if isAuthenticated() && isValidWorkspace(request.resource.data) &&
+        request.resource.data.ownerUid == request.auth.uid && initialTrial(request.resource.data);
+      allow update: if isAuthenticated() && isValidWorkspace(request.resource.data) &&
+        areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed']) &&
+        (resource.data.ownerUid == request.auth.uid || isSuperAdmin());
 
       allow delete: if isSuperAdmin();
 
@@ -649,13 +594,11 @@ service cloud.firestore {
       // 3.3 Social & Meta Ads Connections Subcollection (status metadata only; no raw OAuth secrets)
       match /connections/{channelId} {
         allow read: if canAccessWorkspace(workspaceId);
-        allow create: if canAccessWorkspace(workspaceId) &&
-          isValidConnection(request.resource.data);
-        allow update: if canAccessWorkspace(workspaceId) &&
-          isValidConnection(request.resource.data) &&
-          areImmutableFieldsUnchanged(['id', 'workspaceId', 'createdAt']);
-        allow delete: if canAccessWorkspace(workspaceId);
+        allow write: if false;
       }
+
+      // Meta tokens, OAuth authorizations, usage, jobs, and authoritative drafts are server-only.
+      // The final default-deny rule covers these paths; no client writes can forge a receipt or connection.
 
       // 3.4 Content Studio Drafts Subcollection
       match /drafts/{draftId} {

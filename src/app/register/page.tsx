@@ -64,7 +64,7 @@ export default function VeloxaRegisterPage() {
         password,
       });
 
-      if (user.isSuperAdmin) {
+      if (user.isSuperAdmin || user.onboardingCompleted) {
         router.push('/');
       } else {
         router.push('/onboarding');
@@ -81,7 +81,7 @@ export default function VeloxaRegisterPage() {
     setErrorMessage(null);
     try {
       const user = await signInWithGooglePopup({ isRegistrationFlow: true });
-      if (user.isSuperAdmin) {
+      if (user.isSuperAdmin || user.onboardingCompleted) {
         router.push('/');
       } else {
         router.push('/onboarding');

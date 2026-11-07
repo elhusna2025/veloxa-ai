@@ -1,20 +1,4 @@
-import { NextResponse } from 'next/server';
-import { executeMetaAdsCampaignOnGraphApi } from '@/lib/veloxa-social-publisher';
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const receipt = await executeMetaAdsCampaignOnGraphApi({
-      campaign: body.campaign,
-      adAccountId: body.adAccountId,
-      metaAccessToken: body.metaAccessToken,
-      targetStatus: body.targetStatus || 'ACTIVE',
-    });
-    return NextResponse.json({ ok: true, receipt });
-  } catch (err) {
-    return NextResponse.json(
-      { ok: false, error: err instanceof Error ? err.message : 'Meta Ads execution failed' },
-      { status: 500 },
-    );
-  }
+import { noStoreJson } from '@/lib/server/http';
+export async function POST() {
+  return noStoreJson({ ok: false, error: 'Eksekusi iklan belum diaktifkan. Fokus saat ini adalah publikasi organik Instagram/Facebook.', code: 'not_implemented' }, 501);
 }

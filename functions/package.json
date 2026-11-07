@@ -2,13 +2,13 @@
   "name": "veloxa-ai-functions",
   "version": "1.0.0",
   "private": true,
-  "main": "lib/index.js",
+  "main": "lib/functions/src/index.js",
   "engines": {
     "node": "22"
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --import tsx --test ../src/lib/veloxa-engine.test.ts"
+    "test": "npm run build && node --test lib/functions/src/*.test.js"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",

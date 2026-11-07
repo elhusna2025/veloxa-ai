@@ -93,6 +93,7 @@ export default function VeloxaOnboardingWizardPage() {
     'youtube_shorts',
   ]);
   const [selectedPlanId, setSelectedPlanId] = useState<SubscriptionPlanId>('free_trial');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [userEmail, setUserEmail] = useState<string>('');
   const [alreadyOnboarded, setAlreadyOnboarded] = useState<boolean>(false);
@@ -122,10 +123,10 @@ export default function VeloxaOnboardingWizardPage() {
       }
     };
 
-    applyUser(getInitialAuthenticatedUser());
     const unsub = subscribeToFirebaseAuthChanges((syncedUser) => {
+      if (!syncedUser) { router.replace('/login'); return; }
       applyUser(syncedUser);
-    });
+    }, () => setErrorMessage('Sesi belum dapat diverifikasi. Silakan masuk kembali.'));
     return () => unsub();
   }, []);
 
@@ -144,7 +145,7 @@ export default function VeloxaOnboardingWizardPage() {
       setStep(1);
       return;
     }
-    setIsSaving(true);
+    setIsSaving(true); setErrorMessage(null);
     try {
       await completeVeloxaOnboarding({
         businessName: businessName.trim(),
@@ -156,6 +157,8 @@ export default function VeloxaOnboardingWizardPage() {
         planId: selectedPlanId,
       });
       router.push('/');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Workspace belum tersimpan. Silakan coba lagi.');
     } finally {
       setIsSaving(false);
     }
@@ -168,6 +171,7 @@ export default function VeloxaOnboardingWizardPage() {
       maxWidthClass="max-w-[1180px]"
     >
       <div className="space-y-8" data-testid="veloxa-onboarding-wizard-page">
+        {errorMessage && <div role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{errorMessage}</div>}
         {/* Top Onboarding Header & 3-Step Progress Stepper */}
         <div className="veloxa-luxury-card-pink rounded-[2rem] border border-pink-200 bg-white p-6 sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -649,7 +653,7 @@ export default function VeloxaOnboardingWizardPage() {
             {/* Paid Monthly Plans Grid */}
             <div>
               <p className="text-xs font-black uppercase tracking-wider text-neutral-500 mb-3">
-                Atau Langsung Pilih Paket Produksi Penuh Bulanan:
+                Paket berbayar tersedia setelah integrasi Duitku diaktifkan:
               </p>
               <div className="grid gap-4 sm:grid-cols-3">
                 {(['starter_500k', 'growth_1000k', 'pro_1500k'] as const).map((planId) => {
@@ -659,9 +663,9 @@ export default function VeloxaOnboardingWizardPage() {
                   return (
                     <div
                       key={planId}
-                      onClick={() => setSelectedPlanId(planId)}
+                      aria-disabled="true"
                       data-testid={`onboard-plan-${planId}`}
-                      className={`cursor-pointer rounded-2xl border p-5 transition flex flex-col justify-between ${
+                      className={`cursor-default rounded-2xl border p-5 opacity-70 flex flex-col justify-between ${
                         active
                           ? 'border-2 border-[#EC749B] bg-[#FFF9FB] shadow-sm'
                           : 'border-neutral-200 bg-white hover:border-pink-200'
@@ -718,7 +722,7 @@ export default function VeloxaOnboardingWizardPage() {
                     ? 'Menyimpan ke Cloud Firestore & Membuka Dashboard...'
                     : selectedPlanId === 'free_trial'
                       ? 'Aktifkan Free Trial (Rp0) & Masuk ke Dashboard →'
-                      : `Aktifkan ${SUBSCRIPTION_PLANS[selectedPlanId].name} & Masuk ke Dashboard →`}
+                      : 'Simpan Profil & Masuk ke Dashboard →'}
                 </span>
               </button>
             </div>

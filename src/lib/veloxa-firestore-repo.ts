@@ -74,6 +74,17 @@ export interface PersistedWorkspaceSnapshot {
   updatedAtIso: string;
 }
 
+/** Editing onboarding must not erase a customer's existing assets, drafts, or custom brand fields. */
+export function mergeOnboardingSnapshot(previous: PersistedWorkspaceSnapshot | null, fresh: PersistedWorkspaceSnapshot): PersistedWorkspaceSnapshot {
+  if (!previous || previous.brand.workspaceId !== fresh.brand.workspaceId) return fresh;
+  return {
+    ...previous,
+    brand: { ...previous.brand, businessName: fresh.brand.businessName, city: fresh.brand.city, category: fresh.brand.category, targetAudience: fresh.brand.targetAudience, brandTone: fresh.brand.brandTone },
+    activePlanId: fresh.activePlanId,
+    updatedAtIso: fresh.updatedAtIso,
+  };
+}
+
 const LOCAL_STORAGE_WORKSPACE_PREFIX = 'veloxa_ai_ws_snapshot_v2_';
 const LOCAL_STORAGE_FIREBASE_CFG_KEY = 'veloxa_ai_firebase_config_v1';
 
@@ -81,7 +92,7 @@ let cachedApp: FirebaseApp | null = null;
 let cachedDb: Firestore | null = null;
 
 function getWorkspaceStorageKey(workspaceId: string): string {
-  const cleanId = (workspaceId || 'default').replace(/[^a-zA-Z0-9_-]/g, '');
+  const cleanId = encodeURIComponent(workspaceId || 'default');
   return `${LOCAL_STORAGE_WORKSPACE_PREFIX}${cleanId}`;
 }
 
@@ -108,8 +119,8 @@ export function getDefaultFirebaseConnectionConfig(): VeloxaFirebaseConnectionCo
     messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '503587432700',
     appId:
       process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '1:503587432700:web:64ba9c80619a3692bccf79',
-    openAiApiKeyMasked: 'sk-proj-veloxa-agents-active••••',
-    openAiConnected: true,
+    openAiApiKeyMasked: '',
+    openAiConnected: false,
     firebaseConnected: Boolean(envProjectId && envApiKey),
     lastSyncedAtWib: 'Tersinkron Otomatis ke veloxa-ai-saas',
   };
@@ -583,19 +594,7 @@ export async function syncWorkspaceSnapshotToStore(
   const workspaceId = snapshot.brand.workspaceId || 'default';
   const storageKey = getWorkspaceStorageKey(workspaceId);
 
-  const fingerprintPayload = {
-    workspaceId,
-    brand: snapshot.brand,
-    activePlanId: snapshot.activePlanId,
-    postsUsedThisMonth: snapshot.postsUsedThisMonth,
-    connections: snapshot.connections,
-    metaAccount: snapshot.metaAccount,
-    vaultAssetsCount: snapshot.vaultAssets.length,
-    autonomyConfig: snapshot.autonomyConfig,
-    eventCampaignsCount: snapshot.eventCampaigns.length,
-    draftsCount: snapshot.drafts.length,
-    metaAdCampaignsCount: snapshot.metaAdCampaigns.length,
-  };
+  const { updatedAtIso: _updatedAt, ...fingerprintPayload } = snapshot;
   const nextHash = computePayloadFingerprint(fingerprintPayload);
 
   let syncedToLocal = false;
@@ -610,7 +609,7 @@ export async function syncWorkspaceSnapshotToStore(
     }
   }
 
-  if (nextHash === telemetry.lastPayloadHash && !options?.forceCloudPush) {
+  if (nextHash === telemetry.lastPayloadHash && !telemetry.dirtyPendingCloudSync && !options?.forceCloudPush) {
     telemetry.firestoreOpsSaved += 1;
     telemetry.dirtyPendingCloudSync = false;
     persistLocalFirstTelemetry(telemetry);
@@ -619,14 +618,12 @@ export async function syncWorkspaceSnapshotToStore(
 
   const db = getFirestoreInstance(cfg);
   if (!db) {
-    telemetry.lastPayloadHash = nextHash;
     telemetry.dirtyPendingCloudSync = true;
     persistLocalFirstTelemetry(telemetry);
     return { syncedToFirestore: false, syncedToLocal, telemetry };
   }
 
   if (!options?.forceCloudPush) {
-    telemetry.lastPayloadHash = nextHash;
     telemetry.firestoreOpsSaved += 1;
     telemetry.dirtyPendingCloudSync = true;
     persistLocalFirstTelemetry(telemetry);
@@ -655,7 +652,8 @@ export async function syncWorkspaceSnapshotToStore(
         ? (existingData?.memberUids as string[])
         : [ownerUid];
 
-      const serialized = JSON.stringify(snapshot).slice(0, 480000);
+      const serialized = JSON.stringify(snapshot);
+      if (serialized.length > 480000) throw new Error('Workspace terlalu besar. Unggah media ke Storage sebelum menyimpan.');
       const planSpec =
         SUBSCRIPTION_PLANS[snapshot.activePlanId] || SUBSCRIPTION_PLANS.free_trial;
 
@@ -668,18 +666,13 @@ export async function syncWorkspaceSnapshotToStore(
         city: (snapshot.brand.city || 'Jakarta').slice(0, 80),
         targetAudience: (snapshot.brand.targetAudience || '').slice(0, 500),
         toneOfVoice: (snapshot.brand.brandTone || '').slice(0, 250),
-        subscriptionPlanId: snapshot.activePlanId,
-        quotaLimit: planSpec.monthlyPostQuota,
-        quotaUsed: Math.min(500, Math.max(0, snapshot.postsUsedThisMonth)),
+        ...(!existingData ? { subscriptionPlanId: 'free_trial', quotaLimit: SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota, quotaUsed: 0, onboardingCompleted: false } : {}),
         autonomyEnabled: Boolean(snapshot.autonomyConfig?.enabled),
-        onboardingCompleted: true,
-        selectedChannels: snapshot.connections
-          .filter((c) => c.connected)
-          .map((c) => c.channel),
+        selectedChannels: snapshot.autonomyConfig?.targetChannels || [],
         snapshotJson: serialized,
         createdAt,
         updatedAt: snapshot.updatedAtIso,
-      });
+      }, { merge: true });
 
       telemetry.firestoreWrites += 1;
       telemetry.lastPayloadHash = nextHash;
@@ -718,7 +711,7 @@ export async function loadWorkspaceSnapshotFromStore(
         if (
           parsed?.brand?.workspaceId === workspaceId &&
           !Number.isNaN(ageMs) &&
-          ageMs < LOCAL_CACHE_TTL_MS
+          ageMs >= 0 && ageMs < LOCAL_CACHE_TTL_MS
         ) {
           const { sanitized, wasModified } = sanitizeLegacySeededSnapshot(parsed);
           if (wasModified) {
@@ -758,7 +751,7 @@ export async function loadWorkspaceSnapshotFromStore(
         const rawDoc = snap.data() as Record<string, unknown>;
         if (typeof rawDoc.snapshotJson === 'string' && rawDoc.snapshotJson.length > 10) {
           const cloudData = JSON.parse(rawDoc.snapshotJson) as PersistedWorkspaceSnapshot;
-          if (cloudData && cloudData.brand) {
+          if (cloudData?.brand?.workspaceId === workspaceId) {
             const { sanitized, wasModified } = sanitizeLegacySeededSnapshot(cloudData);
             if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
               try {
@@ -815,6 +808,7 @@ export async function loadWorkspaceSnapshotFromStore(
       const raw = window.localStorage.getItem(storageKey);
       if (raw) {
         const parsed = JSON.parse(raw) as PersistedWorkspaceSnapshot;
+        if (parsed?.brand?.workspaceId !== workspaceId) return { snapshot: null, telemetry };
         const { sanitized } = sanitizeLegacySeededSnapshot(parsed);
         telemetry.localReads += 1;
         persistLocalFirstTelemetry(telemetry);

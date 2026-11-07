@@ -1,0 +1,12 @@
+import { createSocialContent, listSocialContent } from '@/lib/server/content';
+import { errorResponse, noStoreJson } from '@/lib/server/http';
+export const runtime = 'nodejs';
+export const maxDuration = 120;
+export async function POST(request: Request) {
+  try { return noStoreJson({ ok: true, ...await createSocialContent(request) }); }
+  catch (error) { return errorResponse(error); }
+}
+export async function GET(request: Request) {
+  try { return noStoreJson({ ok: true, ...await listSocialContent(request, new URL(request.url).searchParams.get('workspaceId')) }); }
+  catch (error) { return errorResponse(error); }
+}

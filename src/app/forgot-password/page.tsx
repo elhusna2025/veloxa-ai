@@ -33,19 +33,12 @@ export default function VeloxaForgotPasswordPage() {
 
     setBusy(true);
     setErrorMsg(null);
-    const res = await sendVeloxaPasswordReset(cleanEmail);
-    setBusy(false);
-
-    if (!res.ok) {
-      setErrorMsg("Failed to send password reset link.");
-      return;
-    }
-
-    setResetResult({
-      referenceCode: res.resetReferenceCode,
-      deliveredViaFirebase: res.deliveredViaFirebase,
-      sentToEmail: cleanEmail,
-    });
+    try {
+      const res = await sendVeloxaPasswordReset(cleanEmail);
+      setResetResult({ referenceCode: res.resetReferenceCode, deliveredViaFirebase: res.deliveredViaFirebase, sentToEmail: cleanEmail });
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : (isId ? 'Tautan reset belum dapat dikirim. Silakan coba lagi.' : 'Unable to send a reset link. Please try again.'));
+    } finally { setBusy(false); }
   }
 
   return (
@@ -107,15 +100,13 @@ export default function VeloxaForgotPasswordPage() {
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EC749B] px-3.5 py-1 text-[11px] font-extrabold text-white">
                   ✓ {isId ? "Tautan Pemulihan Terkirim" : "Recovery Link Dispatched"}
                 </span>
-                <span className="rounded-xl bg-white border border-[#FBCFE0] px-3 py-1 font-mono text-xs font-extrabold text-neutral-900">
-                  REF: {resetResult.referenceCode}
-                </span>
+
               </div>
 
               <h3 className="text-lg font-extrabold text-neutral-900">
                 {isId
-                  ? `Instruksi reset password telah dikirim ke ${resetResult.sentToEmail}`
-                  : `Password reset instructions sent to ${resetResult.sentToEmail}`}
+                  ? `Jika akun terdaftar, instruksi reset akan dikirim ke ${resetResult.sentToEmail}`
+                  : `If an account exists, reset instructions will be sent to ${resetResult.sentToEmail}`}
               </h3>
 
               <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
@@ -132,13 +123,10 @@ export default function VeloxaForgotPasswordPage() {
                   <span className="text-neutral-500">{isId ? "Email Tujuan:" : "Target Email:"}</span>
                   <span className="font-bold text-neutral-900">{resetResult.sentToEmail}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-neutral-500">{isId ? "Kode Referensi:" : "Reference Code:"}</span>
-                  <span className="font-mono font-bold text-[#EC749B]">{resetResult.referenceCode}</span>
-                </div>
+
                 <div className="flex items-center justify-between">
                   <span className="text-neutral-500">{isId ? "Masa Berlaku Tautan:" : "Link Expiration:"}</span>
-                  <span className="font-semibold text-neutral-900">60 {isId ? "Menit" : "Minutes"}</span>
+                  <span className="font-semibold text-neutral-900">{isId ? "Mengikuti ketentuan Firebase" : "Subject to Firebase policy"}</span>
                 </div>
               </div>
 

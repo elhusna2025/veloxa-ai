@@ -200,7 +200,13 @@ test('buildMetaAdCampaignPlan enforces Hard Budget Cap and runMetaAdsAutonomousO
   assert.equal(plan.optimizationLogs.length, 1);
   assert.equal(plan.optimizationLogs[0].actionType, 'cap_guard_enforced');
 
-  // Run autonomous Media Buyer optimizer
+  // Only actual running campaigns with observed conversion metrics may be optimized.
+  assert.deepEqual(runMetaAdsAutonomousOptimizer(plan), plan);
+  plan.status = 'active_running';
+  plan.creatives[0].metrics.conversions = 20;
+  plan.creatives[0].metrics.costPerResultIdr = 1000;
+  plan.creatives[1].metrics.conversions = 2;
+  plan.creatives[1].metrics.costPerResultIdr = 2500;
   const optimized = runMetaAdsAutonomousOptimizer(plan);
   assert.equal(optimized.status, 'active_running');
   const winner = optimized.creatives.find((c) => c.status === 'winner_scaled');
@@ -257,7 +263,7 @@ test('calculateTenantUnitEconomics and quota guards protect SaaS gross margins a
   assert.equal(adminSummary.averageGrossMarginPct, 88);
 });
 
-test('5 specialized OpenAI Agents and Multi-Channel Publisher execute end-to-end', async () => {
+test('agent definitions and local drafts do not fabricate publishing receipts', async () => {
   assert.equal(Object.keys(VELOXA_OPENAI_AGENTS).length, 5);
   assert.equal(VELOXA_OPENAI_AGENTS.styleDnaVision.agentId, 'agt_veloxa_style_dna_vision_v1');
   assert.equal(VELOXA_OPENAI_AGENTS.metaAdsArchitect.agentId, 'agt_veloxa_meta_ads_architect_v1');
@@ -281,11 +287,8 @@ test('5 specialized OpenAI Agents and Multi-Channel Publisher execute end-to-end
   assert.equal(creatorRes.draft.qualityReview.passed, true);
   assert.equal(creatorRes.draft.targetChannels.length, 4);
 
-  const publishRes = await publishDraftToConnectedChannels({
-    draft: creatorRes.draft,
-  });
-  assert.equal(publishRes.receipts.length, 4);
-  assert.ok(publishRes.receipts.every((r) => r.status === 'published'));
+  await assert.rejects(publishDraftToConnectedChannels({ draft: creatorRes.draft }), /endpoint server/);
+  assert.ok(creatorRes.draft.channelStatuses.every(channel => channel.status === 'pending' && !channel.permalink));
 
   const metaPlan = buildMetaAdCampaignPlan({
     brand: BRAND_PRESETS.running_event,
@@ -307,13 +310,7 @@ test('5 specialized OpenAI Agents and Multi-Channel Publisher execute end-to-end
     durationDays: 7,
   });
 
-  const metaReceipt = await executeMetaAdsCampaignOnGraphApi({
-    campaign: metaPlan,
-    adAccountId: 'act_889900112233',
-    targetStatus: 'ACTIVE',
-  });
-  assert.equal(metaReceipt.status, 'ACTIVE');
-  assert.equal(metaReceipt.metaAdRemoteIds.length, 2);
+  await assert.rejects(executeMetaAdsCampaignOnGraphApi({ campaign: metaPlan, adAccountId: 'act_889900112233', targetStatus: 'ACTIVE' }), /belum diaktifkan/);
 });
 
 test('Local-First Cost Guard FNV-1a fingerprinting and Visual Poster SVG Renderer work deterministically', () => {

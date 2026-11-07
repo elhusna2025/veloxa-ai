@@ -18,3 +18,7 @@ firestore-debug.log*
 .DS_Store
 *.tsbuildinfo
 next-env.d.ts
+
+# Compiled Functions and local browser evidence
+/functions/lib/
+/test-results/veloxa-e2e/

@@ -18,7 +18,6 @@ import {
 import { VeloxaDedicatedPageShell } from '@/components/VeloxaDedicatedPageShell';
 import {
   SUPER_ADMIN_EMAIL,
-  signInQuickRoleSession,
   signInWithEmailPasswordOrRegister,
   signInWithGooglePopup,
 } from '@/lib/veloxa-auth';
@@ -66,15 +65,13 @@ export default function VeloxaLoginPage() {
       } else {
         router.push('/');
       }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Login Google belum berhasil.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleQuickRoleLogin = (role: 'user' | 'admin') => {
-    signInQuickRoleSession(role);
-    router.push('/');
-  };
 
   return (
     <VeloxaDedicatedPageShell activePage="login">
@@ -143,7 +140,7 @@ export default function VeloxaLoginPage() {
                 Alamat Email Bisnis <span className="text-[#EC749B]">*</span>
               </label>
               <span id="login-email-hint" className="mt-0.5 block text-[11px] text-neutral-500">
-                Format: owner@namabisnis.id (gunakan {SUPER_ADMIN_EMAIL} untuk akses Super Admin)
+                Gunakan alamat email yang terdaftar pada akun Anda.
               </span>
               <div className="veloxa-input-wrap relative mt-1.5">
                 <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -246,47 +243,7 @@ export default function VeloxaLoginPage() {
             </button>
           </form>
 
-          {/* Instant Demo Access Section for Quick Inspection */}
-          <div className="mt-7 rounded-2xl border border-pink-200/80 bg-pink-50/40 p-4">
-            <p className="text-xs font-black text-neutral-900">
-              ⚡ Akses Simulasi Instan (1-Klik Tanpa Ketik Password):
-            </p>
-            <p className="mt-0.5 text-[11px] text-neutral-600">
-              Gunakan tombol di bawah ini untuk langsung menguji Workspace Pelanggan atau Super Admin Command Center:
-            </p>
-            <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-              <button
-                type="button"
-                data-testid="login-quick-customer-btn"
-                onClick={() => handleQuickRoleLogin('user')}
-                className="veloxa-luxury-card rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-left text-xs font-bold text-neutral-800 hover:border-pink-300"
-              >
-                <span className="block font-black text-[#D85A88]">🚀 Masuk sebagai Pelanggan</span>
-                <span className="text-[11px] text-neutral-500">Nusantara Run & Cafe Studio</span>
-              </button>
-              <button
-                type="button"
-                data-testid="login-quick-admin-btn"
-                onClick={() => handleQuickRoleLogin('admin')}
-                className="veloxa-luxury-card rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-left text-xs font-bold text-neutral-800 hover:border-pink-300"
-              >
-                <span className="block font-black text-neutral-900">🛡️ Masuk sebagai Super Admin</span>
-                <span className="text-[11px] text-neutral-500">{SUPER_ADMIN_EMAIL}</span>
-              </button>
-            </div>
-          </div>
 
-          {/* Link to Registration & Legal Pages */}
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-5 text-xs">
-            <span className="text-neutral-600">Belum memiliki akun bisnis Veloxa AI?</span>
-            <Link
-              href="/register"
-              data-testid="login-to-register-link"
-              className="font-black text-[#D85A88] hover:underline"
-            >
-              Daftarkan Bisnis Baru Sekarang →
-            </Link>
-          </div>
         </section>
 
         {/* RIGHT COLUMN: Luxury Brand & Security Assurance Showcase */}
