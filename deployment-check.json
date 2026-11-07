@@ -1,0 +1,8 @@
+{
+  "project": "veloxa-ai-saas",
+  "sourceCommit": "d138a0bf073bffb91dbed10d87ef92aae1cf19af",
+  "credentialConfigured": false,
+  "successful": false,
+  "reason": "missing_firebase_token",
+  "runUrl": "https://github.com/elhusna2025/veloxa-ai/actions/runs/42320072392"
+}
