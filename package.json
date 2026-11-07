@@ -10,7 +10,7 @@
     "dev": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache NODE_OPTIONS='--no-experimental-webstorage' next dev -p 3035",
     "build": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production next build",
     "build:mobile": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache NODE_OPTIONS='--no-experimental-webstorage' NODE_ENV=production NEXT_OUTPUT_EXPORT=true next build",
-    "start": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache next start -p 3035",
+    "start": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache next start -p ${PORT:-3035}",
     "typecheck": "tsc --noEmit",
     "test": "mkdir -p /tmp/veloxa-ai-cache/fontconfig && XDG_CACHE_HOME=/tmp/veloxa-ai-cache node --import tsx --test src/lib/*.test.ts src/lib/server/*.test.ts",
     "functions:build": "npm --prefix functions run build",
