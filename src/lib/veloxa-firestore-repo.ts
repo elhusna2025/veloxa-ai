@@ -200,6 +200,43 @@ export function getFirestoreInstance(cfg?: VeloxaFirebaseConnectionConfig): Fire
  * Builds a 100% real, honest zero-state PersistedWorkspaceSnapshot tailored to the authenticated
  * user's onboarded brand in Cloud Firestore (0 dummy posts, 0 dummy assets, 0 fake connected handles).
  */
+export function buildWorkspaceSnapshotSyncPayload(params: {
+  workspaceId: string;
+  ownerUid: string;
+  memberUids: string[];
+  existingData: Record<string, unknown> | null;
+  snapshot: PersistedWorkspaceSnapshot;
+  serialized: string;
+}): Record<string, unknown> {
+  const { workspaceId, ownerUid, memberUids, existingData, snapshot, serialized } = params;
+  const immutableFields = existingData
+    ? {
+        ...(Object.prototype.hasOwnProperty.call(existingData, 'id') ? { id: existingData.id } : {}),
+        ...(Object.prototype.hasOwnProperty.call(existingData, 'ownerUid') ? { ownerUid: existingData.ownerUid } : {}),
+        ...(Object.prototype.hasOwnProperty.call(existingData, 'createdAt') ? { createdAt: existingData.createdAt } : {}),
+      }
+    : {
+        id: workspaceId,
+        ownerUid,
+        createdAt: snapshot.updatedAtIso || new Date().toISOString(),
+      };
+
+  return {
+    ...immutableFields,
+    memberUids,
+    name: (snapshot.brand.businessName || 'Veloxa Workspace').slice(0, 110),
+    category: (snapshot.brand.category || 'cafe_fnb').slice(0, 70),
+    city: (snapshot.brand.city || 'Jakarta').slice(0, 80),
+    targetAudience: (snapshot.brand.targetAudience || '').slice(0, 500),
+    toneOfVoice: (snapshot.brand.brandTone || '').slice(0, 250),
+    ...(!existingData ? { subscriptionPlanId: 'free_trial', quotaLimit: SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota, quotaUsed: 0, onboardingCompleted: false } : {}),
+    autonomyEnabled: Boolean(snapshot.autonomyConfig?.enabled),
+    selectedChannels: snapshot.autonomyConfig?.targetChannels || [],
+    snapshotJson: serialized,
+    updatedAt: snapshot.updatedAtIso,
+  };
+}
+
 export function buildRealInitialWorkspaceSnapshot(params: {
   workspaceId: string;
   businessName: string;
@@ -646,8 +683,6 @@ export async function syncWorkspaceSnapshotToStore(
 
       const ownerUid =
         (existingData?.ownerUid as string) || currentUid;
-      const createdAt =
-        (existingData?.createdAt as string) || snapshot.updatedAtIso || new Date().toISOString();
       const memberUids = Array.isArray(existingData?.memberUids)
         ? (existingData?.memberUids as string[])
         : [ownerUid];
@@ -657,22 +692,14 @@ export async function syncWorkspaceSnapshotToStore(
       const planSpec =
         SUBSCRIPTION_PLANS[snapshot.activePlanId] || SUBSCRIPTION_PLANS.free_trial;
 
-      await setDoc(wsRef, {
-        id: workspaceId,
+      await setDoc(wsRef, buildWorkspaceSnapshotSyncPayload({
+        workspaceId,
         ownerUid,
         memberUids,
-        name: (snapshot.brand.businessName || 'Veloxa Workspace').slice(0, 110),
-        category: (snapshot.brand.category || 'cafe_fnb').slice(0, 70),
-        city: (snapshot.brand.city || 'Jakarta').slice(0, 80),
-        targetAudience: (snapshot.brand.targetAudience || '').slice(0, 500),
-        toneOfVoice: (snapshot.brand.brandTone || '').slice(0, 250),
-        ...(!existingData ? { subscriptionPlanId: 'free_trial', quotaLimit: SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota, quotaUsed: 0, onboardingCompleted: false } : {}),
-        autonomyEnabled: Boolean(snapshot.autonomyConfig?.enabled),
-        selectedChannels: snapshot.autonomyConfig?.targetChannels || [],
-        snapshotJson: serialized,
-        createdAt,
-        updatedAt: snapshot.updatedAtIso,
-      }, { merge: true });
+        existingData,
+        snapshot,
+        serialized,
+      }), { merge: true });
 
       telemetry.firestoreWrites += 1;
       telemetry.lastPayloadHash = nextHash;
