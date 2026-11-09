@@ -20,6 +20,7 @@ const buildPayload = (existingData: Record<string, unknown> | null) =>
     ownerUid: 'owner-current',
     memberUids: ['owner-current'],
     existingData,
+    expectedRevision:existingData?0:undefined,
     snapshot,
     serialized: '{"brand":{}}',
   });

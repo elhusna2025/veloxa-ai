@@ -10,6 +10,8 @@
  *    normalized queryable fields, plus real tenant listing from Firestore for Super Admin.
  */
 
+import type { Auth } from 'firebase/auth';
+import { SnapshotConflictError, snapshotRevision, nextSnapshotRevision } from './workspace-snapshot-revision';
 import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   collection,
@@ -18,6 +20,7 @@ import {
   getDocs,
   getFirestore,
   setDoc,
+  runTransaction,
   type Firestore,
 } from 'firebase/firestore';
 import {
@@ -90,6 +93,7 @@ const LOCAL_STORAGE_FIREBASE_CFG_KEY = 'veloxa_ai_firebase_config_v1';
 
 let cachedApp: FirebaseApp | null = null;
 let cachedDb: Firestore | null = null;
+const verifiedSnapshotRevisions = new Map<string, number>();
 
 function getWorkspaceStorageKey(workspaceId: string): string {
   const cleanId = encodeURIComponent(workspaceId || 'default');
@@ -207,8 +211,11 @@ export function buildWorkspaceSnapshotSyncPayload(params: {
   existingData: Record<string, unknown> | null;
   snapshot: PersistedWorkspaceSnapshot;
   serialized: string;
+  expectedRevision?: number;
 }): Record<string, unknown> {
   const { workspaceId, ownerUid, memberUids, existingData, snapshot, serialized } = params;
+  const nextRevision=nextSnapshotRevision(existingData,params.expectedRevision);
+  const revision=existingData?.snapshotJson===serialized?nextRevision-1:nextRevision;
   const immutableFields = existingData
     ? {
         ...(Object.prototype.hasOwnProperty.call(existingData, 'id') ? { id: existingData.id } : {}),
@@ -233,6 +240,7 @@ export function buildWorkspaceSnapshotSyncPayload(params: {
     autonomyEnabled: Boolean(snapshot.autonomyConfig?.enabled),
     selectedChannels: snapshot.autonomyConfig?.targetChannels || [],
     snapshotJson: serialized,
+    snapshotRevision: revision,
     updatedAt: snapshot.updatedAtIso,
   };
 }
@@ -618,6 +626,22 @@ export async function saveChannelConnectionToFirestore(
   }
 }
 
+/** Transaction reads and revision comparison are inseparable; a retry never adopts a newer baseline. */
+export async function commitWorkspaceSnapshot(db: Firestore, workspaceId: string, snapshot: PersistedWorkspaceSnapshot, currentUid: string, expectedRevision: number | undefined): Promise<number> {
+ const wsRef=doc(db,'workspaces',workspaceId);
+ const serialized=JSON.stringify(snapshot);
+ if(serialized.length>480000)throw new Error('Workspace terlalu besar. Unggah media ke Storage sebelum menyimpan.');
+ return runTransaction(db,async transaction=>{
+  const existingSnap=await transaction.get(wsRef);
+  const existingData=existingSnap.exists()?existingSnap.data() as Record<string,unknown>:null;
+  const ownerUid=(existingData?.ownerUid as string)||currentUid;
+  const memberUids=Array.isArray(existingData?.memberUids)?existingData.memberUids as string[]:[ownerUid];
+  const payload=buildWorkspaceSnapshotSyncPayload({workspaceId,ownerUid,memberUids,existingData,snapshot,serialized,expectedRevision});
+  transaction.set(wsRef,payload,{merge:true});
+  return payload.snapshotRevision as number;
+ });
+}
+
 export async function syncWorkspaceSnapshotToStore(
   snapshot: PersistedWorkspaceSnapshot,
   cfg?: VeloxaFirebaseConnectionConfig,
@@ -626,10 +650,14 @@ export async function syncWorkspaceSnapshotToStore(
   syncedToFirestore: boolean;
   syncedToLocal: boolean;
   telemetry: LocalFirstTelemetry;
+  conflict?: boolean;
+  error?: string;
 }> {
   const telemetry = getInitialLocalFirstTelemetry();
   const workspaceId = snapshot.brand.workspaceId || 'default';
   const storageKey = getWorkspaceStorageKey(workspaceId);
+  // Capture the verified baseline before any await: an older queued save cannot adopt a newer revision.
+  const expectedRevision = verifiedSnapshotRevisions.get(workspaceId);
 
   const { updatedAtIso: _updatedAt, ...fingerprintPayload } = snapshot;
   const nextHash = computePayloadFingerprint(fingerprintPayload);
@@ -675,31 +703,8 @@ export async function syncWorkspaceSnapshotToStore(
     }
     const currentUid = auth?.currentUser?.uid;
     if (currentUid) {
-      const wsRef = doc(db, 'workspaces', workspaceId);
-      const existingSnap = await getDoc(wsRef);
-      const existingData = existingSnap.exists()
-        ? (existingSnap.data() as Record<string, unknown>)
-        : null;
-
-      const ownerUid =
-        (existingData?.ownerUid as string) || currentUid;
-      const memberUids = Array.isArray(existingData?.memberUids)
-        ? (existingData?.memberUids as string[])
-        : [ownerUid];
-
-      const serialized = JSON.stringify(snapshot);
-      if (serialized.length > 480000) throw new Error('Workspace terlalu besar. Unggah media ke Storage sebelum menyimpan.');
-      const planSpec =
-        SUBSCRIPTION_PLANS[snapshot.activePlanId] || SUBSCRIPTION_PLANS.free_trial;
-
-      await setDoc(wsRef, buildWorkspaceSnapshotSyncPayload({
-        workspaceId,
-        ownerUid,
-        memberUids,
-        existingData,
-        snapshot,
-        serialized,
-      }), { merge: true });
+      const revision = await commitWorkspaceSnapshot(db, workspaceId, snapshot, currentUid, expectedRevision);
+      verifiedSnapshotRevisions.set(workspaceId, revision);
 
       telemetry.firestoreWrites += 1;
       telemetry.lastPayloadHash = nextHash;
@@ -708,8 +713,12 @@ export async function syncWorkspaceSnapshotToStore(
       persistLocalFirstTelemetry(telemetry);
       return { syncedToFirestore: true, syncedToLocal, telemetry };
     }
-  } catch {
-    // fallback below
+  } catch (error) {
+    if(error instanceof SnapshotConflictError){
+      telemetry.dirtyPendingCloudSync=true;persistLocalFirstTelemetry(telemetry);
+      return {syncedToFirestore:false,syncedToLocal,telemetry,conflict:true,error:error.message};
+    }
+    // A failed or uncertain write never advances the verified baseline.
   }
   telemetry.dirtyPendingCloudSync = true;
   persistLocalFirstTelemetry(telemetry);
@@ -720,6 +729,7 @@ export async function loadWorkspaceSnapshotFromStore(
   workspaceId: string,
   cfg?: VeloxaFirebaseConnectionConfig,
   options?: { forceCloudPull?: boolean },
+  dependencies: { db?: Firestore; auth?: Auth } = {},
 ): Promise<{ snapshot: PersistedWorkspaceSnapshot | null; telemetry: LocalFirstTelemetry }> {
   const telemetry = getInitialLocalFirstTelemetry();
   const storageKey = getWorkspaceStorageKey(workspaceId);
@@ -747,7 +757,6 @@ export async function loadWorkspaceSnapshotFromStore(
             } catch {
               // ignore
             }
-            void syncWorkspaceSnapshotToStore(sanitized, cfg, { forceCloudPush: true });
           }
           telemetry.localReads += 1;
           telemetry.firestoreOpsSaved += 1;
@@ -761,11 +770,11 @@ export async function loadWorkspaceSnapshotFromStore(
   }
 
   // 2. CLOUD FIRESTORE READ (awaits authStateReady so Security Rules pass reliably)
-  const db = getFirestoreInstance(cfg);
+  const db = dependencies.db ?? getFirestoreInstance(cfg);
   if (db) {
     try {
       const { getAuth } = await import('firebase/auth');
-      const auth = cachedApp ? getAuth(cachedApp) : null;
+      const auth = dependencies.auth ?? (cachedApp ? getAuth(cachedApp) : null);
       if (auth && typeof auth.authStateReady === 'function') {
         await auth.authStateReady();
       }
@@ -779,7 +788,8 @@ export async function loadWorkspaceSnapshotFromStore(
         if (typeof rawDoc.snapshotJson === 'string' && rawDoc.snapshotJson.length > 10) {
           const cloudData = JSON.parse(rawDoc.snapshotJson) as PersistedWorkspaceSnapshot;
           if (cloudData?.brand?.workspaceId === workspaceId) {
-            const { sanitized, wasModified } = sanitizeLegacySeededSnapshot(cloudData);
+            verifiedSnapshotRevisions.set(workspaceId,snapshotRevision(rawDoc));
+            const { sanitized } = sanitizeLegacySeededSnapshot(cloudData);
             if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
               try {
                 window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
@@ -787,15 +797,13 @@ export async function loadWorkspaceSnapshotFromStore(
                 // ignore
               }
             }
-            if (wasModified) {
-              void syncWorkspaceSnapshotToStore(sanitized, cfg, { forceCloudPush: true });
-            }
             telemetry.lastCloudSyncWib = nowWibLabel();
             persistLocalFirstTelemetry(telemetry);
             return { snapshot: sanitized, telemetry };
           }
         }
 
+        verifiedSnapshotRevisions.set(workspaceId,snapshotRevision(rawDoc));
         // Workspace document exists in Firestore without `snapshotJson` yet — build real snapshot from its Firestore fields!
         const builtFromFirestore = buildRealInitialWorkspaceSnapshot({
           workspaceId,
@@ -819,8 +827,7 @@ export async function loadWorkspaceSnapshotFromStore(
             // ignore
           }
         }
-        // Save `snapshotJson` back to Firestore asynchronously so subsequent loads have full state
-        void syncWorkspaceSnapshotToStore(builtFromFirestore, cfg, { forceCloudPush: true });
+        // Reading must not start a competing write; onboarding or the caller saves explicitly.
         telemetry.lastCloudSyncWib = nowWibLabel();
         persistLocalFirstTelemetry(telemetry);
         return { snapshot: builtFromFirestore, telemetry };

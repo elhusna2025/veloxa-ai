@@ -90,6 +90,7 @@ test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt
       category: 'custom',
       categoryLabel: 'Lainnya / umum',
       serviceArea: 'Bandung',
+      websiteUrl: '',
       targetAudience: 'Pemilik usaha lokal',
       brandTone: 'Hangat dan jelas',
       defaultCta: 'Hubungi kami',
@@ -136,6 +137,13 @@ test('software provider, customer audience and optional service coverage remain 
   assert.equal(brief.categoryLabel,'Software & SaaS');assert.equal(brief.targetAudience,'Pemilik restoran');assert.equal(brief.serviceArea,area);assert.equal(brief.city,undefined);
   assert.match(brief.extraInstructions,/jika kosong jangan mengarang lokasi/);
  }
+});
+
+test('website is explicit literal context; short professional hooks stay unchanged and prohibited hashtags reject',async()=>{
+ const params=makeParams();params.brand.businessName='Berez ERP';params.brand.brandTone='Profesional';params.brand.websiteUrl='https://berez.example.test';params.brand.forbiddenWords=['termurah'];
+ const output={...generatedCopy,title:'Stok rapi',hook:'Stok lebih rapi',caption:'Berez ERP membantu tim mencatat transaksi dan stok.',hashtags:['#Bisnis']};
+ const {client,calls}=mockClient(output);const result=await createContentAgentGenerator(client as never,agentId)(params);assert.equal(result.draft.hook,output.hook);assert.equal(JSON.parse(String(calls.request!.input)).websiteUrl,params.brand.websiteUrl);
+ for(const hashtags of [['#Termurah'],['BisnisTermurah']]){const bad=mockClient({...output,hashtags});await assert.rejects(createContentAgentGenerator(bad.client as never,agentId)(params),error=>error instanceof Error&&error.message.includes('kata yang dihindari'));}
 });
 
 test('deskripsi bisnis tersimpan dikirim sebagai konteks ke agen konten', async () => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { forbiddenContentMatches } from '../content-policy';
 import { adminBucket, adminDb } from './firebase';
 import { hasWorkspaceAccess, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
@@ -77,6 +78,11 @@ export async function publishSocialContent(request: Request, dependencies: {
     if (job?.state === 'processing' || job?.state === 'needs_attention') throw new ApiError(409, 'Publikasi sedang diproses atau hasilnya perlu diperiksa di akun Meta. Jangan kirim ulang.', 'delivery_in_progress');
     const receipts = (job?.receipts || []) as PublishReceipt[];
     if (job?.state === 'published') return { alreadyPublished: true, receipts };
+    let currentWords:unknown;
+    try{currentWords=JSON.parse(workspace.snapshotJson).brand.forbiddenWords;}catch{throw new ApiError(409,'Profil bisnis belum dapat diverifikasi. Muat ulang profil sebelum menerbitkan.');}
+    const generatedWords=stored.forbiddenWordsAtGeneration??[];
+    if(!Array.isArray(currentWords)||!Array.isArray(generatedWords)||[...currentWords,...generatedWords].some(word=>typeof word!=='string'))throw new ApiError(409,'Daftar kata yang dihindari belum valid. Periksa profil bisnis.');
+    if(forbiddenContentMatches(draft,[...currentWords,...generatedWords]).length)throw new ApiError(409,'Konten memuat kata yang dihindari dalam profil bisnis. Perbaiki atau buat draf baru sebelum menerbitkan.','content_policy_violation');
     for (let index = 0; index < targets.length; index++) {
       const connection = connectionSnaps[index].data();
       if (!connection || (connection.expiresAt && connection.expiresAt <= Date.now())) throw new ApiError(409, 'Sambungkan kembali seluruh akun tujuan sebelum menerbitkan.');

@@ -1,3 +1,4 @@
+import { validateVisualBusinessContext, type VisualBusinessContext } from '../content-business-context';
 import OpenAI, { toFile } from 'openai';
 import { MAX_CONTENT_REFERENCES, MAX_REFERENCE_IMAGE_BYTES, MAX_REFERENCE_TOTAL_BYTES } from '../content-reference-options';
 import sharp from 'sharp';
@@ -10,7 +11,7 @@ export interface SocialPostImageParams {
   cta: string;
   aspectRatio?: '4:5' | '9:16';
   visualDirection?: string;
-  businessContext?: { description:string; audience:string; topic:string };
+  businessContext?: VisualBusinessContext;
   brandPalette?: string[];
   referenceImages?: Buffer[];
   referenceInstruction?: string;
@@ -71,7 +72,7 @@ function buildPrompt(params: SocialPostImageParams): string {
 }
 
 function validateParams(params: SocialPostImageParams): void {
-  if(params.businessContext!==undefined){const context=params.businessContext;for(const [key,max] of [['description',2500],['audience',500],['topic',1000]] as const)if(!context||typeof context[key]!=='string'||context[key].length>max)throw new ApiError(400,'Konteks visual bisnis tidak valid.','invalid_social_image_input');}
+  if(params.businessContext!==undefined){try{validateVisualBusinessContext(params.businessContext);}catch{throw new ApiError(400,'Konteks visual bisnis tidak valid.','invalid_social_image_input');}}
   if(params.brandPalette!==undefined&&(!Array.isArray(params.brandPalette)||params.brandPalette.length>6||params.brandPalette.some(color=>typeof color!=='string'||!/^#[0-9a-f]{6}$/i.test(color))))throw new ApiError(400,'Palet warna brand tidak valid.','invalid_social_image_input');
   const references = params.referenceImages || [];
   if (references.length > MAX_CONTENT_REFERENCES || references.some(bytes => !Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_REFERENCE_IMAGE_BYTES) || references.reduce((sum, bytes) => sum + bytes.length, 0) > MAX_REFERENCE_TOTAL_BYTES || (params.referenceInstruction !== undefined && params.referenceInstruction.length > 1000)) throw new ApiError(400, 'Referensi visual tidak valid.', 'invalid_social_image_input');

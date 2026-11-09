@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { forbiddenContentMatches } from '../content-policy';
 import { businessCategoryLabel } from '../business-categories';
 import { z } from 'zod';
 import { ApiError } from './http';
@@ -81,6 +82,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         category: params.brand.category,
         categoryLabel: businessCategoryLabel(params.brand.category),
         serviceArea: params.brand.city.trim(),
+        websiteUrl: params.brand.websiteUrl,
         targetAudience: params.brand.targetAudience,
         brandTone: params.brand.brandTone,
         defaultCta: params.brand.defaultCta,
@@ -201,6 +203,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
           : slide);
       }
 
+      if(forbiddenContentMatches(draft,params.brand.forbiddenWords).length)throw new ApiError(502,'Naskah AI memuat kata yang dihindari dalam teks atau hashtag. Tinjau panduan konten lalu coba lagi.','content_policy_violation');
       return { draft, engineMode: 'openai_live' };
     } catch (error) {
       if (error instanceof ApiError) throw error;

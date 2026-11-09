@@ -341,12 +341,7 @@ export function runAutonomousQualityRepairLoop(input: {
     }
 
     if (!currentCaption.toLowerCase().includes(input.brand.businessName.toLowerCase().split(' ')[0])) {
-      currentCaption = `${currentCaption}\n\n— ${input.brand.businessName} (${input.brand.city})`;
-      continue;
-    }
-
-    if (currentHook.length < 24) {
-      currentHook = `${currentHook} — Intip rahasia seru dari ${input.brand.businessName}!`;
+      currentCaption = `${currentCaption}\n\n— ${input.brand.businessName}${input.brand.city.trim()?`, melayani ${input.brand.city.trim()}`:''}`;
       continue;
     }
 
@@ -357,7 +352,7 @@ export function runAutonomousQualityRepairLoop(input: {
   const issues: string[] = [];
   if (input.brand.forbiddenWords.some(word => word && `${input.title} ${currentHook} ${currentCaption}`.toLowerCase().includes(word.toLowerCase()))) issues.push('Teks masih memuat kata terlarang.');
   if (!currentCaption.toLowerCase().includes(input.brand.businessName.toLowerCase().split(' ')[0])) issues.push('Caption belum menyebut merek.');
-  if (currentHook.length < 24) issues.push('Hook belum cukup lengkap.');
+  if (!currentHook) issues.push('Hook belum diisi.');
   return {
     repairedHook: currentHook, repairedCaption: currentCaption,
     review: {

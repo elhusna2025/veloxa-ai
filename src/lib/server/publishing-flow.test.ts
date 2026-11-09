@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { profileFingerprint } from '../profile-fingerprint';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createSocialContent } from './content';
@@ -80,8 +81,8 @@ function fixture() {
     referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:{description:string;audience:string;topic:string}; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -128,9 +129,32 @@ test('absent, malformed, other-workspace and client-spoofed flags cannot bypass 
   const f=fixture();const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   f.database.values.set(`${f.ref.path}/generation_usage/${day}`,{count:6});if(policy)f.database.values.set(`platform_configs/generation_${f.ref.id}`,policy);
   const record=f.database.values.get(f.ref.path)!;record.developmentUnlimited=true;const snapshot=JSON.parse(record.snapshotJson);snapshot.generationPolicy={mode:'development',enabled:true};record.snapshotJson=JSON.stringify(snapshot);
-  const request=new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,topic:'Uji',format:'single_post',developmentUnlimited:true,generationPolicy:{mode:'development',enabled:true}})});
+  const request=new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,expectedProfileFingerprint:await profileFingerprint(snapshot.brand),topic:'Uji',format:'single_post',developmentUnlimited:true,generationPolicy:{mode:'development',enabled:true}})});
   await assert.rejects(createSocialContent(request,{authorize:f.authorize as never,generate:async()=>{throw Error('Provider must not be called');}}),error=>error instanceof ApiError&&error.status===429);
   assert.equal(f.generationCount(),6);assert.equal(f.generateCalls(),0);
+ }
+});
+
+test('generation uses saved profile and server default topic; stale fingerprint and huge context spend no quota',async()=>{
+ const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,businessName:'Profil Server',city:'Seluruh Indonesia (online)'};record.snapshotJson=JSON.stringify(snapshot);
+ const request=async(extra:object)=>new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,expectedProfileFingerprint:await profileFingerprint(JSON.parse(record.snapshotJson).brand),topic:'',format:'single_post',...extra})});
+ await assert.rejects(createSocialContent(await request({expectedProfileFingerprint:'0'.repeat(64)}),{authorize:f.authorize as never}),error=>error instanceof ApiError&&error.code==='profile_conflict');assert.equal(f.generationCount(),0);
+ await assert.rejects(createSocialContent(await request({expectedProfileFingerprint:undefined}),{authorize:f.authorize as never}),error=>error instanceof ApiError&&error.code==='profile_conflict');assert.equal(f.generationCount(),0);
+ let input:any;const result=await createSocialContent(await request({}),{authorize:f.authorize as never,storage:f.dependencies.storage,generate:async value=>{input=value;return{draft:generateBrandContentDraft(value),engineMode:'deterministic_local'};},renderImage:async()=>sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer()});assert.equal(input.brand.businessName,'Profil Server');assert.equal(input.customTopic,'Perkenalkan Profil Server, melayani Seluruh Indonesia (online)');assert.equal(result.draft.profileContext?.fingerprint.length,64);assert.equal(f.generationCount(),1);
+ snapshot.brand.offerings=Array.from({length:10},(_,i)=>({id:`p${i}`,title:`Produk ${i}`,highlight:'x'.repeat(3000),priceLabel:'',category:'service'}));record.snapshotJson=JSON.stringify(snapshot);
+ await assert.rejects(createSocialContent(await request({}),{authorize:f.authorize as never}),error=>error instanceof ApiError&&error.code==='profile_context_invalid');assert.equal(f.generationCount(),1);
+});
+
+test('every single and carousel image receives all product details, full description, website, area and tone',async()=>{
+ for(const format of ['single_post','carousel'] as const){const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,businessDescription:'D'.repeat(2000),websiteUrl:'https://business.example.test',brandTone:'Profesional',city:'Indonesia',offerings:Array.from({length:7},(_,i)=>({id:`p${i}`,title:`Produk ${i}`,highlight:`DETAIL_${i}_`+'x'.repeat(300),priceLabel:'',category:'service'}))};record.snapshotJson=JSON.stringify(snapshot);let calls=0;
+ await f.create({format,renderImage:async input=>{calls++;assert.equal(input.businessContext!.description,snapshot.brand.businessDescription);assert.deepEqual(input.businessContext!.offerings,snapshot.brand.offerings);assert.equal(input.businessContext!.websiteUrl,snapshot.brand.websiteUrl);assert.equal(input.businessContext!.brandTone,'Profesional');return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(calls,format==='carousel'?5:1);
+ }
+});
+
+test('publisher blocks old forged-passed hashtags and newly prohibited words before quota or dispatch',async()=>{
+ for(const source of ['current','generation'] as const){const f=fixture();const {draft}=await f.create();const stored=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;stored.draft.hashtags=['#Termurah'];stored.draft.qualityReview.passed=true;
+ if(source==='current'){const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand.forbiddenWords=['termurah'];record.snapshotJson=JSON.stringify(snapshot);}else stored.forbiddenWordsAtGeneration=['termurah'];
+ let sent=0;await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async()=>{sent++;return{externalPostId:'should-not-send'};}}),error=>error instanceof ApiError&&error.code==='content_policy_violation');assert.equal(sent,0);assert.equal(f.count(),0);
  }
 });
 
@@ -142,7 +166,7 @@ test('each no-reference carousel image receives its own exact slide copy and dis
 test('no-reference single and carousel forward real business context; every carousel scene direction reaches renderer',async()=>{
  for(const format of ['single_post','carousel'] as const){
   const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,businessDescription:'Berez ERP untuk stok dan penjualan',targetAudience:'Pemilik usaha',offerings:[{id:'erp',title:'Sistem pengelolaan usaha',highlight:'Catatan stok',priceLabel:'',category:'service'}]};record.snapshotJson=JSON.stringify(snapshot);
-  let seen=0;await f.create({format,topic:'Kenalan dengan Berez ERP',renderImage:async params=>{seen++;assert.match(params.businessContext!.description,/Berez ERP untuk stok dan penjualan/);assert.match(params.businessContext!.description,/Catatan stok/);assert.equal(params.businessContext!.audience,'Pemilik usaha');assert.equal(params.businessContext!.topic,'Kenalan dengan Berez ERP');if(format==='carousel')assert.equal(params.visualDirection,'Visual direction');return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});
+  let seen=0;await f.create({format,topic:'Kenalan dengan Berez ERP',renderImage:async params=>{seen++;assert.match(params.businessContext!.description,/Berez ERP untuk stok dan penjualan/);assert.ok(params.businessContext!.offerings?.some(item=>item.highlight==='Catatan stok'));assert.equal(params.businessContext!.audience,'Pemilik usaha');assert.equal(params.businessContext!.topic,'Kenalan dengan Berez ERP');if(format==='carousel')assert.equal(params.visualDirection,'Visual direction');return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});
   assert.equal(seen,format==='carousel'?5:1);assert.equal(f.generationCount(),1);
  }
 });

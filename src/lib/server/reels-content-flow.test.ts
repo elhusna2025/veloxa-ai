@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { profileFingerprint } from '../profile-fingerprint';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createSocialContent } from './content';
@@ -78,8 +79,8 @@ function fixture() {
     referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:{description:string;audience:string;topic:string}; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -106,6 +107,13 @@ function fixture() {
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+test('every Reels scene receives complete product context and publisher rejects prohibited narration despite forged quality',async()=>{
+ const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,businessDescription:'D'.repeat(2000),websiteUrl:'https://business.example.test',offerings:Array.from({length:7},(_,i)=>({id:`p${i}`,title:`Produk ${i}`,highlight:`DETAIL_${i}`,priceLabel:'',category:'service'})),forbiddenWords:['termurah']};record.snapshotJson=JSON.stringify(snapshot);let calls=0;
+ const {draft}=await f.create({renderImage:async input=>{calls++;assert.deepEqual(input.businessContext!.offerings,snapshot.brand.offerings);assert.equal(input.businessContext!.description,snapshot.brand.businessDescription);assert.equal(input.businessContext!.websiteUrl,snapshot.brand.websiteUrl);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(calls,4);
+ const stored=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;stored.draft.videoScenes[0].voiceover='Solusi termurah';stored.draft.qualityReview.passed=true;
+ let sent=0;await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,reelPublisher:async()=>{sent++;return{externalPostId:'should-not-send'};}}),error=>error instanceof ApiError&&error.code==='content_policy_violation');assert.equal(sent,0);assert.equal(f.count(),0);
+});
 
 test('development policy permits Reels after six daily attempts without changing publish usage',async()=>{
  const f=fixture();const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());

@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
-import { defaultContentTopic, normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
+import { profileFingerprint } from '@/lib/profile-fingerprint';
+import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
 import { ContentGenerationError, type GenerationQuota, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
@@ -435,6 +436,7 @@ export default function VeloxaAiPlatformPage() {
       { forceCloudPush: true },
     ).then((res) => {
       setLocalTelemetry(res.telemetry);
+      if(res.conflict && res.error) setStatusBanner(res.error);
     });
   }, [
     authUser,
@@ -482,7 +484,7 @@ export default function VeloxaAiPlatformPage() {
     setStatusBanner(
       res.syncedToFirestore
         ? `Snapshot Local-First (${res.telemetry.lastPayloadHash}) berhasil disinkronkan ke Cloud Firestore (veloxa-ai-saas)!`
-        : `Perubahan baru tersimpan di perangkat ini dan belum tersinkron ke cloud. Periksa koneksi sebelum melanjutkan.`,
+        : res.error || `Perubahan baru tersimpan di perangkat ini dan belum tersinkron ke cloud. Periksa koneksi sebelum melanjutkan.`,
     );
   };
 
@@ -496,7 +498,7 @@ export default function VeloxaAiPlatformPage() {
     if (value.workspaceId !== brand.workspaceId) throw new Error('Workspace berubah. Buka kembali profil yang ingin disimpan.');
     const epoch = hydrationEpoch.current; const next = normalizeBrandProfile(value);
     const result = await syncWorkspaceSnapshotToStore({ brand: next, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
-    if (!result.syncedToFirestore) throw new Error('Profil belum tersimpan ke cloud. Isian Anda tetap ada; periksa koneksi lalu simpan lagi.');
+    if (!result.syncedToFirestore) throw new Error(result.error || 'Profil belum tersimpan ke cloud. Isian Anda tetap ada; periksa koneksi lalu simpan lagi.');
     if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Muat ulang untuk memeriksa profil tersimpan.');
     setBrand(next); setLocalTelemetry(result.telemetry);
   };
@@ -595,21 +597,22 @@ export default function VeloxaAiPlatformPage() {
     const attempt = {}; generationAttempt.current = attempt;
     const epoch = hydrationEpoch.current;
     const current = () => generationAttempt.current === attempt && hydrationEpoch.current === epoch;
-    let stage: GenerationStage = 'sync';
+    let stage: GenerationStage = 'validation';
+    let requestStarted=false;
     setIsCreatingContent(true); setGenerationFeedback({ status: 'running', stage });
     setStudioFilter('all');
     try {
-      const saved = await syncWorkspaceSnapshotToStore({ brand, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
-      if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
+      const expectedProfileFingerprint = await profileFingerprint(brand);
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || defaultContentTopic(brand), format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      requestStarted=true;
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic(''); setGenerationQuota(result.generationQuota || null);
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });
       setStatusBanner(`Draf dan media final siap ditinjau. ${result.engineMode === 'openai_live' ? 'Caption disusun dengan AI.' : 'Caption memakai template lokal; AI belum tersedia.'} Belum ada konten diterbitkan.`);
     } catch (error) {
-      if (current()) setGenerationFeedback({ status: 'error', stage: error instanceof ContentGenerationError && error.stage ? error.stage : stage, message: error instanceof Error ? error.message : 'Konten belum dapat dibuat. Silakan coba lagi.', requestId: error instanceof ContentGenerationError ? error.requestId : undefined, uncertain: error instanceof ContentGenerationError ? error.uncertain : stage !== 'sync' });
+      if (current()) setGenerationFeedback({ status: 'error', stage: error instanceof ContentGenerationError && error.stage ? error.stage : stage, message: error instanceof Error ? error.message : 'Konten belum dapat dibuat. Silakan coba lagi.', requestId: error instanceof ContentGenerationError ? error.requestId : undefined, uncertain: error instanceof ContentGenerationError ? error.uncertain : requestStarted });
     } finally { if (generationAttempt.current === attempt) { if (!current()) setGenerationFeedback(null); generationAttempt.current = null; setIsCreatingContent(false); } }
   };
   const handlePublishDraftNow = async (draftId: string) => {

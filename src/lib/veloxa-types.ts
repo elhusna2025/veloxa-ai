@@ -184,6 +184,7 @@ export interface OrganicPerformanceMetrics {
 
 export interface ContentDraft {
   id: string;
+  profileContext?: { fingerprint: string; snapshotRevision: number };
   workspaceId: string;
   source: 'manual_studio' | 'autonomous_agent' | 'event_campaign';
   format: ContentFormat;

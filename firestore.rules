@@ -147,23 +147,20 @@ service cloud.firestore {
 
     // Validate optional string (if present and non-null, must be string within length bounds)
     function isValidOptionalString(data, field, minLen, maxLen) {
-      return !(field in data) || data[field] == null ||
-        (data[field] is string &&
-         data[field].size() >= minLen &&
-         data[field].size() <= maxLen);
+      let value = data.get(field, null);
+      return value == null || (value is string && value.size() >= minLen && value.size() <= maxLen);
     }
 
     // Validate optional non-negative number within upper bound
     function isValidOptionalNumber(data, field, minVal, maxVal) {
-      return !(field in data) || data[field] == null ||
-        (data[field] is number &&
-         data[field] >= minVal &&
-         data[field] <= maxVal);
+      let value = data.get(field, null);
+      return value == null || (value is number && value >= minVal && value <= maxVal);
     }
 
     // Validate optional boolean
     function isValidOptionalBool(data, field) {
-      return !(field in data) || data[field] == null || data[field] is bool;
+      let value = data.get(field, null);
+      return value == null || value is bool;
     }
 
     // Validate URL format (must start with https:// or http:// and be bounded)
@@ -175,7 +172,8 @@ service cloud.firestore {
 
     // Validate optional URL field
     function isValidOptionalUrl(data, field) {
-      return !(field in data) || data[field] == null || data[field] == '' || isValidUrl(data[field]);
+      let value = data.get(field, null);
+      return value == null || value == '' || isValidUrl(value);
     }
 
     // Validate email format
@@ -194,9 +192,8 @@ service cloud.firestore {
     }
 
     function isValidOptionalTimestampOrDate(data, field) {
-      return !(field in data) || data[field] == null ||
-        data[field] is timestamp ||
-        isValidDateString(data[field]);
+      let value = data.get(field, null);
+      return value == null || value is timestamp || isValidDateString(value);
     }
 
     // Validate that a list is a list and enforces size limits
@@ -205,12 +202,13 @@ service cloud.firestore {
     }
 
     function isValidOptionalList(data, field, maxSize) {
-      return !(field in data) || data[field] == null || isValidList(data[field], maxSize);
+      let value = data.get(field, null);
+      return value == null || (value is list && value.size() <= maxSize);
     }
 
     function isValidOptionalMap(data, field, maxKeys) {
-      return !(field in data) || data[field] == null ||
-        (data[field] is map && data[field].keys().size() <= maxKeys);
+      let value = data.get(field, null);
+      return value == null || (value is map && value.keys().size() <= maxKeys);
     }
 
     // ===============================================================
@@ -261,7 +259,7 @@ service cloud.firestore {
           'timezone', 'currency', 'subscriptionPlanId', 'quotaUsed', 'quotaLimit',
           'autonomyEnabled', 'onboardingStep', 'onboardingCompleted', 'city',
           'targetAudience', 'toneOfVoice', 'primaryColor', 'accentColor',
-          'selectedChannels', 'snapshotJson', 'trialEndsAt', 'createdAt', 'updatedAt'
+          'selectedChannels', 'snapshotJson', 'snapshotRevision', 'trialEndsAt', 'createdAt', 'updatedAt'
         ]) &&
         isValidOptionalString(data, 'id', 1, 512) &&
         data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
@@ -285,9 +283,18 @@ service cloud.firestore {
         isValidOptionalString(data, 'accentColor', 0, 32) &&
         isValidOptionalList(data, 'selectedChannels', 20) &&
         isValidOptionalString(data, 'snapshotJson', 0, 500000) &&
+        (!('snapshotRevision' in data) || (data.snapshotRevision is int && data.snapshotRevision >= 0 && data.snapshotRevision <= 9007199254740991)) &&
         isValidOptionalTimestampOrDate(data, 'trialEndsAt') &&
         isValidOptionalTimestampOrDate(data, 'createdAt') &&
         isValidOptionalTimestampOrDate(data, 'updatedAt');
+    }
+
+    // A browser with old code cannot silently overwrite a versioned snapshot.
+    function validSnapshotUpdate() {
+      let previous = resource.data.get('snapshotRevision', 0);
+      let next = request.resource.data.get('snapshotRevision', 0);
+      let changed = request.resource.data.get('snapshotJson', '') != resource.data.get('snapshotJson', '');
+      return changed ? next == previous + 1 : next == previous;
     }
 
     function isValidBrandBrain(data) {
@@ -552,6 +559,10 @@ service cloud.firestore {
 
     // 2. Workspaces Collection & Subcollections
     match /workspaces/{workspaceId} {
+      // A transaction must be able to confirm absence before creating its own workspace.
+      // This grants no read of an existing foreign workspace.
+      allow get: if isAuthenticated() && workspaceId == 'ws_' + request.auth.uid &&
+        !exists(/databases/$(database)/documents/workspaces/$(workspaceId));
       // Readable by workspace owner, workspace members, or Super Admin
       allow read: if isSuperAdmin() ||
         (isAuthenticated() && (
@@ -561,11 +572,13 @@ service cloud.firestore {
            request.auth.uid in resource.data.memberUids)
         ));
 
-      allow create: if isAuthenticated() && isValidWorkspace(request.resource.data) &&
-        request.resource.data.ownerUid == request.auth.uid && initialTrial(request.resource.data);
-      allow update: if isAuthenticated() && isValidWorkspace(request.resource.data) &&
+      allow create: if isAuthenticated() &&
+        request.resource.data.get('ownerUid', '') == request.auth.uid && initialTrial(request.resource.data) &&
+        request.resource.data.get('snapshotRevision', 0) == 1 && isValidWorkspace(request.resource.data);
+      allow update: if isAuthenticated() &&
+        (resource.data.ownerUid == request.auth.uid || isSuperAdmin()) &&
         areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed']) &&
-        (resource.data.ownerUid == request.auth.uid || isSuperAdmin());
+        validSnapshotUpdate() && isValidWorkspace(request.resource.data);
 
       allow delete: if isSuperAdmin();
 

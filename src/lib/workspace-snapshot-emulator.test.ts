@@ -1,0 +1,49 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { initializeApp, deleteApp } from 'firebase/app';
+import type { Auth } from 'firebase/auth';
+import { syncUserProfileToFirestore, buildWorkspaceIdForUid } from './veloxa-auth';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, setDoc, terminate } from 'firebase/firestore';
+import { commitWorkspaceSnapshot, buildRealInitialWorkspaceSnapshot, loadWorkspaceSnapshotFromStore } from './veloxa-firestore-repo';
+import { SnapshotConflictError } from './workspace-snapshot-revision';
+const enabled=process.env.VELOXA_FIRESTORE_EMULATOR_HOST;
+test('real Firestore emulator: CAS two tabs, legacy migration, blind writes, tenant isolation and entitlements',{skip:!enabled},async()=>{
+ assert.equal(enabled,'127.0.0.1:8787'); // Never connect this fixture to a live project.
+ const projectId='demo-veloxa-consistency';const suffix=Date.now();
+ const ownerUid=`owner-test-${suffix}`;const newUid=`registration-${suffix}`;
+ const apps=['tab-a','tab-b','outsider','new-user'].map(name=>initializeApp({projectId,apiKey:'demo-key',appId:'demo'},`${name}-${suffix}`));
+ const databases=apps.map((app,index)=>{const db=getFirestore(app);connectFirestoreEmulator(db,'127.0.0.1',8787,{mockUserToken:{sub:index===2?'outside-user':index===3?newUid:ownerUid,email:'fixture@example.test',firebase:{identities:{},sign_in_provider:'password'}}});return db;});
+ const [a,b,outsider,newDb]=databases;const id=buildWorkspaceIdForUid(ownerUid);
+ const snapshot=buildRealInitialWorkspaceSnapshot({workspaceId:id,businessName:'Usaha Awal',city:'Indonesia',category:'software_saas',planId:'free_trial'});
+ try{
+  assert.equal(await commitWorkspaceSnapshot(a,id,snapshot,ownerUid,undefined),1);
+  const beforeA=(await getDoc(doc(a,'workspaces',id))).data()!;const beforeB=(await getDoc(doc(b,'workspaces',id))).data()!;assert.equal(beforeA.snapshotRevision,1);assert.equal(beforeB.snapshotRevision,1);
+  const changed={...snapshot,brand:{...snapshot.brand,businessName:'Profil Terbaru'},updatedAtIso:new Date().toISOString()};
+  assert.equal(await commitWorkspaceSnapshot(a,id,changed,ownerUid,beforeA.snapshotRevision),2);
+  await assert.rejects(commitWorkspaceSnapshot(b,id,{...snapshot,brand:{...snapshot.brand,businessName:'Profil Usang'}},ownerUid,beforeB.snapshotRevision),SnapshotConflictError);
+  await assert.rejects(setDoc(doc(b,'workspaces',id),{snapshotJson:JSON.stringify(snapshot)},{merge:true}),/permission|denied/i);
+  await assert.rejects(setDoc(doc(b,'workspaces',id),{snapshotJson:JSON.stringify(snapshot),snapshotRevision:8},{merge:true}),/permission|denied/i);
+  await assert.rejects(setDoc(doc(a,'workspaces',id),{quotaUsed:999},{merge:true}),/permission|denied/i);
+  await assert.rejects(getDoc(doc(outsider,'workspaces',id)),/permission|denied/i);
+  await assert.rejects(setDoc(doc(a,'platform_configs','generation_any'),{mode:'development',enabled:true}),/permission|denied/i);
+  const saved=(await getDoc(doc(a,'workspaces',id))).data()!;assert.equal(saved.name,'Profil Terbaru');assert.equal(saved.snapshotRevision,2);assert.equal(saved.quotaUsed,0);
+  await setDoc(doc(a,'workspaces',id),{slug:'us aha',logoUrl:'https://example.test/logo.png',timezone:'Asia/Jakarta',currency:'IDR',onboardingStep:2,onboardingCompleted:true,primaryColor:'#0061AD',accentColor:'#FFFFFF',trialEndsAt:'2027-01-01T00:00:00.000Z'},{merge:true});
+  assert.equal(await commitWorkspaceSnapshot(a,id,changed,ownerUid,2),2);
+  const legacyId=`ws_legacy_${suffix}`;const legacy={...snapshot,brand:{...snapshot.brand,workspaceId:legacyId}};
+  const fields={ownerUid:{stringValue:ownerUid},name:{stringValue:'Usaha Lama'},category:{stringValue:'custom'},subscriptionPlanId:{stringValue:'free_trial'},quotaUsed:{integerValue:'0'},quotaLimit:{integerValue:'10'},snapshotJson:{stringValue:JSON.stringify(legacy)}};
+  const seeded=await fetch(`http://127.0.0.1:8787/v1/projects/${projectId}/databases/(default)/documents/workspaces/${legacyId}`,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields})});assert.equal(seeded.ok,true);
+  const edited={...legacy,brand:{...legacy.brand,businessName:'Migrasi Aman'}};
+  assert.equal(await commitWorkspaceSnapshot(a,legacyId,edited,ownerUid,0),1);
+  const migrated=(await getDoc(doc(a,'workspaces',legacyId))).data()!;assert.equal(migrated.name,'Migrasi Aman');assert.equal(migrated.quotaLimit,10);assert.equal(migrated.ownerUid,ownerUid);
+  await assert.rejects(getDoc(doc(outsider,'workspaces',`ws_unknown_${suffix}`)),/permission|denied/i);
+  const registered=await syncUserProfileToFirestore({uid:newUid,email:'new@example.test',displayName:'Pengguna Baru',role:'user',provider:'email_password',isSuperAdmin:false},undefined,{db:newDb,auth:{currentUser:{uid:newUid,isAnonymous:false},authStateReady:async()=>{}} as unknown as Auth});
+  assert.equal(registered.syncedToFirestore,true);const newWs=doc(newDb,'workspaces',buildWorkspaceIdForUid(newUid));
+  const created=(await getDoc(newWs)).data()!;assert.equal(created.snapshotRevision,1);assert.equal(created.ownerUid,newUid);assert.equal(created.quotaUsed,0);assert.equal(created.onboardingCompleted,false);
+  const readOnly=await loadWorkspaceSnapshotFromStore(buildWorkspaceIdForUid(newUid),undefined,{forceCloudPull:true},{db:newDb,auth:{currentUser:{uid:newUid,email:'new@example.test',displayName:'Pengguna Baru'},authStateReady:async()=>{}} as unknown as Auth});
+  assert.equal(readOnly.snapshot?.brand.workspaceId,buildWorkspaceIdForUid(newUid));
+  await new Promise(resolve=>setTimeout(resolve,200));assert.equal((await getDoc(newWs)).data()!.snapshotRevision,1);assert.equal((await getDoc(newWs)).data()!.snapshotJson,undefined);
+  const firstProfile=buildRealInitialWorkspaceSnapshot({workspaceId:buildWorkspaceIdForUid(newUid),businessName:'Usaha Baru',city:'Indonesia',category:'software_saas',planId:'free_trial'});
+  assert.equal(await commitWorkspaceSnapshot(newDb,buildWorkspaceIdForUid(newUid),firstProfile,newUid,1),2);
+  assert.equal((await getDoc(newWs)).data()!.snapshotRevision,2);
+ }finally{await Promise.all(databases.map(db=>terminate(db)));await Promise.all(apps.map(app=>deleteApp(app)));}
+});

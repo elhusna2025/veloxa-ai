@@ -45,7 +45,7 @@ test('budget guards reject zero/low daily caps and totals above the monthly cap'
 
 test('quality gate reports unfinished repairs and treats forbidden words as literals', () => {
   const brand = BRAND_PRESETS.running_event;
-  assert.equal(runAutonomousQualityRepairLoop({ title: 'Test', hook: 'x', caption: 'x', brand, maxAttempts: 1 }).review.passed, false);
+  assert.equal(runAutonomousQualityRepairLoop({ title: 'Test', hook: '', caption: 'x', brand, maxAttempts: 1 }).review.passed, false);
   const result = runAutonomousQualityRepairLoop({ title: 'Test', hook: '[', caption: '[', brand: { ...brand, forbiddenWords: ['['] } });
   assert.equal(result.repairedCaption.includes('['), false);
   assert.equal(result.review.checkedAspects.typographyContrast, false);

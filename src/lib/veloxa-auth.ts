@@ -28,7 +28,7 @@ import {
   type Auth,
   type User,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, writeBatch, type Firestore } from 'firebase/firestore';
 import { SUBSCRIPTION_PLANS } from './veloxa-engine';
 import {
   buildRealInitialWorkspaceSnapshot,
@@ -181,8 +181,9 @@ export async function syncUserProfileToFirestore(
     planId?: SubscriptionPlanId;
     selectedChannels?: SocialChannelId[];
   },
+  dependencies: { auth?: Auth; db?: Firestore } = {},
 ): Promise<VeloxaAuthenticatedUser> {
-  const auth = getFirebaseAuthInstance();
+  const auth = dependencies.auth ?? getFirebaseAuthInstance();
   if (auth && typeof auth.authStateReady === 'function') {
     try {
       await auth.authStateReady();
@@ -194,7 +195,7 @@ export async function syncUserProfileToFirestore(
   const activeUid = auth?.currentUser && !auth.currentUser.isAnonymous ? auth.currentUser.uid : user.uid;
   const workspaceId = user.activeWorkspaceId || buildWorkspaceIdForUid(activeUid);
   const nowIso = new Date().toISOString();
-  const db = getFirestoreInstance();
+  const db = dependencies.db ?? getFirestoreInstance();
 
   if (!db || !auth?.currentUser || auth.currentUser.isAnonymous || auth.currentUser.uid !== user.uid) {
     throw new Error('Sesi Firebase tidak valid. Silakan masuk kembali.');
@@ -332,6 +333,7 @@ export async function syncUserProfileToFirestore(
       });
       const wsPayload: Record<string, unknown> = {
         ...workspaceImmutableFields,
+        ...(!existingWsData ? { snapshotRevision: 1 } : {}),
         memberUids: existingWsData?.memberUids || [(workspaceImmutableFields.ownerUid as string) || activeUid],
         name: resolvedBusinessName,
         category: resolvedCategory,
@@ -345,9 +347,6 @@ export async function syncUserProfileToFirestore(
         onboardingCompleted: resolvedOnboarding,
         onboardingStep: resolvedOnboarding ? 3 : 1,
         selectedChannels: resolvedChannels,
-        ...(typeof existingWsData?.snapshotJson === 'string'
-          ? { snapshotJson: existingWsData.snapshotJson }
-          : {}),
         updatedAt: nowIso,
       };
       if (existingWsData) {
@@ -497,7 +496,7 @@ export async function completeVeloxaOnboarding(params: {
   const realSnapshot = mergeOnboardingSnapshot(previous.snapshot, freshSnapshot);
   realSnapshot.activePlanId = syncedUser.subscriptionPlanId || 'free_trial';
   const result = await syncWorkspaceSnapshotToStore(realSnapshot, undefined, { forceCloudPush: true });
-  if (!result.syncedToFirestore) throw new Error('Workspace belum tersimpan ke cloud. Silakan coba lagi.');
+  if (!result.syncedToFirestore) throw new Error(result.error || 'Workspace belum tersimpan ke cloud. Silakan coba lagi.');
 
   // 3. Write `workspaces/{workspaceId}/brand_brain/main` in Cloud Firestore
   const db = getFirestoreInstance();

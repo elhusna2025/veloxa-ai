@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { businessCategoryLabel } from '../business-categories';
+import { buildVisualBusinessContext } from '../content-business-context';
+import { profileFingerprint } from '../profile-fingerprint';
+import { defaultContentTopic } from '../veloxa-brand-profile';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { adminBucket } from './firebase';
@@ -50,7 +52,7 @@ export async function uploadBrandPhoto(request: Request) {
   return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160));
 }
 
-const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().min(1).max(1000), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional() });
+const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -72,14 +74,14 @@ export async function createSocialContent(request: Request, dependencies: {
   const snapshot = typeof workspace.snapshotJson === 'string' ? JSON.parse(workspace.snapshotJson) : null;
   const brand = snapshot?.brand as BrandProfile | undefined;
   if (!brand || brand.workspaceId !== workspaceId || !brand.businessName) throw new ApiError(409, 'Lengkapi Brand Brain workspace sebelum membuat konten.');
+  const fingerprint=await profileFingerprint(brand);
+  if(input.expectedProfileFingerprint!==fingerprint)throw new ApiError(409,'Profil bisnis telah berubah di tab atau perangkat lain. Isian topik tetap ada. Muat ulang profil sebelum membuat draf.','profile_conflict');
+  const topic=input.topic||defaultContentTopic(brand);
   let brandPalette:string[];
   try { brandPalette=savedBrandPalette(brand); } catch { throw new ApiError(409,'Periksa palet warna di Profil & aset, lalu simpan ulang.'); }
   const paletteParams=brandPalette.length?{brandPalette}:{};
-  const businessContext={
-    description:[`Bidang bisnis penyedia: ${businessCategoryLabel(brand.category)} (bukan bidang pelanggan).`,brand.businessDescription,...(Array.isArray(brand.offerings)?brand.offerings.slice(0,4).flatMap(item=>[item.title,item.highlight]):[])].filter((value):value is string=>typeof value==='string'&&!!value.trim()).join(' · ').slice(0,2500),
-    audience:typeof brand.targetAudience==='string'?brand.targetAudience.slice(0,500):'',
-    topic:input.topic,
-  };
+  let businessContext;
+  try { businessContext=buildVisualBusinessContext(brand,topic); } catch(error){throw new ApiError(409,error instanceof Error?error.message:'Periksa profil bisnis.','profile_context_invalid');}
   const imageContextParams={businessContext};
   const selected = await ref.collection('private_meta_connections').get();
   const connections = selected.docs.map(doc => publicConnection(doc.data() as MetaConnection));
@@ -91,14 +93,15 @@ export async function createSocialContent(request: Request, dependencies: {
   }
   if (input.referenceAssetIds?.length) progress('references');
   const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage);
-  const referenceImageParams = references.length ? { referenceImages: references.map(item => item.bytes), referenceInstruction: input.referenceInstruction || input.topic } : {};
+  const referenceImageParams = references.length ? { referenceImages: references.map(item => item.bytes), referenceInstruction: input.referenceInstruction || topic } : {};
   if (references.length) progress('validation');
   // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
-  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || input.topic } } : {}) });
+  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: topic, vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
-  if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || input.topic; }
+  draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
+  if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
   let media: Awaited<ReturnType<typeof savePublicJpeg>>;
   let storagePaths: string[] | undefined;
@@ -177,7 +180,7 @@ export async function createSocialContent(request: Request, dependencies: {
   }
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
   const targetProviders = Object.fromEntries(selected.docs.map(doc => doc.data() as StoredMetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => [connection.channel, getMetaLoginProvider(connection.loginProvider)]));
-  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
+  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode, profileFingerprint:fingerprint, snapshotRevision:draft.profileContext.snapshotRevision, forbiddenWordsAtGeneration:brand.forbiddenWords })));
   return { draft, engineMode: generated.engineMode, generationQuota };
   } catch (error) {
     if (error instanceof GenerationStageError) throw error;
