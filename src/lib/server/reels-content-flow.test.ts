@@ -78,7 +78,7 @@ function fixture() {
     referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
+    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; brandPalette?:string[] }) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
@@ -115,6 +115,11 @@ test('Reels sends selected references into all four scene image calls and retain
  assert.equal(seen.length,4);for(const input of seen){assert.equal(input.aspectRatio,'9:16');assert.deepEqual(input.referenceImages,ids.map(()=>bytes));assert.equal(input.referenceInstruction,'Presentasi ERP di ruang rapat.');}
  assert.deepEqual(draft.usedRealAssetIds,ids);assert.ok(draft.renderedVideo?.url);assert.equal(f.generationCount(),1);
  }
+});
+
+test('saved DNA reaches all four Reels scene render calls without changing voice settings',async()=>{
+ const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,useBrandPalette:true,primaryColorHex:'#167D8D',accentColorHex:'#FCAB20'};record.snapshotJson=JSON.stringify(snapshot);
+ let seen=0;await f.create({renderImage:async params=>{seen++;assert.deepEqual(params.brandPalette,['#167D8D','#FCAB20']);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(seen,4);assert.equal(f.generationCount(),1);
 });
 
 test('Reels reports actual media/render/save stages and distinguishes failed voice from failed images', async () => {

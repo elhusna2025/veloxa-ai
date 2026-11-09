@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createSocialContent } from './content';
+import { analyzeBrandLogo } from './brand-palette';
 import { loadContentReferences } from './content-references';
 import type { ContentAgentParams } from './content-agent';
 import { changeWorkspacePhotoState, listWorkspacePhotos, persistWorkspacePhoto, previewWorkspacePhoto } from './brand-assets';
@@ -79,7 +80,7 @@ function fixture() {
     referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
+    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; brandPalette?:string[] }) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
@@ -110,6 +111,17 @@ async function seedPhoto(f: ReturnType<typeof fixture>) {
  return {asset,storagePath};
 }
 function photoRequest(f: ReturnType<typeof fixture>, action: 'trash'|'restore', assetId=photoId) { return new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,assetId,action})}); }
+test('saved DNA reaches single and all carousel images with or without references; invalid palette fails before quota',async()=>{
+ for(const format of ['single_post','carousel'] as const)for(const references of [false,true]){
+  const f=fixture();if(references)await seedPhoto(f);
+  const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,useBrandPalette:true,primaryColorHex:'#167D8D',accentColorHex:'#FCAB20',additionalColorHexes:['#263D48']};record.snapshotJson=JSON.stringify(snapshot);
+  let seen=0;await f.create({format,...(references?{referenceAssetIds:[photoId]}:{}),renderImage:async params=>{seen++;assert.deepEqual(params.brandPalette,['#167D8D','#FCAB20','#263D48']);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});
+  assert.equal(seen,format==='carousel'?5:1);assert.equal(f.generationCount(),1);
+ }
+ const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,useBrandPalette:true,primaryColorHex:'invalid'};record.snapshotJson=JSON.stringify(snapshot);
+ await assert.rejects(f.create(),error=>error instanceof ApiError&&error.status===409);assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);
+});
+
 test('vault uploads create private objects, expose only authenticated preview paths, and clean failed metadata writes',async()=>{
  const f=fixture();const bytes=Buffer.from('private fixture');const writes:any[]=[];const deleted:string[]=[];
  const storage={name:'private-fixture',file:(path:string)=>({save:async(data:Buffer,options:any)=>{writes.push({path,data,options});},delete:async()=>{deleted.push(path);}})};

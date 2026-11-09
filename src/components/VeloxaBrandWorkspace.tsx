@@ -1,4 +1,6 @@
 'use client';
+import { VeloxaBrandVisualDna } from './VeloxaBrandVisualDna';
+import { veloxaApi } from '@/lib/veloxa-api-client';
 import { AuthenticatedBrandPhoto } from '@/components/AuthenticatedBrandPhoto';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Building2, Check, ImagePlus, Images, Loader2, Plus, RotateCcw, Save, SlidersHorizontal, Trash2, X } from 'lucide-react';
@@ -12,7 +14,7 @@ interface Props {
   onReload: () => Promise<void>;
 }
 const categories: { value: BusinessCategory; label: string }[] = [{value:'custom',label:'Lainnya / umum'},{value:'cafe_fnb',label:'Makanan & minuman'},{value:'running_event',label:'Acara & olahraga'},{value:'clinic_beauty',label:'Kesehatan & kecantikan'},{value:'fashion_retail',label:'Fashion & retail'},{value:'education',label:'Pendidikan'}];
-const tabs = [{id:'identity',label:'Identitas bisnis',icon:Building2},{id:'content',label:'Panduan konten',icon:SlidersHorizontal},{id:'photos',label:'Foto brand',icon:Images}] as const;
+const tabs = [{id:'identity',label:'Identitas bisnis',icon:Building2},{id:'content',label:'Panduan konten',icon:SlidersHorizontal},{id:'dna',label:'DNA visual',icon:SlidersHorizontal},{id:'photos',label:'Foto brand',icon:Images}] as const;
 const inputClass = 'mt-2 w-full rounded-lg border border-neutral-200 bg-white px-3.5 py-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-[#bd416e] focus:outline-none focus:ring-2 focus:ring-[#bd416e]/10 disabled:bg-neutral-50';
 function initialProfile(brand: BrandProfile): BrandProfile { return { ...brand, businessDescription: brand.businessDescription || (brand.offerings[0]?.title.length > 120 ? brand.offerings[0].title : '') }; }
 export function VeloxaBrandWorkspace(props: Props) {
@@ -35,6 +37,13 @@ export function VeloxaBrandWorkspace(props: Props) {
     try { await action();setFeedback({kind:'success',message}); } catch(error) { setFeedback({kind:'error',message:error instanceof Error?error.message:'Perubahan belum berhasil. Silakan coba lagi.'}); }
     finally {operation.current=false;setBusy(null);}
   }
+  function analyzeLogo(assetId:string) {
+    void run('palette',async()=>{
+      const result=await veloxaApi<{colors:string[]}>('/api/veloxa/brand/palette',{method:'POST',body:JSON.stringify({workspaceId:form.workspaceId,assetId})});
+      if(!Array.isArray(result.colors)||!result.colors.length||result.colors.length>6||result.colors.some(color=>!/^#[0-9a-f]{6}$/i.test(color)))throw new Error('Saran warna logo tidak valid. Silakan pilih warna manual.');
+      setForm(previous=>({...previous,logoAssetId:assetId,useBrandPalette:true,primaryColorHex:result.colors[0],accentColorHex:result.colors[1]||result.colors[0],additionalColorHexes:result.colors.slice(2)}));
+    },'Warna logo sudah diambil. Tinjau palet lalu Simpan profil untuk menerapkannya.');
+  }
   async function reload() { setLibraryLoading(true);setLibraryError('');try{await props.onReload();}catch{setLibraryError('Foto belum dapat dimuat. Periksa koneksi lalu coba lagi.');}finally{setLibraryLoading(false);} }
   function pick(file?:File) {
     if(!file)return;
@@ -45,11 +54,12 @@ export function VeloxaBrandWorkspace(props: Props) {
     <section className="relative overflow-hidden rounded-xl border border-[#eadde3] bg-gradient-to-br from-white via-white to-[#f9edf3] p-5 sm:p-7">
       <div className="flex items-start gap-4"><div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-[#a92e5d] text-xl font-semibold text-white">{props.brand.businessName.slice(0,1).toUpperCase()}</div><div className="min-w-0"><p className="text-sm font-medium text-[#a92e5d]">Dasar konten Anda</p><h2 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Kenalkan bisnis Anda.</h2><p className="mt-2 max-w-2xl text-base leading-relaxed text-neutral-500">Profil membentuk naskah dan caption. Foto brand menjadi referensi visual untuk konten Anda.</p></div></div>
     </section>
-    <div role="tablist" aria-label="Bagian profil dan aset" className="grid grid-cols-3 gap-1 rounded-xl border border-neutral-200 bg-white p-1.5">{tabs.map(item=><button key={item.id} type="button" role="tab" id={`brand-tab-${item.id}`} aria-selected={tab===item.id} aria-controls={`brand-panel-${item.id}`} onClick={()=>{setTab(item.id);setFeedback(null);}} className={`flex min-w-0 flex-col items-center justify-center gap-2 rounded-lg px-2 py-3 text-sm font-medium sm:flex-row sm:text-base ${tab===item.id?'bg-[#faf0f4] text-[#a92e5d]':'text-neutral-500 hover:bg-neutral-50'}`}><item.icon size={19}/>{item.label}</button>)}</div>
+    <div role="tablist" aria-label="Bagian profil dan aset" className="grid grid-cols-2 gap-1 sm:grid-cols-4 rounded-xl border border-neutral-200 bg-white p-1.5">{tabs.map(item=><button key={item.id} type="button" role="tab" id={`brand-tab-${item.id}`} aria-selected={tab===item.id} aria-controls={`brand-panel-${item.id}`} disabled={!!busy} onClick={()=>{setTab(item.id);setFeedback(null);}} className={`flex min-w-0 flex-col items-center justify-center gap-2 rounded-lg px-2 py-3 text-sm font-medium sm:flex-row sm:text-base ${tab===item.id?'bg-[#faf0f4] text-[#a92e5d]':'text-neutral-500 hover:bg-neutral-50'}`}><item.icon size={19}/>{item.label}</button>)}</div>
+    {busy==='palette'&&<p role="status" className="flex items-center gap-2 text-base text-neutral-500"><Loader2 size={18} className="animate-spin"/>Mengambil warna logo…</p>}
     {feedback&&<div role={feedback.kind==='error'?'alert':'status'} className={`flex items-start gap-2 rounded-lg border p-4 text-base ${feedback.kind==='error'?'border-red-200 bg-red-50 text-red-900':'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>{feedback.kind==='success'&&<Check size={19} className="mt-0.5 shrink-0"/>}{feedback.message}</div>}
     {tab!=='photos'?<form role="tabpanel" id={`brand-panel-${tab}`} aria-labelledby={`brand-tab-${tab}`} onSubmit={event=>{event.preventDefault();void run('save',()=>props.onSave(normalizeBrandProfile(form)),'Profil tersimpan. Konten berikutnya akan memakai informasi ini.');}} className="veloxa-panel">
-      <fieldset disabled={!!busy} className="p-5 sm:p-7"><legend className="sr-only">{tab==='identity'?'Identitas bisnis':'Panduan konten'}</legend>
-      {tab==='identity'?<div className="space-y-5"><div><h3 className="text-xl font-semibold">Apa yang perlu diketahui tentang bisnis Anda?</h3><p className="mt-1 text-sm text-neutral-500">Gunakan informasi yang benar. Anda dapat memperbaruinya kapan saja.</p></div>
+      <fieldset disabled={!!busy} className="p-5 sm:p-7"><legend className="sr-only">{tab==='identity'?'Identitas bisnis':tab==='dna'?'DNA visual':'Panduan konten'}</legend>
+      {tab==='dna'?<VeloxaBrandVisualDna brand={form} assets={props.assets} busy={!!busy} libraryReady={!libraryLoading&&!libraryError} onChange={patch=>{setForm(previous=>({...previous,...patch}));setFeedback(null);}} onAnalyze={analyzeLogo} onOpenPhotos={()=>setTab('photos')}/>:tab==='identity'?<div className="space-y-5"><div><h3 className="text-xl font-semibold">Apa yang perlu diketahui tentang bisnis Anda?</h3><p className="mt-1 text-sm text-neutral-500">Gunakan informasi yang benar. Anda dapat memperbaruinya kapan saja.</p></div>
         <div className="grid gap-5 sm:grid-cols-2"><label className="block text-sm font-medium" htmlFor="brand-business-name">Nama bisnis <span className="text-[#a92e5d]">*</span><input id="brand-business-name" required maxLength={110} value={form.businessName} onChange={e=>set('businessName',e.target.value)} className={inputClass}/></label><label className="block text-sm font-medium" htmlFor="brand-category">Bidang bisnis<select id="brand-category" value={form.category} onChange={e=>set('category',e.target.value as BusinessCategory)} className={inputClass}>{categories.map(category=><option key={category.value} value={category.value}>{category.label}</option>)}</select></label></div>
         <label className="block text-sm font-medium" htmlFor="brand-description">Tentang bisnis<textarea id="brand-description" rows={4} maxLength={2000} value={form.businessDescription||''} onChange={e=>set('businessDescription',e.target.value)} placeholder="Apa yang Anda tawarkan, untuk siapa, dan apa keunggulannya?" className={inputClass+' resize-y leading-relaxed'}/><span className="mt-2 block text-sm font-normal text-neutral-500">Penjelasan ini membantu AI memahami konteks bisnis Anda.</span></label>
         <div className="grid gap-5 sm:grid-cols-2"><label className="block text-sm font-medium" htmlFor="brand-city">Area layanan<input id="brand-city" maxLength={80} value={form.city} onChange={e=>set('city',e.target.value)} placeholder="Misalnya: seluruh Indonesia" className={inputClass}/></label><label className="block text-sm font-medium" htmlFor="brand-website">Website <span className="font-normal text-neutral-400">(opsional)</span><input id="brand-website" value={form.websiteUrl} onChange={e=>set('websiteUrl',e.target.value)} placeholder="https://bisnisanda.com" className={inputClass}/></label></div>

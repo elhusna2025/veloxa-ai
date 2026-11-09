@@ -48,6 +48,9 @@ export interface BrandProfile {
   city: string;
   targetAudience: string;
   brandTone: string;
+  logoAssetId?: string;
+  useBrandPalette?: boolean;
+  additionalColorHexes?: string[];
   primaryColorHex: string;
   accentColorHex: string;
   visualVibe: string;

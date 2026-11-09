@@ -5,6 +5,7 @@ import { adminBucket } from './firebase';
 import { requireUser, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
 import { GenerationStageError } from './content-generation-stream';
+import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
@@ -69,6 +70,9 @@ export async function createSocialContent(request: Request, dependencies: {
   const snapshot = typeof workspace.snapshotJson === 'string' ? JSON.parse(workspace.snapshotJson) : null;
   const brand = snapshot?.brand as BrandProfile | undefined;
   if (!brand || brand.workspaceId !== workspaceId || !brand.businessName) throw new ApiError(409, 'Lengkapi Brand Brain workspace sebelum membuat konten.');
+  let brandPalette:string[];
+  try { brandPalette=savedBrandPalette(brand); } catch { throw new ApiError(409,'Periksa palet warna di Profil & aset, lalu simpan ulang.'); }
+  const paletteParams=brandPalette.length?{brandPalette}:{};
   const selected = await ref.collection('private_meta_connections').get();
   const connections = selected.docs.map(doc => publicConnection(doc.data() as MetaConnection));
   if (!connections.some(connection => connection.connected)) throw new ApiError(409, 'Hubungkan Facebook Page atau Instagram terlebih dahulu.');
@@ -101,7 +105,7 @@ export async function createSocialContent(request: Request, dependencies: {
     const renderImage = dependencies.renderImage || generateSocialPostImage;
     progress('media');
     const results = await Promise.allSettled([
-      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...referenceImageParams }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
+      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...paletteParams, ...referenceImageParams }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
       (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes.map(scene => scene.voiceover).join(' ')),
     ] as const);
     if (results[0].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Visual Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'images');
@@ -127,6 +131,7 @@ export async function createSocialContent(request: Request, dependencies: {
       title: slide.headline,
       hook: slide.body,
       cta: index === 4 ? brand.defaultCta || 'Simpan' : `${index + 1}/5 · Geser untuk lanjut`,
+      ...paletteParams,
       ...referenceImageParams,
       ...(references.length ? { visualDirection: slide.visualDirection } : {}),
     })));
@@ -157,6 +162,7 @@ export async function createSocialContent(request: Request, dependencies: {
         title: draft.title,
         hook: draft.hook,
         cta: brand.defaultCta || 'Selengkapnya',
+        ...paletteParams,
         ...referenceImageParams,
       });
     }

@@ -22,6 +22,16 @@ async function createJpegFixture(): Promise<Buffer> {
   }).jpeg().toBuffer();
 }
 
+test('explicit saved palette overrides reference decoration colors while protecting products; legacy omits override',async()=>{
+ const image=await sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();let requests:string[]=[];
+ const imageClient={images:{generate:async(request:any)=>{requests.push(request.prompt);return{data:[{b64_json:image.toString('base64')}]};},edit:async(request:any)=>{requests.push(request.prompt);return{data:[{b64_json:image.toString('base64')}]};}}};
+ await generateSocialPostImage({...params,brandPalette:['#167D8D','#FCAB20']},{imageClient});
+ await generateSocialPostImage({...params,brandPalette:['#167D8D','#FCAB20'],referenceImages:[image]},{imageClient});
+ assert.ok(requests.every(prompt=>prompt.includes('#167D8D')&&prompt.includes('takes priority over conflicting reference colors')&&prompt.includes('Preserve original product, logo and software-interface colors')));
+ await generateSocialPostImage(params,{imageClient});assert.ok(!requests[2].includes('Explicit saved brand palette'));
+ await assert.rejects(generateSocialPostImage({...params,brandPalette:['not-a-color']},{imageClient}),error=>error instanceof ApiError&&error.status===400);assert.equal(requests.length,3);
+});
+
 test('multi-reference memakai images.edit Sunburst2.6 dengan file asli berurutan dan arahan komposisi', async () => {
  const references=await Promise.all(['#cc3344','#2277aa','#aabbcc'].map(background=>sharp({create:{width:64,height:64,channels:3,background}}).jpeg().toBuffer()));
  const output=await createJpegFixture();let editCalls=0;let generateCalls=0;
