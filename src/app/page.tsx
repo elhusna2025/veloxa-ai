@@ -186,6 +186,7 @@ export default function VeloxaAiPlatformPage() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null);
   const [publishReviewDraftId, setPublishReviewDraftId] = useState<string | null>(null);
+  const [reviewOAuthAccounts, setReviewOAuthAccounts] = useState(false);
   const [selectedSourceAssetId, setSelectedSourceAssetId] = useState('');
   const [studioTopic, setStudioTopic] = useState<string>('');
   const [newAssetTitle, setNewAssetTitle] = useState<string>('');
@@ -349,10 +350,15 @@ export default function VeloxaAiPlatformPage() {
       }
       if (epoch !== hydrationEpoch.current) return;
       const callback = new URL(window.location.href);
-      if (callback.searchParams.has('meta')) {
-        setStatusBanner(callback.searchParams.get('meta') === 'connected' ? 'Izin Meta diterima. Pilih Page yang ingin digunakan untuk workspace ini.' : 'Koneksi Meta belum berhasil. Periksa izin aplikasi dan coba kembali.');
+      if (callback.searchParams.has('meta') || callback.searchParams.has('instagram')) {
+        const directInstagram = callback.searchParams.has('instagram');
+        setEditingChannel(directInstagram ? 'instagram' : 'facebook');
+        setReviewOAuthAccounts(true);
+        setStatusBanner((directInstagram ? callback.searchParams.get('instagram') : callback.searchParams.get('meta')) === 'failed'
+          ? 'Koneksi belum berhasil. Periksa izin akun dan coba kembali.'
+          : 'Periksa daftar akun yang diverifikasi server, lalu pilih akun tujuan workspace ini.');
         oauthDialogRef.current?.showModal();
-        callback.searchParams.delete('meta'); window.history.replaceState({}, '', callback.toString());
+        callback.searchParams.delete('meta'); callback.searchParams.delete('instagram'); window.history.replaceState({}, '', callback.toString());
       }
       if (user.isSuperAdmin) {
         const realTenants = await loadAllRealTenantsFromFirestore(savedCfg);
@@ -3107,12 +3113,10 @@ export default function VeloxaAiPlatformPage() {
         <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3.5">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-              🔗 WIZARD KONEKSI 4 SOSMED &amp; OAUTH 2.0 RESMI
+              🔗 KONEKSI AKUN SOSIAL
             </span>
             <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-black text-neutral-900">
-              {editingChannel === 'facebook' || editingChannel === 'instagram'
-                ? `Hubungkan Facebook & Instagram ke ${brand.businessName}`
-                : `Hubungkan ${CHANNEL_META[editingChannel].label} ke ${brand.businessName}`}
+              Hubungkan akun sosial ke {brand.businessName}
             </h2>
           </div>
           <button
@@ -3124,37 +3128,9 @@ export default function VeloxaAiPlatformPage() {
           </button>
         </div>
 
-        {/* 4-Channel Switcher Tabs inside Modal so User Can Connect All 4 Channels Easily */}
-        <div className="mt-4 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {(['facebook', 'instagram', 'tiktok', 'youtube_shorts'] as const).map((ch) => {
-            const connItem = connections.find((c) => c.channel === ch);
-            const isSelected = editingChannel === ch;
-            return (
-              <button
-                key={ch}
-                type="button"
-                data-testid={`oauth-tab-${ch}`}
-                onClick={() => populateOAuthModalFieldsForChannel(ch)}
-                className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs font-black transition ${
-                  isSelected
-                    ? 'border-[#EC749B] bg-pink-50/80 text-[#D85A88] ring-1 ring-pink-200'
-                    : 'border-neutral-200 bg-white text-neutral-700 hover:border-pink-200'
-                }`}
-              >
-                <span className="truncate">{CHANNEL_META[ch].shortLabel}</span>
-                <span
-                  className={`ml-1 text-[10px] ${
-                    connItem?.connected ? 'text-emerald-600' : 'text-neutral-400'
-                  }`}
-                >
-                  {connItem?.connected ? '● Aktif' : '○ Off'}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        <p className="mt-4 text-sm text-neutral-600">Pilih Instagram saja atau Facebook + Instagram sesuai akun yang Anda miliki.</p>
 
-        {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} onConnections={verified => {
+        {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
           setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => verified.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
         }} />}
       </dialog>

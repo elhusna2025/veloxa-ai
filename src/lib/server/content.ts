@@ -11,6 +11,7 @@ import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { renderReelsVideo } from './reels-renderer';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
 import { publicConnection } from './meta-oauth';
+import { getMetaLoginProvider, type MetaConnection as StoredMetaConnection } from './meta-graph';
 import { wibDay, wibMonth } from './clock';
 import type { MetaConnection } from './meta-graph';
 import type { BrandProfile, ContentDraft, SubscriptionPlanId } from '../veloxa-types';
@@ -135,7 +136,8 @@ export async function createSocialContent(request: Request, dependencies: {
     draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   }
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
-  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
+  const targetProviders = Object.fromEntries(selected.docs.map(doc => doc.data() as StoredMetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => [connection.channel, getMetaLoginProvider(connection.loginProvider)]));
+  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
   return { draft, engineMode: generated.engineMode };
 }
 

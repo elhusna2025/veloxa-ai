@@ -5,7 +5,7 @@ import { ApiError, readJson } from './http';
 import { isVerifiedAdmin } from '../veloxa-workspace-policy';
 import { wibMonth } from './clock';
 import { decryptMetaToken } from './meta-crypto';
-import { MetaRequestError, publishMetaImage, type MetaConnection, type MetaChannel } from './meta-graph';
+import { MetaRequestError, publishMetaImage, getMetaLoginProvider, type MetaConnection, type MetaChannel } from './meta-graph';
 import { publishMetaCarousel } from './meta-carousel';
 import { publishMetaReel } from './meta-reels';
 import { REELS_VOICE_DISCLOSURE } from './reels-voice';
@@ -80,6 +80,7 @@ export async function publishSocialContent(request: Request, dependencies: {
     for (let index = 0; index < targets.length; index++) {
       const connection = connectionSnaps[index].data();
       if (!connection || (connection.expiresAt && connection.expiresAt <= Date.now())) throw new ApiError(409, 'Sambungkan kembali seluruh akun tujuan sebelum menerbitkan.');
+      if (getMetaLoginProvider(connection.loginProvider) !== getMetaLoginProvider(stored.targetProviders?.[targets[index]])) throw new ApiError(409, 'Metode koneksi berubah sejak draf dibuat. Buat draf baru dan tinjau akun tujuan kembali.', 'target_changed');
       if (connection.accountId !== stored.targetAccounts?.[targets[index]]) throw new ApiError(409, 'Akun tujuan berubah sejak draf dibuat. Buat draf baru dan tinjau akun tujuan kembali.', 'target_changed');
     }
     const planId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
@@ -112,6 +113,9 @@ export async function publishSocialContent(request: Request, dependencies: {
     try {
       connection = (await ref.collection('private_meta_connections').doc(channel).get()).data() as MetaConnection | undefined;
       if (!connection || (connection.expiresAt && connection.expiresAt <= Date.now())) throw new ApiError(409, 'Akun belum terhubung atau izin berakhir. Hubungkan ulang akun.');
+      if (getMetaLoginProvider(connection.loginProvider) !== getMetaLoginProvider(stored.targetProviders?.[channel])) throw new ApiError(409, 'Metode koneksi berubah saat publikasi. Buat draf baru sebelum mencoba lagi.', 'target_changed');
+      const loginProvider = getMetaLoginProvider(connection.loginProvider);
+      if (channel === 'facebook' && loginProvider !== 'facebook') throw new ApiError(409, 'Koneksi Instagram langsung tidak dapat menerbitkan ke Facebook.');
       if (connection.accountId !== stored.targetAccounts?.[channel]) throw new ApiError(409, 'Akun tujuan berubah saat publikasi. Tidak ada konten dikirim ke akun baru.');
       const storage = dependencies.storage || adminBucket();
       const mediaBytes = draft.format === 'carousel'
@@ -120,10 +124,10 @@ export async function publishSocialContent(request: Request, dependencies: {
       const token = (dependencies.decrypt || decryptMetaToken)(connection.encryptedToken, ref.id);
       dispatched = true;
       const result = draft.format === 'short_video'
-        ? await (dependencies.reelPublisher || publishMetaReel)({ channel, accountId: connection.accountId, token, videoUrl: draft.renderedVideo!.url, videoBytes: mediaBytes[0], caption })
+        ? await (dependencies.reelPublisher || publishMetaReel)({ channel, loginProvider, accountId: connection.accountId, token, videoUrl: draft.renderedVideo!.url, videoBytes: mediaBytes[0], caption })
         : draft.format === 'carousel'
-        ? await (dependencies.carouselPublisher || publishMetaCarousel)({ channel, accountId: connection.accountId, token, images: draft.renderedSlides!.map((slide, index) => ({ imageUrl: slide.url, imageBytes: mediaBytes[index] })), caption })
-        : await (dependencies.publisher || publishMetaImage)({ channel, accountId: connection.accountId, token, imageUrl: draft.renderedMedia!.url, imageBytes: mediaBytes[0], caption });
+        ? await (dependencies.carouselPublisher || publishMetaCarousel)({ channel, loginProvider, accountId: connection.accountId, token, images: draft.renderedSlides!.map((slide, index) => ({ imageUrl: slide.url, imageBytes: mediaBytes[index] })), caption })
+        : await (dependencies.publisher || publishMetaImage)({ channel, loginProvider, accountId: connection.accountId, token, imageUrl: draft.renderedMedia!.url, imageBytes: mediaBytes[0], caption });
       receipt = { channel, status: 'published', ...result, publishedAt: new Date().toISOString() };
     } catch (error) {
       if (error instanceof MetaRequestError && [10, 190, 200].includes(error.providerCode || 0)) {

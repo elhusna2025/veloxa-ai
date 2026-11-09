@@ -1,10 +1,19 @@
 import { ApiError } from './http';
 
 export type MetaChannel = 'facebook' | 'instagram';
+export type MetaLoginProvider = 'facebook' | 'instagram' | 'instagram_unified';
+export function getMetaLoginProvider(value: unknown): MetaLoginProvider {
+  if (value === undefined || value === 'facebook') return 'facebook';
+  if (value === 'instagram' || value === 'instagram_unified') return value;
+  throw new ApiError(409, 'Jenis koneksi Meta tidak valid. Hubungkan ulang akun.');
+}
 export interface MetaConnection {
   channel: MetaChannel;
   accountId: string;
   pageId: string;
+  loginProvider?: MetaLoginProvider;
+  clientBusinessId?: string;
+  configId?: string;
   accountName: string;
   handle: string;
   encryptedToken: string;
@@ -22,16 +31,17 @@ export function graphVersion() {
   return version;
 }
 
-export async function graphRequest<T>(path: string, token: string, method: 'GET' | 'POST' = 'GET', values: Record<string, string> | FormData = {}, fetcher: typeof fetch = fetch): Promise<T> {
+export async function graphRequest<T>(path: string, token: string, method: 'GET' | 'POST' = 'GET', values: Record<string, string> | FormData = {}, fetcher: typeof fetch = fetch, provider: MetaLoginProvider = 'facebook'): Promise<T> {
   if (!/^[A-Za-z0-9_]+(?:\/[A-Za-z0-9_]+)*$/.test(path)) throw new ApiError(400, 'Alamat operasi Meta tidak valid.');
-  const url = new URL(`https://graph.facebook.com/${graphVersion()}/${path}`);
+  const host = getMetaLoginProvider(provider) === 'instagram' ? 'graph.instagram.com' : 'graph.facebook.com';
+  const url = new URL(`https://${host}/${graphVersion()}/${path}`);
   if (method === 'GET') for (const [key, value] of Object.entries(values)) url.searchParams.set(key, value);
   let response: Response;
   try {
     response = await fetcher(url, {
       method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(method === 'POST' && !(values instanceof FormData) ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}) },
       ...(method === 'POST' ? { body: values instanceof FormData ? values : new URLSearchParams(values) } : {}),
-      signal: AbortSignal.timeout(15_000), cache: 'no-store',
+      signal: AbortSignal.timeout(15_000), cache: 'no-store', redirect: 'error',
     });
   } catch { throw new MetaRequestError('Hasil permintaan Meta belum dapat dipastikan. Periksa akun sebelum mencoba ulang.', method === 'POST'); }
   let data: T & { error?: { code?: number } };
@@ -44,10 +54,12 @@ export async function graphRequest<T>(path: string, token: string, method: 'GET'
   return data;
 }
 
-export async function publishMetaImage(params: { channel: MetaChannel; accountId: string; token: string; imageUrl: string; imageBytes?: Buffer; caption: string }, deps: { fetcher?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}): Promise<{ externalPostId: string; permalink?: string }> {
+export async function publishMetaImage(params: { channel: MetaChannel; accountId: string; token: string; imageUrl: string; imageBytes?: Buffer; caption: string; loginProvider?: MetaLoginProvider }, deps: { fetcher?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}): Promise<{ externalPostId: string; permalink?: string }> {
   if (!/^\d+$/.test(params.accountId)) throw new ApiError(409, 'ID akun Meta tidak valid. Hubungkan ulang akun.');
   if (!params.token.trim()) throw new ApiError(409, 'Izin Meta tidak tersedia. Hubungkan ulang akun.');
-  const request = <T>(path: string, method: 'GET' | 'POST', values: Record<string, string>) => graphRequest<T>(path, params.token, method, values, deps.fetcher);
+  const provider = getMetaLoginProvider(params.loginProvider);
+  if (params.channel === 'facebook' && provider !== 'facebook') throw new ApiError(409, 'Koneksi Instagram langsung tidak dapat menerbitkan ke Facebook.');
+  const request = <T>(path: string, method: 'GET' | 'POST', values: Record<string, string>) => graphRequest<T>(path, params.token, method, values, deps.fetcher, provider);
   if (params.channel === 'facebook') {
     // Follow Cendekia's proven binary upload path: do not depend on Facebook's URL crawler.
     if (!params.imageBytes || params.imageBytes.length > 8 * 1024 * 1024) throw new ApiError(400, 'Gambar JPEG Facebook belum tersedia atau terlalu besar.');

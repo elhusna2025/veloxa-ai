@@ -1,7 +1,7 @@
 import { ApiError } from './http';
-import { graphRequest, MetaRequestError, type publishMetaImage } from './meta-graph';
+import { graphRequest, getMetaLoginProvider, MetaRequestError, type publishMetaImage } from './meta-graph';
 
-type Params = Pick<Parameters<typeof publishMetaImage>[0], 'channel' | 'accountId' | 'token' | 'caption'> & { videoUrl: string; videoBytes: Buffer };
+type Params = Pick<Parameters<typeof publishMetaImage>[0], 'channel' | 'accountId' | 'token' | 'caption' | 'loginProvider'> & { videoUrl: string; videoBytes: Buffer };
 type Deps = { fetcher?: typeof fetch; sleep?: (ms: number) => Promise<void> };
 const uncertain = () => new MetaRequestError('Hasil publikasi Reels belum dapat dipastikan. Periksa akun sebelum mencoba ulang.', true);
 async function beforePublish<T>(action: () => Promise<T>): Promise<T> {
@@ -14,7 +14,9 @@ export async function publishMetaReel(params: Params, deps: Deps = {}): Promise<
   let mediaUrl: URL;
   try { mediaUrl = new URL(params.videoUrl); } catch { throw new ApiError(400, 'URL video tidak valid.'); }
   if (!['facebook', 'instagram'].includes(params.channel) || !/^\d+$/.test(params.accountId) || typeof params.token !== 'string' || !params.token.trim() || mediaUrl.protocol !== 'https:' || mediaUrl.username || mediaUrl.password || !Buffer.isBuffer(params.videoBytes) || !params.videoBytes.length || params.videoBytes.length > 30 * 1024 * 1024 || typeof params.caption !== 'string' || [...params.caption].length > 2200) throw new ApiError(400, 'Video atau akun tujuan Reels tidak valid.');
-  const request = <T>(path: string, method: 'GET' | 'POST', values: Record<string, string>) => graphRequest<T>(path, params.token, method, values, deps.fetcher);
+  const provider = getMetaLoginProvider(params.loginProvider);
+  if (params.channel === 'facebook' && provider !== 'facebook') throw new ApiError(409, 'Koneksi Instagram langsung tidak dapat menerbitkan ke Facebook.');
+  const request = <T>(path: string, method: 'GET' | 'POST', values: Record<string, string>) => graphRequest<T>(path, params.token, method, values, deps.fetcher, provider);
   const sleep = deps.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
   if (params.channel === 'instagram') {
     const container = await beforePublish(() => request<{ id?: string }>(`${params.accountId}/media`, 'POST', { media_type: 'REELS', video_url: params.videoUrl, caption: params.caption, share_to_feed: 'true' }));

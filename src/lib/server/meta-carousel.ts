@@ -1,5 +1,5 @@
 import { ApiError } from './http';
-import { graphRequest, MetaRequestError, type MetaChannel } from './meta-graph';
+import { graphRequest, getMetaLoginProvider, MetaRequestError, type MetaChannel, type MetaLoginProvider } from './meta-graph';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const IMAGE_COUNT = 5;
@@ -12,6 +12,7 @@ type CarouselParams = {
   token: string;
   images: CarouselImage[];
   caption: string;
+  loginProvider?: MetaLoginProvider;
 };
 type Dependencies = { fetcher?: typeof fetch; sleep?: (ms: number) => Promise<void> };
 
@@ -42,8 +43,10 @@ export async function publishMetaCarousel(
   deps: Dependencies = {},
 ): Promise<{ externalPostId: string; permalink?: string }> {
   validate(params);
+  const provider = getMetaLoginProvider(params.loginProvider);
+  if (params.channel === 'facebook' && provider !== 'facebook') throw new ApiError(409, 'Koneksi Instagram langsung tidak dapat menerbitkan ke Facebook.');
   const request = <T>(path: string, method: 'GET' | 'POST', values: RequestValues = {}) =>
-    graphRequest<T>(path, params.token, method, values, deps.fetcher);
+    graphRequest<T>(path, params.token, method, values, deps.fetcher, provider);
   const sleep = deps.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
 
   if (params.channel === 'instagram') {

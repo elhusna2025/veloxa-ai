@@ -104,6 +104,16 @@ function fixture() {
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
 
+test('switching Instagram login provider forces a new draft before publication quota or dispatch', async () => {
+  const f = fixture(); const { draft } = await f.create();
+  const key = `${f.ref.path}/private_meta_connections/instagram`;
+  const connection = f.database.values.get(key)!;
+  f.database.values.set(key, { ...connection, loginProvider: 'instagram' });
+  let sent = 0;
+  await assert.rejects(publishSocialContent(f.request(draft.id), { ...f.dependencies, reelPublisher: async () => { sent++; return { externalPostId: '900' }; } }), (error: unknown) => error instanceof ApiError && error.code === 'target_changed');
+  assert.equal(sent, 0); assert.equal(f.count(), 0);
+});
+
 test('Reels generation stores real video metadata and private MP4 path, then publishes once to both bound accounts', async () => {
   const f=fixture();const seen:string[]=[];
   const {draft}=await f.create({renderImage:async p=>{assert.equal((p as {aspectRatio?:string}).aspectRatio,'9:16');seen.push(p.title);return Buffer.from(p.title);},renderVideo:async p=>{assert.equal(p.images.length,4);assert.deepEqual(p.images.map(b=>b.toString()),['Langkah 1','Langkah 2','Langkah 3','Langkah 4']);assert.equal(p.sampleRate,24000);return {mp4:Buffer.from('mock-mp4-output'),poster:await sharp({create:{width:720,height:1280,channels:3,background:'#ffffff'}}).jpeg().toBuffer(),width:720,height:1280,durationSeconds:25,mimeType:'video/mp4'};}});
