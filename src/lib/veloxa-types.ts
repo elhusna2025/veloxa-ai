@@ -172,6 +172,7 @@ export interface ContentDraft {
   channelStatuses: ChannelPublishStatus[];
   status: 'draft' | 'repairing' | 'approved' | 'scheduled' | 'published' | 'publishing' | 'publish_failed' | 'partially_published' | 'needs_attention';
   renderedMedia?: { url: string; mimeType: 'image/jpeg'; width: number; height: number };
+  renderedSlides?: { url: string; mimeType: 'image/jpeg'; width: number; height: number }[];
   publishTargets?: { channel: SocialChannelId; accountId: string; accountName: string; handle: string }[];
   scheduledForWib?: string;
   publishedAtWib?: string;

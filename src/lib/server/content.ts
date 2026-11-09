@@ -38,7 +38,7 @@ export async function uploadBrandPhoto(request: Request) {
   return asset;
 }
 
-const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().min(1).max(1000), format: z.literal('single_post').default('single_post'), sourceAssetId: z.string().uuid().optional() });
+const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().min(1).max(1000), format: z.enum(['single_post', 'carousel']).default('single_post'), sourceAssetId: z.string().uuid().optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -47,6 +47,7 @@ export async function createSocialContent(request: Request, dependencies: {
   renderImage?: typeof generateSocialPostImage;
 } = {}) {
   const input = contentInput.parse(await readJson(request));
+  if (input.format === 'carousel' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk draf carousel.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
   const snapshot = typeof workspace.snapshotJson === 'string' ? JSON.parse(workspace.snapshotJson) : null;
   const brand = snapshot?.brand as BrandProfile | undefined;
@@ -62,11 +63,31 @@ export async function createSocialContent(request: Request, dependencies: {
     if (!Number.isSafeInteger(used) || used < 0 || used >= SUBSCRIPTION_PLANS[planId].maxPostsPerDay * 3) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.');
     tx.set(dailyUsage, { count: used + 1 });
   });
-  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: 'single_post', source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId });
+  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
-  let bytes: Buffer;
-  if (input.sourceAssetId) {
+  let media: Awaited<ReturnType<typeof savePublicJpeg>>;
+  let storagePaths: string[] | undefined;
+  if (input.format === 'carousel') {
+    if (!draft.slides || draft.slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
+    const renderImage = dependencies.renderImage || generateSocialPostImage;
+    const results = await Promise.allSettled(draft.slides.map(async (slide, index) => renderImage({
+      businessName: brand.businessName,
+      title: slide.headline,
+      hook: slide.body,
+      cta: index === 4 ? brand.defaultCta || 'Simpan' : `${index + 1}/5 · Geser untuk lanjut`,
+    })));
+    if (results.some(result => result.status === 'rejected')) throw new ApiError(502, 'Gambar carousel belum dapat dibuat. Silakan coba lagi.', 'carousel_image_unavailable');
+    const slideBytes = results.map(result => result.status === 'fulfilled' ? result.value : Buffer.alloc(0));
+    const slideMedia: Awaited<ReturnType<typeof savePublicJpeg>>[] = [];
+    for (const bytes of slideBytes) slideMedia.push(await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage));
+    storagePaths = slideMedia.map(item => item.storagePath);
+    draft.renderedSlides = slideMedia.map(item => ({ url: item.url, mimeType: 'image/jpeg', width: 1080, height: 1350 }));
+    media = slideMedia[0];
+    draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
+  } else {
+    let bytes: Buffer;
+    if (input.sourceAssetId) {
     const base = sharp(Buffer.from(buildRenderedVisualSvg({ brand, draft })), { limitInputPixels: 5_000_000 });
     const asset = (await ref.collection('server_assets').doc(input.sourceAssetId).get()).data();
     if (!asset?.storagePath?.startsWith(`workspaces/${workspaceId}/vault/`)) throw new ApiError(404, 'Foto Brand Vault tidak ditemukan.');
@@ -75,18 +96,19 @@ export async function createSocialContent(request: Request, dependencies: {
     base.composite([{ input: photo, left: 96, top: 220 }]);
     draft.usedRealAssetIds = [input.sourceAssetId];
     bytes = await base.jpeg({ quality: 92 }).toBuffer();
-  } else {
-    bytes = await (dependencies.renderImage || generateSocialPostImage)({
-      businessName: brand.businessName,
-      title: draft.title,
-      hook: draft.hook,
-      cta: brand.defaultCta || 'Selengkapnya',
-    });
+    } else {
+      bytes = await (dependencies.renderImage || generateSocialPostImage)({
+        businessName: brand.businessName,
+        title: draft.title,
+        hook: draft.hook,
+        cta: brand.defaultCta || 'Selengkapnya',
+      });
+    }
+    media = await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage);
+    draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   }
-  const media = await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage);
-  draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
-  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, storagePath: media.storagePath, createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
+  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
   return { draft, engineMode: generated.engineMode };
 }
 

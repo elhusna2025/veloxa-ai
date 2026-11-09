@@ -6,6 +6,7 @@ import { isVerifiedAdmin } from '../veloxa-workspace-policy';
 import { wibMonth } from './clock';
 import { decryptMetaToken } from './meta-crypto';
 import { MetaRequestError, publishMetaImage, type MetaConnection, type MetaChannel } from './meta-graph';
+import { publishMetaCarousel } from './meta-carousel';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import type { ContentDraft, SubscriptionPlanId } from '../veloxa-types';
 
@@ -31,6 +32,7 @@ export async function publishSocialContent(request: Request, dependencies: {
   database?: ReturnType<typeof adminDb>;
   storage?: ReturnType<typeof adminBucket>;
   publisher?: typeof publishMetaImage;
+  carouselPublisher?: typeof publishMetaCarousel;
   decrypt?: typeof decryptMetaToken;
 } = {}) {
   const input = publishInput.parse(await readJson(request));
@@ -42,7 +44,16 @@ export async function publishSocialContent(request: Request, dependencies: {
   const usageRef = ref.collection('publish_usage').doc(month);
   const stored = (await draftRef.get()).data();
   const draft = stored?.draft as ContentDraft | undefined;
-  if (!draft || draft.workspaceId !== ref.id || draft.format !== 'single_post' || !draft.renderedMedia || !stored?.storagePath?.startsWith(`workspaces/${ref.id}/renders/`)) throw new ApiError(409, 'Buat gambar post tunggal di Studio Veloxa sebelum menerbitkan.');
+  const validMedia = draft?.format === 'single_post'
+    ? !!draft.renderedMedia && typeof stored?.storagePath === 'string' && stored.storagePath.startsWith(`workspaces/${ref.id}/renders/`)
+    : draft?.format === 'carousel' && Array.isArray(draft.renderedSlides) && draft.renderedSlides.length === 5
+      && Array.isArray(stored?.storagePaths) && stored.storagePaths.length === 5
+      && stored.storagePaths.every((path: unknown) => typeof path === 'string' && path.startsWith(`workspaces/${ref.id}/renders/`))
+      && draft.renderedSlides.every(slide => {
+        if (!slide || slide.mimeType !== 'image/jpeg' || slide.width !== 1080 || slide.height !== 1350 || typeof slide.url !== 'string') return false;
+        try { return new URL(slide.url).protocol === 'https:'; } catch { return false; }
+      });
+  if (!stored || !draft || draft.workspaceId !== ref.id || !validMedia) throw new ApiError(409, 'Buat gambar post tunggal atau carousel di Studio Veloxa sebelum menerbitkan.');
   if (!draft.qualityReview.passed) throw new ApiError(409, 'Konten belum lolos pemeriksaan teks. Perbaiki draf terlebih dahulu.');
   const caption = [draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n');
   if ([...caption].length > 2200) throw new ApiError(400, 'Caption dan hashtag melebihi 2.200 karakter.');
@@ -93,10 +104,15 @@ export async function publishSocialContent(request: Request, dependencies: {
       connection = (await ref.collection('private_meta_connections').doc(channel).get()).data() as MetaConnection | undefined;
       if (!connection || (connection.expiresAt && connection.expiresAt <= Date.now())) throw new ApiError(409, 'Akun belum terhubung atau izin berakhir. Hubungkan ulang akun.');
       if (connection.accountId !== stored.targetAccounts?.[channel]) throw new ApiError(409, 'Akun tujuan berubah saat publikasi. Tidak ada konten dikirim ke akun baru.');
-      const [bytes] = await (dependencies.storage || adminBucket()).file(stored.storagePath).download();
+      const storage = dependencies.storage || adminBucket();
+      const mediaBytes = draft.format === 'carousel'
+        ? await Promise.all(stored.storagePaths.map(async (path: string) => (await storage.file(path).download())[0]))
+        : [(await storage.file(stored.storagePath).download())[0]];
       const token = (dependencies.decrypt || decryptMetaToken)(connection.encryptedToken, ref.id);
       dispatched = true;
-      const result = await (dependencies.publisher || publishMetaImage)({ channel, accountId: connection.accountId, token, imageUrl: draft.renderedMedia.url, imageBytes: bytes, caption });
+      const result = draft.format === 'carousel'
+        ? await (dependencies.carouselPublisher || publishMetaCarousel)({ channel, accountId: connection.accountId, token, images: draft.renderedSlides!.map((slide, index) => ({ imageUrl: slide.url, imageBytes: mediaBytes[index] })), caption })
+        : await (dependencies.publisher || publishMetaImage)({ channel, accountId: connection.accountId, token, imageUrl: draft.renderedMedia!.url, imageBytes: mediaBytes[0], caption });
       receipt = { channel, status: 'published', ...result, publishedAt: new Date().toISOString() };
     } catch (error) {
       if (error instanceof MetaRequestError && [10, 190, 200].includes(error.providerCode || 0)) {

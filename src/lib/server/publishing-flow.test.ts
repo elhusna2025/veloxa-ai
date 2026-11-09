@@ -66,18 +66,32 @@ function fixture() {
     return { ref, user: { uid: 'customer-a' }, workspaceId: ref.id, workspace: (await ref.get()).data()! };
   };
   let renderCalls = 0;
-  const create = async () => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: 'Promo akhir pekan', format: 'single_post' }) }), {
+  let generateCalls = 0;
+  const create = async (options: {
+    format?: 'single_post' | 'carousel';
+    topic?: string;
+    sourceAssetId?: string;
+    generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
+    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}) }) }), {
     authorize: authorize as never, storage: storage as never,
-    generate: async input => ({ draft: generateBrandContentDraft(input), engineMode: 'deterministic_local' }),
-    renderImage: async () => {
+    generate: async input => {
+      generateCalls++;
+      if (options.generate) return options.generate(input);
+      const draft = generateBrandContentDraft(input);
+      if (input.format === 'carousel') draft.slides = Array.from({ length: 5 }, (_, index) => ({ slideNumber: index + 1, headline: `Headline ${index + 1}`, body: `Body ${index + 1}`, visualDirection: 'Visual direction', badgeText: `${index + 1}/5` }));
+      return { draft, engineMode: 'deterministic_local' };
+    },
+    renderImage: options.renderImage || (async () => {
       renderCalls++;
       return sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
-    },
+    }),
   });
   const dependencies = { authorize: authorize as never, database: database as never, storage: storage as never, decrypt: (_value: string, workspaceId: string) => { assert.equal(workspaceId, ref.id); return 'test-token'; } };
   const request = (draftId: string) => new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, draftId }) });
   const count = () => [...database.values.entries()].find(([key]) => key.includes('/publish_usage/'))?.[1].count || 0;
-  return { database, ref, blobs, create, dependencies, request, count, renderCalls: () => renderCalls };
+  const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
+  return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
 
 test('create real JPEG -> save authoritative draft -> publish both channels -> retry without duplicates', async () => {
@@ -91,6 +105,113 @@ test('create real JPEG -> save authoritative draft -> publish both channels -> r
   assert.equal(result.draft.status, 'published'); assert.equal(f.count(), 1);
   const again = await publishSocialContent(f.request(draft.id), { ...f.dependencies, publisher });
   assert.equal(again.draft.status, 'published'); assert.deepEqual(calls, ['facebook', 'instagram']); assert.equal(f.count(), 1);
+});
+
+test('carousel generation renders and stores five ordered slides while consuming one generation quota', async () => {
+  const f = fixture();
+  const workspace = (await f.ref.get()).data()!;
+  const snapshot = JSON.parse(workspace.snapshotJson);
+  snapshot.brand.defaultCta = '';
+  f.database.write(f.ref, { snapshotJson: JSON.stringify(snapshot) });
+  const rendered: { title: string; hook: string; cta: string }[] = [];
+  const result = await f.create({
+    format: 'carousel',
+    renderImage: async params => {
+      rendered.push({ title: params.title, hook: params.hook, cta: params.cta });
+      return sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    },
+  });
+  const record = f.database.values.get(`${f.ref.path}/social_drafts/${result.draft.id}`)!;
+  assert.equal(rendered.length, 5);
+  assert.deepEqual(rendered.map(item => item.title), Array.from({ length: 5 }, (_, index) => `Headline ${index + 1}`));
+  assert.deepEqual(rendered.map(item => item.hook), Array.from({ length: 5 }, (_, index) => `Body ${index + 1}`));
+  assert.deepEqual(rendered.slice(0, 4).map(item => item.cta), Array.from({ length: 4 }, (_, index) => `${index + 1}/5 · Geser untuk lanjut`));
+  assert.equal(rendered[4].cta, 'Simpan');
+  assert.equal(result.draft.renderedSlides?.length, 5);
+  assert.equal(result.draft.renderedMedia?.url, result.draft.renderedSlides?.[0].url);
+  assert.equal(record.storagePaths.length, 5);
+  assert.equal(record.storagePath, record.storagePaths[0]);
+  assert.deepEqual([...f.blobs.keys()], record.storagePaths);
+  assert.equal('storagePaths' in result.draft, false);
+  assert.equal('storagePath' in result.draft, false);
+  assert.equal(f.generationCount(), 1);
+  assert.equal(f.generateCalls(), 1);
+});
+
+test('carousel rejects a source asset before generation or quota use', async () => {
+  const f = fixture();
+  await assert.rejects(f.create({ format: 'carousel', sourceAssetId: '123e4567-e89b-42d3-a456-426614174000' }), error => error instanceof ApiError && error.status === 400);
+  assert.equal(f.generateCalls(), 0);
+  assert.equal(f.generationCount(), 0);
+  assert.equal(f.blobs.size, 0);
+});
+
+test('carousel image failure waits for every render and creates no authoritative draft', async () => {
+  const f = fixture();
+  const rendered: string[] = [];
+  await assert.rejects(f.create({
+    format: 'carousel',
+    renderImage: async params => {
+      rendered.push(params.title);
+      if (params.title === 'Headline 3') throw new Error('provider details must not escape');
+      return sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+    },
+  }), error => error instanceof ApiError && error.status === 502 && !error.message.includes('provider details'));
+  assert.equal(rendered.length, 5);
+  assert.equal(f.blobs.size, 0);
+  assert.equal([...f.database.values.keys()].some(key => key.startsWith(`${f.ref.path}/social_drafts/`)), false);
+  assert.equal(f.generationCount(), 1);
+});
+
+test('carousel publishes five ordered trusted slides to both bound channels and skips a successful retry', async () => {
+  const f = fixture(); const { draft } = await f.create({ format: 'carousel' });
+  const record = f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
+  const calls: any[] = [];
+  const carouselPublisher = async (input: any) => {
+    calls.push(input);
+    return { externalPostId: `remote-${input.channel}`, permalink: `https://example.test/${input.channel}` };
+  };
+  const result = await publishSocialContent(f.request(draft.id), { ...f.dependencies, carouselPublisher });
+  assert.equal(result.draft.status, 'published');
+  assert.deepEqual(result.receipts.map(receipt => [receipt.channel, receipt.externalPostId]), [['facebook', 'remote-facebook'], ['instagram', 'remote-instagram']]);
+  assert.deepEqual(calls.map(input => [input.channel, input.accountId]), [['facebook', '100'], ['instagram', '200']]);
+  for (const input of calls) {
+    assert.deepEqual(input.images.map((image: any) => image.imageUrl), draft.renderedSlides!.map(slide => slide.url));
+    assert.deepEqual(input.images.map((image: any) => image.imageBytes), record.storagePaths.map((path: string) => f.blobs.get(path)));
+  }
+  assert.equal(f.count(), 1);
+  await publishSocialContent(f.request(draft.id), { ...f.dependencies, carouselPublisher });
+  assert.equal(calls.length, 2);
+  assert.equal(f.count(), 1);
+});
+
+test('carousel missing or cross-workspace storage paths are rejected before dispatch and quota use', async () => {
+  for (const corrupt of ['missing', 'cross-workspace']) {
+    const f = fixture(); const { draft } = await f.create({ format: 'carousel' });
+    const record = f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
+    const storagePaths = [...record.storagePaths];
+    if (corrupt === 'missing') storagePaths.pop();
+    else storagePaths[0] = 'workspaces/another-workspace/renders/slide.jpg';
+    f.database.write(f.ref.collection('social_drafts').doc(draft.id), { storagePaths });
+    let calls = 0;
+    await assert.rejects(publishSocialContent(f.request(draft.id), { ...f.dependencies, carouselPublisher: async () => { calls++; return { externalPostId: 'unexpected' }; } }), error => error instanceof ApiError && error.status === 409);
+    assert.equal(calls, 0);
+    assert.equal(f.count(), 0);
+  }
+});
+
+test('partial carousel failure retries only the failed channel and consumes one posting quota', async () => {
+  const f = fixture(); const { draft } = await f.create({ format: 'carousel' }); const calls: string[] = []; let fail = true;
+  const carouselPublisher = async (input: any) => {
+    calls.push(input.channel);
+    if (input.channel === 'instagram' && fail) throw new MetaRequestError('permission rejected', false);
+    return { externalPostId: `remote-${input.channel}` };
+  };
+  const partial = await publishSocialContent(f.request(draft.id), { ...f.dependencies, carouselPublisher });
+  assert.equal(partial.draft.status, 'partially_published'); assert.equal(f.count(), 1);
+  fail = false;
+  const success = await publishSocialContent(f.request(draft.id), { ...f.dependencies, carouselPublisher });
+  assert.equal(success.draft.status, 'published'); assert.deepEqual(calls, ['facebook', 'instagram', 'instagram']); assert.equal(f.count(), 1);
 });
 
 test('partial failure retries only the failed channel and consumes one posting quota', async () => {

@@ -12,6 +12,11 @@ const contentOutput = z.object({
   hook: z.string().trim().optional(),
   caption: z.string().trim().min(1),
   hashtags: z.array(z.string().trim().min(1)),
+  slides: z.array(z.object({
+    headline: z.string().trim().min(1).max(200),
+    body: z.string().trim().min(1).max(400),
+    visualDirection: z.string().trim().min(1).max(1000),
+  })).optional(),
 });
 
 interface AgentStream {
@@ -63,6 +68,9 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         offerings: params.brand.offerings,
         format: params.format,
         customTopic: params.customTopic,
+        extraInstructions: params.format === 'carousel'
+          ? 'Untuk format carousel, hasilkan tepat 5 slide dengan headline, body, dan visualDirection masing-masing.'
+          : undefined,
       };
       stream = await client.beta.agents.sessions.create({
         agent_id: agentId,
@@ -83,6 +91,17 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
       }
       const ai = contentOutput.parse(parsed);
+      if (params.format === 'carousel') {
+        if (!ai.slides || ai.slides.length !== 5) {
+          throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
+        }
+        const forbiddenWords = params.brand.forbiddenWords.map((word) => word.trim().toLowerCase()).filter(Boolean);
+        if (ai.slides.some((slide) => forbiddenWords.some((word) =>
+          slide.headline.toLowerCase().includes(word) || slide.body.toLowerCase().includes(word),
+        ))) {
+          throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
+        }
+      }
       const repaired = runAutonomousQualityRepairLoop({
         title: ai.title,
         hook: ai.hook || ai.caption,
@@ -97,6 +116,16 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         hashtags: ai.hashtags,
         qualityReview: repaired.review,
       };
+
+      if (params.format === 'carousel' && ai.slides) {
+        draft.slides = ai.slides.map((slide, index) => ({
+          slideNumber: index + 1,
+          headline: slide.headline,
+          body: slide.body,
+          visualDirection: slide.visualDirection,
+          badgeText: `${index + 1}/5`,
+        }));
+      }
 
       if (params.format === 'single_post' && draft.slides?.length) {
         draft.slides = draft.slides.map((slide, index) => index === 0

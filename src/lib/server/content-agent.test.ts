@@ -102,6 +102,68 @@ test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt
   assert.ok(!svg.includes('USER_PROMPT_SENTINEL'));
 });
 
+const carouselSlides = [
+  { headline: 'Judul slide satu', body: 'Isi slide satu', visualDirection: 'Arahan visual satu' },
+  { headline: 'Judul slide dua', body: 'Isi slide dua', visualDirection: 'Arahan visual dua' },
+  { headline: 'Judul slide tiga', body: 'Isi slide tiga', visualDirection: 'Arahan visual tiga' },
+  { headline: 'Judul slide empat', body: 'Isi slide empat', visualDirection: 'Arahan visual empat' },
+  { headline: 'Judul slide lima', body: 'Isi slide lima', visualDirection: 'Arahan visual lima' },
+];
+
+test('carousel memakai tepat lima slide AI sesuai urutan keluaran', async () => {
+  const params = makeParams();
+  params.format = 'carousel';
+  const { client, calls } = mockClient({ ...generatedCopy, slides: carouselSlides });
+  const result = await createContentAgentGenerator(client as never, agentId)(params);
+
+  assert.deepEqual(JSON.parse(String(calls.request?.input)).extraInstructions,
+    'Untuk format carousel, hasilkan tepat 5 slide dengan headline, body, dan visualDirection masing-masing.');
+  assert.deepEqual(result.draft.slides, carouselSlides.map((slide, index) => ({
+    slideNumber: index + 1,
+    ...slide,
+    badgeText: `${index + 1}/5`,
+  })));
+});
+
+test('carousel menolak slide hilang, jumlah tidak tepat, atau teks slide tidak valid', async () => {
+  const malformedOutputs = [
+    generatedCopy,
+    { ...generatedCopy, slides: [] },
+    { ...generatedCopy, slides: carouselSlides.slice(0, 4) },
+    { ...generatedCopy, slides: [...carouselSlides, carouselSlides[0]] },
+    { ...generatedCopy, slides: [{ ...carouselSlides[0], headline: ' ' }, ...carouselSlides.slice(1)] },
+    { ...generatedCopy, slides: [{ ...carouselSlides[0], body: 'x'.repeat(401) }, ...carouselSlides.slice(1)] },
+    { ...generatedCopy, slides: [{ ...carouselSlides[0], visualDirection: 'x'.repeat(1001) }, ...carouselSlides.slice(1)] },
+  ];
+
+  for (const output of malformedOutputs) {
+    const params = makeParams();
+    params.format = 'carousel';
+    const { client } = mockClient(output);
+    await assert.rejects(createContentAgentGenerator(client as never, agentId)(params), (error: unknown) => {
+      assert.equal((error as { status?: number }).status, 502);
+      assert.equal((error as { code?: string }).code, 'invalid_content_agent_response');
+      return true;
+    });
+  }
+});
+
+test('carousel menolak kata terlarang pada headline atau body tanpa menyetujui teksnya', async () => {
+  const params = makeParams();
+  params.format = 'carousel';
+  params.brand.forbiddenWords = ['RAHASIA'];
+  const slides = carouselSlides.map((slide, index) => index === 2
+    ? { ...slide, body: 'Informasi rahasia tidak boleh disetujui.' }
+    : slide);
+  const { client } = mockClient({ ...generatedCopy, slides });
+
+  await assert.rejects(createContentAgentGenerator(client as never, agentId)(params), (error: unknown) => {
+    assert.equal((error as { status?: number }).status, 502);
+    assert.equal((error as { code?: string }).code, 'invalid_content_agent_response');
+    return true;
+  });
+});
+
 test('JSON keluaran yang malformed ditolak dan stream tetap dibatalkan', async () => {
   const { client, calls } = mockClient('{malformed json');
   const generate = createContentAgentGenerator(client as never, agentId);

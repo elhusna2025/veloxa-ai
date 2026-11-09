@@ -2,6 +2,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import StudioMediaPreview from '@/components/StudioMediaPreview';
+import PublishReviewDialog from '@/components/PublishReviewDialog';
 import { useRouter } from 'next/navigation';
 import {
   BRAND_PRESETS,
@@ -183,6 +185,7 @@ export default function VeloxaAiPlatformPage() {
   const hydrationEpoch = useRef(0);
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null);
+  const [publishReviewDraftId, setPublishReviewDraftId] = useState<string | null>(null);
   const [selectedSourceAssetId, setSelectedSourceAssetId] = useState('');
   const [studioTopic, setStudioTopic] = useState<string>('');
   const [newAssetTitle, setNewAssetTitle] = useState<string>('');
@@ -554,16 +557,19 @@ export default function VeloxaAiPlatformPage() {
     try {
       const saved = await syncWorkspaceSnapshotToStore({ brand, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
       if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, ...(selectedSourceAssetId ? { sourceAssetId: selectedSourceAssetId } : {}) }) });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, ...(studioFormat === 'single_post' && selectedSourceAssetId ? { sourceAssetId: selectedSourceAssetId } : {}) }) });
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic('');
       setStatusBanner(`Draf dan gambar siap ditinjau. ${result.engineMode === 'openai_live' ? 'Caption disusun dengan AI.' : 'Caption memakai template lokal; AI belum tersedia.'} Belum ada konten diterbitkan.`);
     } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Konten belum dapat dibuat.'); }
     finally { setIsCreatingContent(false); }
   };
   const handlePublishDraftNow = async (draftId: string) => {
+    if (!publishingDraftId && drafts.some(draft => draft.id === draftId)) setPublishReviewDraftId(draftId);
+  };
+  const confirmPublishDraftNow = async (draftId: string) => {
     const draft = drafts.find(item => item.id === draftId);
     if (!draft || publishingDraftId) return;
-    if (!window.confirm(`Terbitkan "${draft.title}" ke ${draft.publishTargets?.map(target => `${target.channel}: ${target.accountName} (${target.handle})`).join(' dan ') || draft.targetChannels.join(' dan ')} untuk ${brand.businessName}? Pastikan caption dan gambar sudah ditinjau.`)) return;
+    setPublishReviewDraftId(null);
     setPublishingDraftId(draftId); setStatusBanner('Mengirim konten ke Meta. Jangan menutup halaman selama proses berlangsung…');
     try {
       const result = await veloxaApi<{ draft: ContentDraft; receipts: { channel: string; status: string; error?: string }[]; quotaUsed: number }>('/api/veloxa/publish', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, draftId }) });
@@ -2001,14 +2007,14 @@ export default function VeloxaAiPlatformPage() {
                         <label className="text-xs font-bold text-neutral-700">Format Konten</label>
                         <select
                           value={studioFormat}
-                          onChange={(e) => setStudioFormat(e.target.value as ContentFormat)}
+                          onChange={(e) => { setStudioFormat(e.target.value as ContentFormat); if (e.target.value === 'carousel') setSelectedSourceAssetId(''); }}
                           className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-xs font-bold text-neutral-900"
                         >
                           <option value="short_video" disabled>
                             Video Pendek 9:16 (IG Reels + FB Reels + TikTok + YT Shorts)
                           </option>
-                          <option value="carousel" disabled>
-                            Carousel Multi-Slide 4:5 (IG + FB + TikTok Photo Mode)
+                          <option value="carousel">
+                            Carousel 5 Slide 4:5 (Instagram + Facebook)
                           </option>
                           <option value="single_post">
                             Post Tunggal 4:5 (Instagram + Facebook)
@@ -2040,13 +2046,14 @@ export default function VeloxaAiPlatformPage() {
                         </div>
                       </div>
                     </div>
+                    {studioFormat === 'carousel' && <p className="mt-3 text-xs text-neutral-600">Lima gambar AI akan dibuat. Tinjau seluruh slide sebelum terbit. Satu carousel memakai satu kuota publikasi. Foto Brand Vault tersedia untuk post tunggal.</p>}
                     <label className="mt-4 block text-xs font-bold text-neutral-700">Foto Brand Vault (opsional)
-                      <select value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
+                      <select disabled={studioFormat === 'carousel'} value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
                         <option value="">Buat gambar AI dengan Sunburst</option>
                         {vaultAssets.filter(asset => /^[a-f0-9-]{36}$/.test(asset.id) && asset.mediaType === 'photo').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}
                       </select>
                     </label>
-                    <p className="mt-3 text-xs text-neutral-500">Publikasi saat ini mendukung post gambar tunggal Instagram/Facebook. Carousel, Reels, dan jadwal otomatis menyusul setelah alur ini terverifikasi.</p>
+                    <p className="mt-3 text-xs text-neutral-500">Post tunggal dan carousel 5 slide tersedia untuk Instagram/Facebook. Reels dan jadwal otomatis belum diaktifkan.</p>
                   </section>
 
                   {/* Generated Drafts List */}
@@ -2082,12 +2089,12 @@ export default function VeloxaAiPlatformPage() {
                             {draft.status !== 'published' && (
                               <button
                                 type="button"
-                                disabled={!!publishingDraftId || ['needs_attention', 'publishing'].includes(draft.status) || !draft.renderedMedia}
+                                disabled={!!publishingDraftId || !draft.qualityReview.passed || ['needs_attention', 'publishing'].includes(draft.status) || (draft.format === 'carousel' ? draft.renderedSlides?.length !== 5 : !draft.renderedMedia)}
                                 onClick={() => handlePublishDraftNow(draft.id)}
                                 className="rounded-xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                               >
                                 <Send className="mr-1.5 inline h-3.5 w-3.5" />
-                                Terbitkan ke {draft.targetChannels.length} Sosmed Sekarang
+                                {draft.status === 'partially_published' ? 'Coba lagi kanal yang gagal' : `Terbitkan ke ${draft.targetChannels.length} Sosmed Sekarang`}
                               </button>
                             )}
                             <button
@@ -2132,19 +2139,14 @@ export default function VeloxaAiPlatformPage() {
                         {/* Live Rendered Visual Poster / Carousel Preview + Quality Gate */}
                         <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr]">
                           <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-2">
-                            <img
-                              data-testid={`rendered-poster-img-${draft.id}`}
-                              src={draft.renderedMedia?.url || buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })}
-                              alt={`Pratinjau Visual ${draft.title}`}
-                              className="mx-auto max-h-60 w-auto rounded-xl border border-neutral-200 object-contain"
-                            />
+                            <StudioMediaPreview draft={draft} fallbackUrl={buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })} />
                           </div>
                           <div className="space-y-3">
                             {/* Quality Gate Proof */}
                             <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5 text-xs text-neutral-800">
                               <div className="flex items-center justify-between font-bold text-neutral-900">
                                 <span>
-                                  <span className="text-[#D85A88]">✓ Self-Healing Quality Gate:</span> {draft.qualityReview.score}/100 (0 Masalah Tersisa)
+                                  <span className="text-[#D85A88]">✓ Self-Healing Quality Gate:</span> {draft.qualityReview.score}/100 ({draft.qualityReview.issues.length} Masalah Tersisa)
                                 </span>
                                 <span className="text-neutral-500">Iterasi perbaikan: {draft.qualityReview.repairAttempts}x</span>
                               </div>
@@ -2168,8 +2170,8 @@ export default function VeloxaAiPlatformPage() {
                                 </span>
                               ))}
                             </div>
-                            <p className="rounded-xl border border-neutral-100 bg-white p-3 text-xs text-neutral-600">
-                              <strong className="text-neutral-900">Caption Siap Kirim:</strong> {draft.caption}
+                            <p className="whitespace-pre-line rounded-xl border border-neutral-100 bg-white p-3 text-xs text-neutral-600">
+                              <strong className="text-neutral-900">Caption Siap Kirim:</strong> {[draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n')}
                             </p>
                           </div>
                         </div>
@@ -2218,7 +2220,7 @@ export default function VeloxaAiPlatformPage() {
                                 <p className="mt-2 font-black text-neutral-900">{slide.headline}</p>
                                 <p className="mt-1 text-neutral-600">{slide.body}</p>
                                 <p className="mt-2 border-t border-neutral-100 pt-2 text-[10px] text-neutral-400">
-                                  {slide.visualDirection}
+                                  {!draft.renderedMedia && slide.visualDirection}
                                 </p>
                               </div>
                             ))}
@@ -3415,6 +3417,8 @@ export default function VeloxaAiPlatformPage() {
           </div>
         </div>
       </dialog>
+
+      <PublishReviewDialog draft={drafts.find(draft => draft.id === publishReviewDraftId) || null} brandName={brand.businessName} onCancel={() => setPublishReviewDraftId(null)} onConfirm={() => { if (publishReviewDraftId) void confirmPublishDraftNow(publishReviewDraftId); }} />
 
       {/* ========================================================================
          MODAL 5: LOGOUT CONFIRMATION DIALOG (modern-web-guidance: dialog)
