@@ -15,9 +15,9 @@ const isMobileExport = process.env.NEXT_OUTPUT_EXPORT === 'true';
 const nextConfig: NextConfig = {
   ...(isMobileExport ? { output: 'export' } : {}),
   outputFileTracingRoot: process.cwd(),
-  serverExternalPackages: ['ffmpeg-static', 'ffprobe-static'],
+  serverExternalPackages: ['@ffmpeg-installer/ffmpeg', 'ffprobe-static'],
   outputFileTracingIncludes: {
-    '/api/veloxa/content': ['./node_modules/ffmpeg-static/index.js', './node_modules/ffmpeg-static/package.json', './node_modules/ffmpeg-static/ffmpeg', './node_modules/ffprobe-static/index.js', './node_modules/ffprobe-static/package.json', `./node_modules/ffprobe-static/bin/${process.platform}/${process.arch}/ffprobe`],
+    '/api/veloxa/content': ['./node_modules/@ffmpeg-installer/ffmpeg/index.js', './node_modules/@ffmpeg-installer/ffmpeg/package.json', './node_modules/@ffmpeg-installer/ffmpeg/lib/verify-file.js', `./node_modules/@ffmpeg-installer/${process.platform}-${process.arch}/ffmpeg`, `./node_modules/@ffmpeg-installer/${process.platform}-${process.arch}/package.json`, './node_modules/ffprobe-static/index.js', './node_modules/ffprobe-static/package.json', `./node_modules/ffprobe-static/bin/${process.platform}/${process.arch}/ffprobe`],
   },
   trailingSlash: true,
   images: {

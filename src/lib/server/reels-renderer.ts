@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import ffmpegBinary from 'ffmpeg-static';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffprobe from 'ffprobe-static';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import sharp from 'sharp';
 import { ApiError } from './http';
 
 const execFileAsync = promisify(execFile);
+const ffmpegBinary = ffmpegInstaller.path;
 const ffprobeBinary = ffprobe.path;
 const WIDTH = 720;
 const HEIGHT = 1280;

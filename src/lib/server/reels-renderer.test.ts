@@ -9,7 +9,7 @@ import sharp from 'sharp';
 import { renderReelsVideo } from './reels-renderer';
 
 const require = createRequire(import.meta.url);
-const ffmpegBinary = require('ffmpeg-static') as string;
+const ffmpegBinary = (require('@ffmpeg-installer/ffmpeg') as { path: string }).path;
 
 test('menolak jumlah gambar, audio, sampel, dan bobot adegan yang tidak valid', async () => {
   const pcm = Buffer.alloc(24000 * 2 * 20);
