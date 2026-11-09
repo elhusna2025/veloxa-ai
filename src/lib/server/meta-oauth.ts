@@ -33,8 +33,9 @@ export async function beginMetaOAuth(request: Request, workspaceId: unknown, dep
   const config = metaConfig();
   (deps.encrypt || encryptMetaToken)('configuration-check', ref.id); // Fail before redirect if encryption is unavailable.
   const generation = readGeneration((await ref.collection('integration_guards').doc('meta').get()).data()?.generation);
+  const configBinding = oauthStateHash(JSON.stringify([config.appId, config.redirectUri, META_SCOPES]));
   const state = randomBytes(32).toString('base64url');
-  await (deps.database || adminDb()).collection('_meta_oauth_states').doc(oauthStateHash(state)).create({ uid: user.uid, workspaceId: ref.id, generation, expiresAt: Date.now() + 10 * 60_000 });
+  await (deps.database || adminDb()).collection('_meta_oauth_states').doc(oauthStateHash(state)).create({ uid: user.uid, workspaceId: ref.id, generation, configBinding, expiresAt: Date.now() + 10 * 60_000 });
   const authorize = new URL(`https://www.facebook.com/${graphVersion()}/dialog/oauth`);
   authorize.search = new URLSearchParams({ client_id: config.appId, redirect_uri: config.redirectUri, response_type: 'code', scope: META_SCOPES.join(','), state, auth_type: 'rerequest' }).toString();
   return { url: authorize.toString() };
@@ -43,13 +44,15 @@ export async function beginMetaOAuth(request: Request, workspaceId: unknown, dep
 export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}) {
   const state = z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(url.searchParams.get('state'));
   const config = metaConfig();
-  if (url.origin !== config.origin || !['/api/veloxa/meta/callback', '/api/veloxa/meta/callback/'].includes(url.pathname)) throw new ApiError(400, 'Callback Meta tidak valid.');
+  // Firebase rewrites the incoming origin to Cloud Run. Never use that origin for redirects;
+  // the configured redirect URI, one-time state, and verified app/owner are the trust boundary.
+  if (!['/api/veloxa/meta/callback', '/api/veloxa/meta/callback/'].includes(url.pathname)) throw new ApiError(400, 'Callback Meta tidak valid.');
   const db = deps.database || adminDb();
   const stateRef = db.collection('_meta_oauth_states').doc(oauthStateHash(state));
   const actor = await db.runTransaction(async tx => {
     const snap = await tx.get(stateRef);
     const data = snap.data();
-    if (!data || data.expiresAt < Date.now()) throw new ApiError(400, 'Sesi koneksi berakhir. Mulai kembali dari Veloxa.');
+    if (!data || data.expiresAt < Date.now() || data.configBinding !== oauthStateHash(JSON.stringify([config.appId, config.redirectUri, META_SCOPES]))) throw new ApiError(400, 'Sesi koneksi berakhir. Mulai kembali dari Veloxa.');
     tx.delete(stateRef);
     return data as { uid: string; workspaceId: string; generation?: number };
   });

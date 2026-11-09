@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { adminDb } from './firebase';
 import { requireWorkspace, workspaceIdSchema } from './auth';
 import { encryptMetaToken } from './meta-crypto';
-import { graphRequest, type MetaConnection } from './meta-graph';
+import { graphRequest, MetaRequestError, type MetaConnection } from './meta-graph';
 import { publicConnection } from './meta-oauth';
 import { ApiError } from './http';
 import { instagramLoginConfig, INSTAGRAM_LOGIN_SCOPES } from './instagram-config';
@@ -25,12 +25,16 @@ export function buildInstagramAuthorizeUrl(state: string) {
 
 export async function exchangeInstagramLogin(code: string, fetcher: typeof fetch = fetch, now: () => number = Date.now) {
   const config = instagramLoginConfig();
+  let stage = 'exchange';
   try {
-    const response = z.object({ ['access_token']: z.string().min(1), expires_in: z.number().int().nonnegative().optional() }).parse(await graphRequest<unknown>('oauth/access_token', '', 'POST', { grant_type: 'authorization_code', client_id: config.appId, ['client_secret']: config.appCredential, code, redirect_uri: config.redirectUri }, fetcher));
+    const response = z.object({ ['access_token']: z.string().min(1), expires_in: z.number().int().nonnegative().optional() }).parse(await graphRequest<unknown>('oauth/access_token', '', 'POST', { client_id: config.appId, ['client_secret']: config.appCredential, code, redirect_uri: config.redirectUri }, fetcher));
     const credential = response.access_token;
+    stage = 'proof';
     const proof = z.object({ data: z.object({ is_valid: z.literal(true), app_id: numericId, scopes: z.array(z.string()), expires_at: z.number().int().nonnegative(), data_access_expires_at: z.number().int().nonnegative().optional() }) }).parse(await graphRequest<unknown>('debug_token', `${config.appId}|${config.appCredential}`, 'GET', { ['input_token']: credential }, fetcher));
     if (proof.data.app_id !== config.appId || INSTAGRAM_LOGIN_SCOPES.some(scope => !proof.data.scopes.includes(scope))) throw new Error('Invalid app or permissions');
+    stage = 'business';
     const business = z.object({ client_business_id: numericId }).parse(await graphRequest<unknown>('me', credential, 'GET', { fields: 'client_business_id' }, fetcher));
+    stage = 'accounts';
     const accounts: Array<z.infer<typeof instagramAccount>> = []; const cursors = new Set<string>(); let after = '';
     for (let page = 0; page < 10; page++) {
       const result = z.object({ data: z.array(instagramAccount).max(50), paging: z.object({ next: z.string().optional(), cursors: z.object({ after: z.string().max(4096).optional() }).optional() }).optional() }).parse(await graphRequest<unknown>('me/assigned_instagram_accounts', credential, 'GET', { fields: 'id,username', limit: '50', ...(after ? { after } : {}) }, fetcher));
@@ -47,7 +51,7 @@ export async function exchangeInstagramLogin(code: string, fetcher: typeof fetch
     const expiresAt = expirations.length ? Math.min(...expirations) : 0;
     if (expiresAt && (!Number.isSafeInteger(expiresAt) || expiresAt <= now())) throw new Error('Expired authorization');
     return { credential, clientBusinessId: business.client_business_id, accounts, expiresAt };
-  } catch { throw providerError(); }
+  } catch (error) { console.warn('veloxa_instagram_login_failed', { stage, providerCode: error instanceof MetaRequestError ? error.providerCode : undefined, reason: error instanceof z.ZodError ? 'invalid_shape' : 'provider_rejected' }); throw providerError(); }
 }
 
 export async function beginInstagramOAuth(request: Request, workspaceId: unknown, deps: Dependencies = {}) {
@@ -56,20 +60,22 @@ export async function beginInstagramOAuth(request: Request, workspaceId: unknown
   (deps.encrypt || encryptMetaToken)('configuration-check', ref.id);
   const generation = generationValue((await ref.collection('integration_guards').doc('instagram').get()).data()?.generation);
   const state = randomBytes(32).toString('base64url');
-  await (deps.database || adminDb()).collection('_instagram_oauth_states').doc(stateDigest(state)).create({ uid: user.uid, workspaceId: ref.id, generation, configId: config.configId, appId: config.appId, expiresAt: (deps.now || Date.now)() + 10 * 60_000 });
+  await (deps.database || adminDb()).collection('_instagram_oauth_states').doc(stateDigest(state)).create({ uid: user.uid, workspaceId: ref.id, generation, configId: config.configId, appId: config.appId, redirectUri: config.redirectUri, expiresAt: (deps.now || Date.now)() + 10 * 60_000 });
   return { url: buildInstagramAuthorizeUrl(state) };
 }
 
 export async function finishInstagramOAuth(url: URL, deps: Dependencies = {}) {
   const config = instagramLoginConfig();
-  if (url.origin !== config.origin || !['/api/veloxa/instagram/callback', '/api/veloxa/instagram/callback/'].includes(url.pathname)) throw new ApiError(400, 'Callback Instagram tidak valid.');
+  // Firebase rewrites the incoming origin to Cloud Run. Never use that origin for redirects;
+  // the configured redirect URI, one-time state, and verified app/owner are the trust boundary.
+  if (!['/api/veloxa/instagram/callback', '/api/veloxa/instagram/callback/'].includes(url.pathname)) throw new ApiError(400, 'Callback Instagram tidak valid.');
   const state = z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(url.searchParams.get('state'));
   const db = deps.database || adminDb(); const now = deps.now || Date.now;
   const stateRef = db.collection('_instagram_oauth_states').doc(stateDigest(state));
   const actor = await db.runTransaction(async tx => {
     const value = (await tx.get(stateRef)).data();
-    const result = z.object({ uid: z.string().min(1).max(128), workspaceId: workspaceIdSchema, generation: z.number().int().nonnegative(), configId: numericId, appId: numericId, expiresAt: z.number().finite() }).safeParse(value);
-    if (!result.success || result.data.expiresAt <= now() || result.data.configId !== config.configId || result.data.appId !== config.appId) throw new ApiError(400, 'Sesi koneksi Instagram berakhir. Mulai kembali dari Veloxa.');
+    const result = z.object({ uid: z.string().min(1).max(128), workspaceId: workspaceIdSchema, generation: z.number().int().nonnegative(), redirectUri: z.string().url().max(2048), configId: numericId, appId: numericId, expiresAt: z.number().finite() }).safeParse(value);
+    if (!result.success || result.data.expiresAt <= now() || result.data.configId !== config.configId || result.data.appId !== config.appId || result.data.redirectUri !== config.redirectUri) throw new ApiError(400, 'Sesi koneksi Instagram berakhir. Mulai kembali dari Veloxa.');
     tx.delete(stateRef); return result.data;
   });
   if (url.searchParams.has('error')) throw new ApiError(400, 'Izin Instagram belum diberikan.');

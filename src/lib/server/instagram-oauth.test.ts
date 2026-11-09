@@ -203,13 +203,13 @@ test('Instagram connection works without any Facebook Page and paginates only fi
     assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/facebook'),false);
   }finally{restore();}
 });
-test('expired, cancelled, wrong-origin, changed-configuration and owner-changed callbacks cannot authorize Instagram accounts',async()=>{
+test('expired, cancelled, wrong-path, changed-configuration and owner-changed callbacks cannot authorize Instagram accounts',async()=>{
   const restore=configure();try{
-    for(const mode of ['expired','cancelled','wrong-origin','config','owner-before','owner-during']){
+    for(const mode of ['expired','cancelled','wrong-path','config','redirect','owner-before','owner-during']){
       const f=fixture({changeOwner:mode==='owner-during'});const start=await beginInstagramOAuth(f.request,f.ref.id,f.deps);const state=new URL(start.url).searchParams.get('state')!;const callback=f.callback(state);
-      if(mode==='expired')f.deps.now=()=>2000000;if(mode==='cancelled')callback.searchParams.set('error','access_denied');if(mode==='wrong-origin')callback.hostname='evil.example.test';if(mode==='config')process.env.INSTAGRAM_LOGIN_CONFIG_ID='777';if(mode==='owner-before')f.db.values.set(f.ref.path,{ownerUid:'another-owner'});
+      if(mode==='expired')f.deps.now=()=>2000000;if(mode==='cancelled')callback.searchParams.set('error','access_denied');if(mode==='wrong-path')callback.pathname='/api/veloxa/instagram/not-a-callback';if(mode==='config')process.env.INSTAGRAM_LOGIN_CONFIG_ID='777';if(mode==='redirect')process.env.INSTAGRAM_LOGIN_REDIRECT_URI='https://other.example.test/api/veloxa/instagram/callback';if(mode==='owner-before')f.db.values.set(f.ref.path,{ownerUid:'another-owner'});
       await assert.rejects(finishInstagramOAuth(callback,f.deps));assert.equal(f.db.values.has(f.ref.path+'/instagram_authorizations/current'),false);
-      if(mode!=='owner-during')assert.equal(f.calls.length,0);process.env.INSTAGRAM_LOGIN_CONFIG_ID='888';
+      if(mode!=='owner-during')assert.equal(f.calls.length,0);process.env.INSTAGRAM_LOGIN_CONFIG_ID='888';process.env.INSTAGRAM_LOGIN_REDIRECT_URI='https://veloxa.example.test/api/veloxa/instagram/callback';
     }
   }finally{restore();}
 });
@@ -244,6 +244,18 @@ test('legacy Meta OAuth cannot authorize after disconnect before or during provi
   }
  }finally{restore();}
 });
+test('legacy Meta states reject changed application or registered callback before provider requests',async()=>{
+ const restore=configure();try{
+  for(const mode of ['app','redirect']){
+   const f=fixture();const start=await beginMetaOAuth(f.request,f.ref.id,f.deps);const state=new URL(start.url).searchParams.get('state')!;
+   if(mode==='app')process.env.META_APP_ID='777';else process.env.META_REDIRECT_URI='https://other.example.test/api/veloxa/meta/callback';
+   let calls=0;const fetcher:typeof fetch=async()=>{calls++;return Response.json({});};
+   await assert.rejects(finishMetaOAuth(new URL('https://veloxa.example.test/api/veloxa/meta/callback?'+new URLSearchParams({state,code:'legacy-code'})),{...f.deps,fetcher}));
+   assert.equal(calls,0);assert.equal(f.db.values.has(f.ref.path+'/meta_authorizations/500'),false);
+   process.env.META_APP_ID='999';process.env.META_REDIRECT_URI='https://veloxa.example.test/api/veloxa/meta/callback';
+  }
+ }finally{restore();}
+});
 test('fresh Meta OAuth after disconnect stores a selectable current-generation Page grant',async()=>{
  const restore=configure();try{
   const f=fixture();await disconnectMeta(f.request,f.ref.id,f.deps);
@@ -255,12 +267,28 @@ test('fresh Meta OAuth after disconnect stores a selectable current-generation P
    if(u.pathname.endsWith('/me/permissions'))return Response.json({data:META_SCOPES.map(permission=>({permission,status:'granted'}))});
    return Response.json({data:[{id:'500',name:'Page Contoh',['access_token']:credential,tasks:['CREATE_CONTENT']}]});
   };
-  await finishMetaOAuth(new URL('https://veloxa.example.test/api/veloxa/meta/callback/?'+new URLSearchParams({state,code:'legacy-code'})),{...f.deps,fetcher});
+  const finished = await finishMetaOAuth(new URL('http://127.0.0.1:8080/api/veloxa/meta/callback/?'+new URLSearchParams({state,code:'legacy-code'})),{...f.deps,fetcher});
+  assert.equal(finished.origin,'https://veloxa.example.test');
   assert.equal(f.db.values.get(f.ref.path+'/meta_authorizations/500').metaGeneration,1);
   const result=await selectMetaPage(f.request,f.ref.id,'500',f.deps);assert.equal(result.connections[0].channel,'facebook');
  }finally{restore();}
 });
 
+test('proxy callback origins cannot change the configured public redirect or account binding',async()=>{
+ const restore=configure();try{
+  for(const internalOrigin of ['https://veloxa-internal.run.app','http://127.0.0.1:8080']){
+   const f=fixture();const start=await beginInstagramOAuth(f.request,f.ref.id,f.deps);
+   const state=new URL(start.url).searchParams.get('state')!;
+   const callback=new URL('/api/veloxa/instagram/callback/?'+new URLSearchParams({state,code:'unit-code'}),internalOrigin);
+   const result=await finishInstagramOAuth(callback,f.deps);
+   assert.equal(result.origin,'https://veloxa.example.test');
+   assert.equal(result.workspaceId,f.ref.id);
+   await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);
+   assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/instagram').accountId,'202');
+   assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook').accountId,'400');
+  }
+ }finally{restore();}
+});
 test('Instagram callback succeeds after Next trailing-slash normalization',async()=>{
  const restore=configure();try{
   const f=fixture();const start=await beginInstagramOAuth(f.request,f.ref.id,f.deps);
