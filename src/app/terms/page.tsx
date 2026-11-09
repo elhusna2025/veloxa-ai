@@ -157,26 +157,26 @@ export default function VeloxaTermsOfUsePage() {
       }
     >
       {/* Top Summary Banner */}
-      <div className="veloxa-luxury-card-pink rounded-[28px] p-6 sm:p-8 bg-white mb-8">
+      <div className="veloxa-luxury-card-pink rounded-xl p-6 sm:p-8 bg-white mb-8">
         <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-5 border-b border-neutral-100">
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center rounded-full bg-[#EC749B] px-3.5 py-1 text-xs font-extrabold text-white">
+            <span className="inline-flex items-center rounded-full bg-[#bd416e] px-3.5 py-1 text-sm font-semibold text-white">
               v4.2 Enterprise Edition
             </span>
-            <span className="text-xs font-bold text-neutral-500">
+            <span className="text-sm font-medium text-neutral-500">
               {isId ? "Berlaku Efektif: 3 November 2026" : "Effective Date: November 3, 2026"}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/privacy"
-              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-[#EC749B] hover:text-[#EC749B] transition"
+              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-[#EC749B] hover:text-[#a92e5d] transition"
             >
               {isId ? "Lihat Privacy Policy →" : "View Privacy Policy →"}
             </Link>
             <Link
               href="/register"
-              className="veloxa-btn-pink rounded-xl px-4 py-2 text-xs font-extrabold"
+              className="veloxa-btn-pink rounded-xl px-4 py-2 text-sm font-semibold"
             >
               {isId ? "Daftarkan Brand" : "Register Brand"}
             </Link>
@@ -184,31 +184,31 @@ export default function VeloxaTermsOfUsePage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
+            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
               {isId ? "100% HAK CIPTA KLIEN" : "100% CLIENT IP OWNERSHIP"}
             </div>
-            <p className="mt-1 text-xs text-neutral-700 leading-relaxed">
+            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
               {isId
                 ? "Semua foto asli yang Anda unggah dan seluruh video Reels, Carousel, & Poster hasil render AI adalah milik bisnis Anda sepenuhnya."
                 : "All uploaded authentic photos and all AI-rendered Reels, Carousels, and Posters belong 100% to your brand."}
             </p>
           </div>
-          <div className="rounded-2xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
+            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
               {isId ? "HARD BUDGET CAP IKLAN" : "HARD DAILY AD BUDGET CAP"}
             </div>
-            <p className="mt-1 text-xs text-neutral-700 leading-relaxed">
+            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
               {isId
                 ? "Agen AI Meta Ads dijamin secara sistem tidak pernah melebihi batas anggaran harian yang Anda tetapkan."
                 : "The AI Meta Ads agent is programmatically locked from ever exceeding your configured daily spend cap."}
             </p>
           </div>
-          <div className="rounded-2xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
+            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
               {isId ? "OAUTH RESMI & AMAN" : "OFFICIAL OAUTH 2.0 APIS"}
             </div>
-            <p className="mt-1 text-xs text-neutral-700 leading-relaxed">
+            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
               {isId
                 ? "Integrasi resmi Meta Graph API, TikTok API, & YouTube API v3. Cabut izin akses kapan saja dalam 1 klik."
                 : "Official Meta Graph API, TikTok API, & YouTube API v3 integration. Revoke access anytime in 1 click."}
@@ -222,26 +222,26 @@ export default function VeloxaTermsOfUsePage() {
         {sections.map((sec) => (
           <article
             key={sec.id}
-            className="veloxa-luxury-card rounded-[26px] p-6 sm:p-8 bg-white"
+            className="veloxa-luxury-card rounded-xl p-6 sm:p-8 bg-white"
           >
             <div className="flex items-start gap-4">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0F5] border border-[#FBCFE0] text-xs font-black text-[#EC749B]">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0F5] border border-[#FBCFE0] text-sm font-semibold text-[#a92e5d]">
                 {sec.id}
               </span>
               <div className="space-y-3 flex-1">
-                <h2 className="text-lg sm:text-xl font-extrabold text-neutral-900">
+                <h2 className="text-lg sm:text-xl font-semibold text-neutral-900">
                   {sec.title}
                 </h2>
-                <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
+                <p className="text-sm sm:text-base text-neutral-600 leading-relaxed">
                   {sec.body}
                 </p>
                 <ul className="space-y-2 pt-1">
                   {sec.bullets.map((bullet, idx) => (
                     <li
                       key={idx}
-                      className="flex items-start gap-2.5 text-xs sm:text-sm text-neutral-700"
+                      className="flex items-start gap-2.5 text-sm sm:text-base text-neutral-700"
                     >
-                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
+                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#bd416e]" />
                       <span>{bullet}</span>
                     </li>
                   ))}
@@ -253,14 +253,14 @@ export default function VeloxaTermsOfUsePage() {
       </div>
 
       {/* Bottom CTA Bar */}
-      <div className="mt-8 veloxa-luxury-card rounded-[26px] p-6 sm:p-8 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="mt-8 veloxa-luxury-card rounded-xl p-6 sm:p-8 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h3 className="text-base sm:text-lg font-extrabold text-neutral-900">
+          <h3 className="text-base sm:text-lg font-semibold text-neutral-900">
             {isId
               ? "Pertanyaan Hukum atau Kepatuhan Enterprise?"
               : "Legal or Enterprise Compliance Questions?"}
           </h3>
-          <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+          <p className="text-sm sm:text-base text-neutral-600 mt-1">
             {isId
               ? "Tim Legal & Data Protection Officer kami siap membantu di legal@veloxa.ai"
               : "Our Legal & Data Protection Officer team is available at legal@veloxa.ai"}
@@ -269,13 +269,13 @@ export default function VeloxaTermsOfUsePage() {
         <div className="flex flex-wrap items-center gap-3">
           <Link
             href="/privacy"
-            className="rounded-2xl border border-neutral-200 bg-white px-5 py-3 text-xs sm:text-sm font-bold text-neutral-800 hover:border-[#EC749B] hover:text-[#EC749B] transition"
+            className="rounded-xl border border-neutral-200 bg-white px-5 py-3 text-sm sm:text-base font-medium text-neutral-800 hover:border-[#EC749B] hover:text-[#a92e5d] transition"
           >
             {isId ? "Baca Privacy Policy" : "Read Privacy Policy"}
           </Link>
           <Link
             href="/register"
-            className="veloxa-btn-pink rounded-2xl px-6 py-3 text-xs sm:text-sm font-extrabold"
+            className="veloxa-btn-pink rounded-xl px-6 py-3 text-sm sm:text-base font-semibold"
           >
             {isId ? "Setuju & Daftarkan Brand →" : "Accept & Register Brand →"}
           </Link>

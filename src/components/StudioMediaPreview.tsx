@@ -15,10 +15,10 @@ export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPr
     return draft.renderedVideo ? (
       <div className="space-y-3">
         <video controls playsInline preload="metadata" poster={draft.renderedMedia?.url} src={draft.renderedVideo.url} aria-label={`Pratinjau Reels ${draft.title}`} data-testid={`rendered-reel-${draft.id}`} className="mx-auto aspect-[9/16] max-h-96 w-auto rounded-xl border border-neutral-200 bg-neutral-950" />
-        <p className="text-center text-xs font-semibold text-neutral-600">{Math.round(draft.renderedVideo.durationSeconds)} detik · 9:16 · Suara AI</p>
-        <p className="text-center text-xs text-neutral-500">Putar video untuk meninjau gambar, intonasi, dan jeda narasi sebelum terbit.</p>
+        <p className="text-center text-sm font-semibold text-neutral-600">{Math.round(draft.renderedVideo.durationSeconds)} detik · 9:16 · Suara AI</p>
+        <p className="text-center text-sm text-neutral-500">Putar video untuk meninjau gambar, intonasi, dan jeda narasi sebelum terbit.</p>
       </div>
-    ) : <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Video Reels final belum tersedia. Buat ulang draf sebelum menerbitkan.</p>;
+    ) : <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-base text-amber-900">Video Reels final belum tersedia. Buat ulang draf sebelum menerbitkan.</p>;
   }
 
   if (draft.format !== 'carousel') {
@@ -40,7 +40,7 @@ export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPr
             className="mx-auto max-h-80 w-auto rounded-xl border border-neutral-200 object-contain"
           />
         </a>
-        <p className="text-center text-xs font-semibold text-neutral-500">Buka atau unduh visual final</p>
+        <p className="text-center text-sm font-semibold text-neutral-500">Buka atau unduh visual final</p>
       </div>
     );
   }
@@ -48,7 +48,7 @@ export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPr
   const slides = draft.renderedSlides || [];
   if (slides.length !== 5) {
     return (
-      <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-base text-amber-900">
         Pratinjau carousel belum tersedia lengkap. Lima gambar final diperlukan sebelum carousel dapat ditinjau.
       </p>
     );
@@ -79,16 +79,16 @@ export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPr
           type="button"
           onClick={() => selectSlide(selectedSlide - 1)}
           disabled={selectedSlide === 0}
-          className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-bold text-neutral-700 transition hover:border-[#D85A88] disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-700 transition hover:border-[#D85A88] disabled:cursor-not-allowed disabled:opacity-40"
         >
           Sebelumnya
         </button>
-        <span aria-live="polite" className="text-xs font-bold text-neutral-600">Slide {selectedSlide + 1}/5</span>
+        <span aria-live="polite" className="text-sm font-medium text-neutral-600">Slide {selectedSlide + 1}/5</span>
         <button
           type="button"
           onClick={() => selectSlide(selectedSlide + 1)}
           disabled={selectedSlide === 4}
-          className="rounded-xl border border-neutral-200 px-3 py-2 text-xs font-bold text-neutral-700 transition hover:border-[#D85A88] disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-700 transition hover:border-[#D85A88] disabled:cursor-not-allowed disabled:opacity-40"
         >
           Berikutnya
         </button>
@@ -107,7 +107,7 @@ export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPr
           </button>
         ))}
       </div>
-      <p className="text-center text-xs font-semibold text-neutral-500">Buka atau unduh slide final yang dipilih</p>
+      <p className="text-center text-sm font-semibold text-neutral-500">Buka atau unduh slide final yang dipilih</p>
     </div>
   );
 }

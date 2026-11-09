@@ -89,8 +89,6 @@ export default function VeloxaOnboardingWizardPage() {
   const [selectedChannels, setSelectedChannels] = useState<SocialChannelId[]>([
     'instagram',
     'facebook',
-    'tiktok',
-    'youtube_shorts',
   ]);
   const [selectedPlanId, setSelectedPlanId] = useState<SubscriptionPlanId>('free_trial');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -115,7 +113,7 @@ export default function VeloxaOnboardingWizardPage() {
         if (u.targetAudience) setTargetAudience(u.targetAudience);
         if (u.brandTone) setBrandTone(u.brandTone);
         if (u.selectedChannels && u.selectedChannels.length > 0) {
-          setSelectedChannels(u.selectedChannels);
+          setSelectedChannels(u.selectedChannels.filter(channel => channel === 'instagram' || channel === 'facebook'));
         }
         if (u.subscriptionPlanId) {
           setSelectedPlanId(u.subscriptionPlanId);
@@ -131,6 +129,7 @@ export default function VeloxaOnboardingWizardPage() {
   }, []);
 
   const toggleChannel = (ch: SocialChannelId) => {
+    if (ch !== 'instagram' && ch !== 'facebook') return;
     setSelectedChannels((prev) =>
       prev.includes(ch)
         ? prev.length > 1
@@ -153,7 +152,7 @@ export default function VeloxaOnboardingWizardPage() {
         category,
         targetAudience: targetAudience.trim(),
         brandTone: brandTone.trim(),
-        selectedChannels,
+        selectedChannels: selectedChannels.filter(channel => channel === 'instagram' || channel === 'facebook'),
         planId: selectedPlanId,
       });
       router.push('/');
@@ -173,41 +172,41 @@ export default function VeloxaOnboardingWizardPage() {
       <div className="space-y-8" data-testid="veloxa-onboarding-wizard-page">
         {errorMessage && <div role="alert" className="rounded-xl bg-red-50 p-4 text-red-700">{errorMessage}</div>}
         {/* Top Onboarding Header & 3-Step Progress Stepper */}
-        <div className="veloxa-luxury-card-pink rounded-[2rem] border border-pink-200 bg-white p-6 sm:p-8">
+        <div className="veloxa-luxury-card-pink rounded-xl border border-pink-200 bg-white p-6 sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/90 px-3.5 py-1 text-[11px] font-black uppercase tracking-wider text-[#D85A88]">
-              <Wand2 className="h-3.5 w-3.5 text-[#EC749B]" />
-              Wizard Onboarding Brand & Aktivasi Free Trial
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/90 px-3.5 py-1 text-xs font-semibold uppercase tracking-wider text-[#a92e5d]">
+              <Wand2 className="h-3.5 w-3.5 text-[#a92e5d]" />
+              Profil bisnis
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-[11px] font-extrabold text-emerald-700">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-700">
               <Database className="h-3.5 w-3.5" />
               {userEmail
-                ? `Tersambung: ${userEmail} (Cloud Firestore Ready)`
-                : 'Tersambung ke Cloud Firestore (veloxa-ai-saas)'}
+                ? `Tersambung: ${userEmail}`
+                : 'Lengkapi profil bisnis'}
             </span>
           </div>
 
-          <h1 className="mt-3 text-2xl font-black tracking-tight text-neutral-900 sm:text-4xl">
-            Siapkan Studio AI Otonom Bisnis Anda dalam 3 Langkah
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight text-neutral-900 sm:text-4xl">
+            Siapkan ruang kreatif bisnis Anda
           </h1>
-          <p className="mt-1.5 max-w-3xl text-xs sm:text-sm text-neutral-600">
+          <p className="mt-1.5 max-w-3xl text-sm sm:text-base text-neutral-600">
             Konfigurasi profil brand Anda agar 5 Agen OpenAI memahami gaya visual dan bahasa bisnis Anda, lalu pilih{' '}
-            <strong className="text-[#EC749B]">Paket Free Trial (Rp0)</strong> untuk mencoba semua fitur secara gratis.
+            <strong className="text-[#a92e5d]">Paket Free Trial (Rp0)</strong> untuk mencoba semua fitur secara gratis.
           </p>
 
           {alreadyOnboarded && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-xs">
-              <div className="flex items-center gap-2 font-bold text-emerald-800">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm">
+              <div className="flex items-center gap-2 font-medium text-emerald-800">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
                 <span>
-                  Profil brand <strong>{businessName}</strong> sudah tersimpan di Cloud Firestore. Anda dapat memperbaruinya di bawah atau langsung masuk ke Dashboard.
+                  Profil brand <strong>{businessName}</strong> sudah tersimpan. Anda dapat memperbaruinya di bawah atau langsung masuk ke Dashboard.
                 </span>
               </div>
               <button
                 type="button"
                 data-testid="onboarding-skip-to-dashboard-btn"
                 onClick={() => router.push('/')}
-                className="rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-black text-white hover:bg-emerald-700 transition"
+                className="rounded-xl bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition"
               >
                 Langsung ke Dashboard →
               </button>
@@ -241,7 +240,7 @@ export default function VeloxaOnboardingWizardPage() {
                   type="button"
                   data-testid={`onboarding-step-btn-${item.num}`}
                   onClick={() => setStep(item.num)}
-                  className={`flex items-center gap-3.5 rounded-2xl border p-4 text-left transition ${
+                  className={`flex items-center gap-3.5 rounded-xl border p-4 text-left transition ${
                     isCurrent
                       ? 'border-2 border-[#EC749B] bg-[#FFF9FB] shadow-sm'
                       : isDone
@@ -250,9 +249,9 @@ export default function VeloxaOnboardingWizardPage() {
                   }`}
                 >
                   <div
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-black ${
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${
                       isCurrent
-                        ? 'bg-[#EC749B] text-white'
+                        ? 'bg-[#bd416e] text-white'
                         : isDone
                           ? 'bg-emerald-600 text-white'
                           : 'bg-neutral-100 text-neutral-700'
@@ -261,8 +260,8 @@ export default function VeloxaOnboardingWizardPage() {
                     {isDone ? '✓' : item.num}
                   </div>
                   <div>
-                    <p className="text-xs font-black text-neutral-900">{item.title}</p>
-                    <p className="text-[11px] text-neutral-500">{item.subtitle}</p>
+                    <p className="text-sm font-semibold text-neutral-900">{item.title}</p>
+                    <p className="text-xs text-neutral-500">{item.subtitle}</p>
                   </div>
                 </button>
               );
@@ -276,21 +275,21 @@ export default function VeloxaOnboardingWizardPage() {
         {step === 1 && (
           <section
             data-testid="onboarding-step-1-panel"
-            className="veloxa-luxury-card rounded-[2rem] border border-neutral-200 bg-white p-6 sm:p-9 space-y-6"
+            className="veloxa-luxury-card rounded-xl border border-neutral-200 bg-white p-6 sm:p-9 space-y-6"
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 pb-4">
               <div>
-                <span className="text-[11px] font-black uppercase tracking-wider text-[#EC749B]">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#a92e5d]">
                   LANGKAH 1 DARI 3 · BRAND BRAIN AI
                 </span>
-                <h2 className="mt-1 text-xl font-black text-neutral-900">
+                <h2 className="mt-1 text-xl font-semibold text-neutral-900">
                   Ceritakan Tentang Bisnis atau Event Anda
                 </h2>
               </div>
 
               {/* Quick Fill Templates */}
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-bold text-neutral-500 mr-1">Isi Cepat:</span>
+                <span className="text-xs font-medium text-neutral-500 mr-1">Isi Cepat:</span>
                 {QUICK_BRAND_TEMPLATES.map((tpl) => (
                   <button
                     key={tpl.label}
@@ -302,7 +301,7 @@ export default function VeloxaOnboardingWizardPage() {
                       setTargetAudience(tpl.targetAudience);
                       setBrandTone(tpl.brandTone);
                     }}
-                    className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-[11px] font-bold text-neutral-700 hover:border-pink-300 hover:bg-pink-50/70 hover:text-[#D85A88] transition"
+                    className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-xs font-medium text-neutral-700 hover:border-pink-300 hover:bg-pink-50/70 hover:text-[#a92e5d] transition"
                   >
                     {tpl.label}
                   </button>
@@ -314,9 +313,9 @@ export default function VeloxaOnboardingWizardPage() {
               <div>
                 <label
                   htmlFor="onboard-business-name"
-                  className="block text-xs font-black uppercase tracking-wider text-neutral-800"
+                  className="block text-sm font-semibold uppercase tracking-wider text-neutral-800"
                 >
-                  Nama Brand / Bisnis / Event <span className="text-[#EC749B]">*</span>
+                  Nama Brand / Bisnis / Event <span className="text-[#a92e5d]">*</span>
                 </label>
                 <div className="relative mt-1.5">
                   <Building2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -331,7 +330,7 @@ export default function VeloxaOnboardingWizardPage() {
                     }}
                     placeholder="Contoh: Kopi Senja & Artisan Bakery"
                     data-testid="onboard-business-name-input"
-                    className="veloxa-auth-input w-full rounded-2xl border border-neutral-200 bg-white py-3.5 pl-10 pr-4 text-sm font-semibold text-neutral-900"
+                    className="veloxa-auth-input w-full rounded-xl border border-neutral-200 bg-white py-3.5 pl-10 pr-4 text-base font-semibold text-neutral-900"
                   />
                 </div>
               </div>
@@ -339,9 +338,9 @@ export default function VeloxaOnboardingWizardPage() {
               <div>
                 <label
                   htmlFor="onboard-city"
-                  className="block text-xs font-black uppercase tracking-wider text-neutral-800"
+                  className="block text-sm font-semibold uppercase tracking-wider text-neutral-800"
                 >
-                  Kota / Target Area Utama <span className="text-[#EC749B]">*</span>
+                  Kota / Target Area Utama <span className="text-[#a92e5d]">*</span>
                 </label>
                 <div className="relative mt-1.5">
                   <MapPin className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -353,7 +352,7 @@ export default function VeloxaOnboardingWizardPage() {
                     onChange={(e) => setCity(e.target.value)}
                     placeholder="Contoh: Jakarta Selatan / Bandung"
                     data-testid="onboard-city-input"
-                    className="veloxa-auth-input w-full rounded-2xl border border-neutral-200 bg-white py-3.5 pl-10 pr-4 text-sm font-semibold text-neutral-900"
+                    className="veloxa-auth-input w-full rounded-xl border border-neutral-200 bg-white py-3.5 pl-10 pr-4 text-base font-semibold text-neutral-900"
                   />
                 </div>
               </div>
@@ -361,8 +360,8 @@ export default function VeloxaOnboardingWizardPage() {
 
             {/* Category Cards */}
             <div>
-              <p className="text-xs font-black uppercase tracking-wider text-neutral-800 mb-2.5">
-                Pilih Kategori Industri Bisnis Anda <span className="text-[#EC749B]">*</span>
+              <p className="text-sm font-semibold uppercase tracking-wider text-neutral-800 mb-2.5">
+                Pilih Kategori Industri Bisnis Anda <span className="text-[#a92e5d]">*</span>
               </p>
               <div className="grid gap-3 sm:grid-cols-3">
                 {(
@@ -406,14 +405,14 @@ export default function VeloxaOnboardingWizardPage() {
                       type="button"
                       data-testid={`onboard-cat-${cat.id}`}
                       onClick={() => setCategory(cat.id)}
-                      className={`rounded-2xl border p-4 text-left transition ${
+                      className={`rounded-xl border p-4 text-left transition ${
                         active
                           ? 'border-2 border-[#EC749B] bg-[#FFF9FB] shadow-xs'
                           : 'border-neutral-200 bg-white hover:border-pink-200'
                       }`}
                     >
-                      <p className="text-xs font-black text-neutral-900">{cat.title}</p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">{cat.desc}</p>
+                      <p className="text-sm font-semibold text-neutral-900">{cat.title}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-neutral-600">{cat.desc}</p>
                     </button>
                   );
                 })}
@@ -424,7 +423,7 @@ export default function VeloxaOnboardingWizardPage() {
               <div>
                 <label
                   htmlFor="onboard-audience"
-                  className="block text-xs font-black uppercase tracking-wider text-neutral-800"
+                  className="block text-sm font-semibold uppercase tracking-wider text-neutral-800"
                 >
                   Target Audiens Pelanggan Anda
                 </label>
@@ -433,13 +432,13 @@ export default function VeloxaOnboardingWizardPage() {
                   type="text"
                   value={targetAudience}
                   onChange={(e) => setTargetAudience(e.target.value)}
-                  className="veloxa-auth-input mt-1.5 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-xs sm:text-sm font-semibold text-neutral-900"
+                  className="veloxa-auth-input mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm sm:text-base font-semibold text-neutral-900"
                 />
               </div>
               <div>
                 <label
                   htmlFor="onboard-tone"
-                  className="block text-xs font-black uppercase tracking-wider text-neutral-800"
+                  className="block text-sm font-semibold uppercase tracking-wider text-neutral-800"
                 >
                   Gaya Bahasa (Brand Tone of Voice)
                 </label>
@@ -448,7 +447,7 @@ export default function VeloxaOnboardingWizardPage() {
                   type="text"
                   value={brandTone}
                   onChange={(e) => setBrandTone(e.target.value)}
-                  className="veloxa-auth-input mt-1.5 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-xs sm:text-sm font-semibold text-neutral-900"
+                  className="veloxa-auth-input mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm sm:text-base font-semibold text-neutral-900"
                 />
               </div>
             </div>
@@ -458,7 +457,7 @@ export default function VeloxaOnboardingWizardPage() {
                 type="button"
                 data-testid="onboarding-next-to-step-2"
                 onClick={() => setStep(2)}
-                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-7 py-4 text-sm font-black text-white transition hover:bg-[#DF608A]"
+                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-xl bg-[#bd416e] px-7 py-4 text-base font-semibold text-white transition hover:bg-[#a92e5d]"
               >
                 <span>Lanjut ke Langkah 2: Pilih Kanal Sosmed</span>
                 <ArrowRight className="h-4 w-4" />
@@ -473,16 +472,16 @@ export default function VeloxaOnboardingWizardPage() {
         {step === 2 && (
           <section
             data-testid="onboarding-step-2-panel"
-            className="veloxa-luxury-card rounded-[2rem] border border-neutral-200 bg-white p-6 sm:p-9 space-y-6"
+            className="veloxa-luxury-card rounded-xl border border-neutral-200 bg-white p-6 sm:p-9 space-y-6"
           >
             <div className="border-b border-neutral-100 pb-4">
-              <span className="text-[11px] font-black uppercase tracking-wider text-[#EC749B]">
-                LANGKAH 2 DARI 3 · KANAL DISTRIBUSI OTONOM
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#a92e5d]">
+                Langkah 2 dari 3 · Akun sosial
               </span>
-              <h2 className="mt-1 text-xl font-black text-neutral-900">
-                Pilih Sosial Media yang Ingin Diotomasi oleh Veloxa AI
+              <h2 className="mt-1 text-xl font-semibold text-neutral-900">
+                Pilih platform untuk bisnis Anda
               </h2>
-              <p className="mt-1 text-xs sm:text-sm text-neutral-600">
+              <p className="mt-1 text-sm sm:text-base text-neutral-600">
                 Anda dapat menghubungkan akun OAuth resmi kapan saja di dalam Dashboard. Pilih kanal target utama Anda:
               </p>
             </div>
@@ -492,38 +491,41 @@ export default function VeloxaOnboardingWizardPage() {
                 [
                   {
                     id: 'instagram',
-                    title: '📸 Instagram Professional (Reels 9:16 & Carousel 4:5)',
-                    desc: 'Publikasi otomatis Reels vertikal, multi-slide Carousel 4:5, & Feed Poster.',
-                    badge: 'Meta Graph API Resmi',
+                    title: 'Instagram',
+                    desc: 'Post tunggal, carousel, dan Reels untuk akun profesional.',
+                    badge: 'Tersedia',
                   },
                   {
                     id: 'facebook',
-                    title: '👍 Facebook Page & Facebook Reels',
-                    desc: 'Sinkronisasi lintas post dan Reels halaman bisnis Anda sekaligus.',
-                    badge: 'Meta Page Publishing',
+                    title: 'Facebook Page',
+                    desc: 'Posting dan Reels pada halaman bisnis yang Anda kelola.',
+                    badge: 'Tersedia',
                   },
                   {
                     id: 'tiktok',
-                    title: '🎵 TikTok Bisnis (Video 9:16 & Photo Mode Carousel)',
-                    desc: 'Auto-posting video pendek dengan voiceover & TikTok Photo Mode.',
-                    badge: 'TikTok Direct Post API',
+                    title: 'TikTok',
+                    desc: 'Integrasi TikTok sedang disiapkan.',
+                    badge: 'Segera hadir',
                   },
                   {
                     id: 'youtube_shorts',
-                    title: '▶️ YouTube Shorts (Vertical 9:16 Video)',
-                    desc: 'Distribusi otomatis video vertikal 9:16 ke kanal YouTube Shorts bisnis Anda.',
-                    badge: 'YouTube Data API v3',
+                    title: 'YouTube Shorts',
+                    desc: 'Integrasi YouTube Shorts sedang disiapkan.',
+                    badge: 'Segera hadir',
                   },
                 ] as const
               ).map((ch) => {
-                const selected = selectedChannels.includes(ch.id);
+                const available = ch.id === 'instagram' || ch.id === 'facebook';
+                const selected = available && selectedChannels.includes(ch.id);
                 return (
                   <button
                     key={ch.id}
                     type="button"
                     data-testid={`onboard-channel-${ch.id}`}
+                    disabled={!available}
+                    aria-pressed={selected}
                     onClick={() => toggleChannel(ch.id)}
-                    className={`flex flex-col justify-between rounded-2xl border p-5 text-left transition ${
+                    className={`flex flex-col justify-between rounded-xl border p-5 text-left transition ${
                       selected
                         ? 'border-2 border-[#EC749B] bg-[#FFF9FB] shadow-xs'
                         : 'border-neutral-200 bg-white opacity-75 hover:opacity-100'
@@ -531,21 +533,21 @@ export default function VeloxaOnboardingWizardPage() {
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="rounded-full bg-pink-50 border border-pink-200 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+                        <span className="rounded-full bg-pink-50 border border-pink-200 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
                           {ch.badge}
                         </span>
                         <span
-                          className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-black ${
+                          className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-sm font-semibold ${
                             selected
-                              ? 'bg-[#EC749B] text-white'
+                              ? 'bg-[#bd416e] text-white'
                               : 'border border-neutral-300 bg-white text-transparent'
                           }`}
                         >
                           ✓
                         </span>
                       </div>
-                      <p className="mt-3 text-sm font-black text-neutral-900">{ch.title}</p>
-                      <p className="mt-1 text-xs leading-relaxed text-neutral-600">{ch.desc}</p>
+                      <p className="mt-3 text-base font-semibold text-neutral-900">{ch.title}</p>
+                      <p className="mt-1 text-sm leading-relaxed text-neutral-600">{ch.desc}</p>
                     </div>
                   </button>
                 );
@@ -556,7 +558,7 @@ export default function VeloxaOnboardingWizardPage() {
               <button
                 type="button"
                 onClick={() => setStep(1)}
-                className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-5 py-3.5 text-xs sm:text-sm font-bold text-neutral-700 hover:border-pink-200"
+                className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-5 py-3.5 text-sm sm:text-base font-medium text-neutral-700 hover:border-pink-200"
               >
                 <ArrowLeft className="h-4 w-4" />
                 <span>Kembali ke Profil Brand</span>
@@ -566,7 +568,7 @@ export default function VeloxaOnboardingWizardPage() {
                 type="button"
                 data-testid="onboarding-next-to-step-3"
                 onClick={() => setStep(3)}
-                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-2xl bg-[#EC749B] px-7 py-4 text-sm font-black text-white transition hover:bg-[#DF608A]"
+                className="veloxa-luxury-card-pink inline-flex items-center gap-2 rounded-xl bg-[#bd416e] px-7 py-4 text-base font-semibold text-white transition hover:bg-[#a92e5d]"
               >
                 <span>Lanjut ke Langkah 3: Pilih Paket (Tersedia Free Trial!)</span>
                 <ArrowRight className="h-4 w-4" />
@@ -581,17 +583,17 @@ export default function VeloxaOnboardingWizardPage() {
         {step === 3 && (
           <section
             data-testid="onboarding-step-3-panel"
-            className="veloxa-luxury-card rounded-[2rem] border border-neutral-200 bg-white p-6 sm:p-9 space-y-6"
+            className="veloxa-luxury-card rounded-xl border border-neutral-200 bg-white p-6 sm:p-9 space-y-6"
           >
             <div className="border-b border-neutral-100 pb-4">
-              <span className="text-[11px] font-black uppercase tracking-wider text-[#EC749B]">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#a92e5d]">
                 LANGKAH 3 DARI 3 · PILIH PAKET (BISA COBA GRATIS DULU!)
               </span>
-              <h2 className="mt-1 text-xl sm:text-2xl font-black text-neutral-900">
+              <h2 className="mt-1 text-xl sm:text-2xl font-semibold text-neutral-900">
                 Mulai dengan Paket Free Trial (Rp0) atau Pilih Paket Langganan Bulanan
               </h2>
-              <p className="mt-1 text-xs sm:text-sm text-neutral-600">
-                Kami menyediakan <strong className="text-[#EC749B]">Paket Free Trial Gratis</strong> agar Anda bisa langsung menjajal Studio AI, Dual Brand Vault, dan simulasi Meta Ads di dalam Dashboard tanpa bayar di muka.
+              <p className="mt-1 text-sm sm:text-base text-neutral-600">
+                Kami menyediakan <strong className="text-[#a92e5d]">Paket Free Trial Gratis</strong> agar Anda bisa langsung menjajal Studio AI, Dual Brand Vault, dan simulasi Meta Ads di dalam Dashboard tanpa bayar di muka.
               </p>
             </div>
 
@@ -599,7 +601,7 @@ export default function VeloxaOnboardingWizardPage() {
             <div
               onClick={() => setSelectedPlanId('free_trial')}
               data-testid="onboard-plan-free_trial"
-              className={`cursor-pointer rounded-3xl border-2 p-6 transition ${
+              className={`cursor-pointer rounded-xl border-2 p-6 transition ${
                 selectedPlanId === 'free_trial'
                   ? 'veloxa-luxury-card-pink border-[#EC749B] bg-[#FFF9FB]'
                   : 'border-neutral-200 bg-white hover:border-pink-200'
@@ -607,44 +609,44 @@ export default function VeloxaOnboardingWizardPage() {
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EC749B] px-3.5 py-1 text-xs font-black text-white">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#bd416e] px-3.5 py-1 text-sm font-semibold text-white">
                     <Gift className="h-3.5 w-3.5" />
                     DIREKOMENDASIKAN UNTUK COBA FITUR DULU
                   </span>
-                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-extrabold text-emerald-700">
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                     ✓ Tanpa Kartu Kredit · Aktif Instan
                   </span>
                 </div>
                 <div className="text-right">
-                  <span className="text-2xl sm:text-3xl font-black text-[#EC749B]">
+                  <span className="text-2xl sm:text-3xl font-semibold text-[#a92e5d]">
                     Rp0 (Gratis)
                   </span>
-                  <span className="text-xs font-bold text-neutral-500"> / 7 Hari Percobaan</span>
+                  <span className="text-sm font-medium text-neutral-500"> / 7 Hari Percobaan</span>
                 </div>
               </div>
 
-              <h3 className="mt-3 text-lg sm:text-xl font-black text-neutral-900">
+              <h3 className="mt-3 text-lg sm:text-xl font-semibold text-neutral-900">
                 🎁 Veloxa Free Trial — Coba Seluruh Fitur Studio AI & Dashboard
               </h3>
-              <p className="mt-1 text-xs sm:text-sm text-neutral-600">
+              <p className="mt-1 text-sm sm:text-base text-neutral-600">
                 Cocok bagi pengguna baru yang ingin membuktikan kualitas produksi Reels 9:16, Carousel 4:5, Dual Brand Vault, dan melihat cara kerja AI Meta Ads sebelum berlangganan.
               </p>
 
-              <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-4 text-xs font-bold text-neutral-800">
+              <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-4 text-sm font-medium text-neutral-800">
                 <div className="flex items-center gap-2 rounded-xl border border-pink-200/80 bg-white p-3">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#EC749B]" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#a92e5d]" />
                   <span>10 Konten AI Gratis</span>
                 </div>
                 <div className="flex items-center gap-2 rounded-xl border border-pink-200/80 bg-white p-3">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#EC749B]" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#a92e5d]" />
                   <span>Dual Brand Vault Aktif</span>
                 </div>
                 <div className="flex items-center gap-2 rounded-xl border border-pink-200/80 bg-white p-3">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#EC749B]" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#a92e5d]" />
                   <span>4 Kanal Sosmed Preview</span>
                 </div>
                 <div className="flex items-center gap-2 rounded-xl border border-pink-200/80 bg-white p-3">
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#EC749B]" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-[#a92e5d]" />
                   <span>Simulasi AI Meta Ads</span>
                 </div>
               </div>
@@ -652,7 +654,7 @@ export default function VeloxaOnboardingWizardPage() {
 
             {/* Paid Monthly Plans Grid */}
             <div>
-              <p className="text-xs font-black uppercase tracking-wider text-neutral-500 mb-3">
+              <p className="text-sm font-semibold uppercase tracking-wider text-neutral-500 mb-3">
                 Paket berbayar tersedia setelah integrasi Duitku diaktifkan:
               </p>
               <div className="grid gap-4 sm:grid-cols-3">
@@ -665,7 +667,7 @@ export default function VeloxaOnboardingWizardPage() {
                       key={planId}
                       aria-disabled="true"
                       data-testid={`onboard-plan-${planId}`}
-                      className={`cursor-default rounded-2xl border p-5 opacity-70 flex flex-col justify-between ${
+                      className={`cursor-default rounded-xl border p-5 opacity-70 flex flex-col justify-between ${
                         active
                           ? 'border-2 border-[#EC749B] bg-[#FFF9FB] shadow-sm'
                           : 'border-neutral-200 bg-white hover:border-pink-200'
@@ -673,24 +675,24 @@ export default function VeloxaOnboardingWizardPage() {
                     >
                       <div>
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-black text-neutral-900">{spec.name}</span>
+                          <span className="text-base font-semibold text-neutral-900">{spec.name}</span>
                           {planId === 'pro_1500k' && (
-                            <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-black text-white">
+                            <span className="rounded-full bg-[#bd416e] px-2.5 py-0.5 text-xs font-semibold text-white">
                               POPULER
                             </span>
                           )}
                         </div>
-                        <p className="mt-2 text-2xl font-black text-[#EC749B]">
+                        <p className="mt-2 text-2xl font-semibold text-[#a92e5d]">
                           {price.amountFormatted}
-                          <span className="text-xs font-semibold text-neutral-500">
+                          <span className="text-sm font-semibold text-neutral-500">
                             {price.periodLabel}
                           </span>
                         </p>
-                        <p className="mt-1.5 text-xs text-neutral-600 leading-relaxed">
+                        <p className="mt-1.5 text-sm text-neutral-600 leading-relaxed">
                           {spec.tagline}
                         </p>
                       </div>
-                      <div className="mt-4 pt-3 border-t border-neutral-100 text-[11px] font-bold text-neutral-700">
+                      <div className="mt-4 pt-3 border-t border-neutral-100 text-xs font-medium text-neutral-700">
                         ✓ {spec.monthlyPostQuota} Konten/bln · Maks {spec.maxPostsPerDay}x/hari
                       </div>
                     </div>
@@ -703,7 +705,7 @@ export default function VeloxaOnboardingWizardPage() {
               <button
                 type="button"
                 onClick={() => setStep(2)}
-                className="inline-flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-5 py-3.5 text-xs sm:text-sm font-bold text-neutral-700 hover:border-pink-200"
+                className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-5 py-3.5 text-sm sm:text-base font-medium text-neutral-700 hover:border-pink-200"
               >
                 <ArrowLeft className="h-4 w-4" />
                 <span>Kembali</span>
@@ -714,7 +716,7 @@ export default function VeloxaOnboardingWizardPage() {
                 disabled={isSaving}
                 data-testid="onboarding-finish-btn"
                 onClick={() => void handleFinishOnboarding()}
-                className="veloxa-luxury-card-pink inline-flex items-center gap-2.5 rounded-2xl bg-[#EC749B] px-8 py-4 text-sm sm:text-base font-black text-white transition hover:bg-[#DF608A] disabled:opacity-60"
+                className="veloxa-luxury-card-pink inline-flex items-center gap-2.5 rounded-xl bg-[#bd416e] px-8 py-4 text-base sm:text-base font-semibold text-white transition hover:bg-[#a92e5d] disabled:opacity-60"
               >
                 <Rocket className="h-5 w-5" />
                 <span>

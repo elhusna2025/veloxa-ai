@@ -3,62 +3,37 @@
 @tailwind utilities;
 
 :root {
-  --veloxa-pink-primary: #ec749b;
-  --veloxa-pink-hover: #df608a;
-  --veloxa-pink-soft: #fdf2f6;
+  --veloxa-pink-primary: #bd416e;
+  --veloxa-pink-hover: #a92e5d;
+  --veloxa-pink-soft: #f8edf2;
   --veloxa-surface-white: #ffffff;
-  --veloxa-surface-subtle: #ffffff;
+  --veloxa-surface-subtle: #f6f7f9;
   --veloxa-border-neutral: #e5e7eb;
   --veloxa-text-primary: #171717;
-  --veloxa-text-muted: #6b7280;
+  --veloxa-text-muted: #737373;
 }
 
-body {
-  background-color: #ffffff;
-  color: var(--veloxa-text-primary);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Luxury Pure-White Architectural Shadows for Landing Page Sections & Cards */
-.veloxa-luxury-section {
-  background-color: #ffffff;
-  box-shadow:
-    0 22px 54px -12px rgba(15, 23, 42, 0.12),
-    0 10px 26px -8px rgba(15, 23, 42, 0.07),
-    0 2px 6px 0 rgba(15, 23, 42, 0.04);
-}
-
-.veloxa-luxury-card {
-  background-color: #ffffff;
-  box-shadow:
-    0 14px 32px -6px rgba(15, 23, 42, 0.13),
-    0 6px 14px -4px rgba(15, 23, 42, 0.08),
-    0 1px 4px 0 rgba(15, 23, 42, 0.05);
-  transition:
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.22s ease;
-}
-
-.veloxa-luxury-card-pink {
-  box-shadow:
-    0 18px 40px -8px rgba(236, 116, 155, 0.25),
-    0 8px 20px -4px rgba(15, 23, 42, 0.11),
-    0 2px 5px 0 rgba(15, 23, 42, 0.05);
-  transition:
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.22s ease;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .veloxa-luxury-card:hover {
-    transform: translate3d(0, -3px, 0);
-  }
-
-  .veloxa-luxury-card-pink:hover {
-    transform: translate3d(0, -3px, 0);
-  }
-}
+body { background: #f6f7f9; color: var(--veloxa-text-primary); font-size: 16px; line-height: 1.6; font-feature-settings: "cv02", "cv03", "cv04", "cv11"; -webkit-font-smoothing: antialiased; }
+.veloxa-app-ui :focus-visible { outline: 2px solid #a92e5d; outline-offset: 3px; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.veloxa-luxury-section, .veloxa-luxury-card, .veloxa-luxury-card-pink, .veloxa-panel { border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.025); }
+.veloxa-panel { background: #fff; }
+.veloxa-button-primary, .veloxa-button-secondary { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: .5rem; border-radius: 8px; padding: .65rem 1rem; font-size: .9375rem; font-weight: 500; line-height: 1.4; transition: background-color .15s, border-color .15s; }
+.veloxa-button-primary { border: 1px solid #171717; background: #171717; color: #fff; }
+.veloxa-button-primary:hover { background: #333; }
+.veloxa-button-secondary { border: 1px solid #dedede; background: #fff; color: #404040; }
+.veloxa-button-secondary:hover { border-color: #a3a3a3; background: #fafafa; }
+.veloxa-app-ui :where(button,input:not([type="checkbox"]):not([type="radio"]),select,textarea) { font-family: inherit; }
+.veloxa-app-ui button:not(.rounded-full), .veloxa-app-ui input:not([type="checkbox"]):not([type="radio"]), .veloxa-app-ui select, .veloxa-app-ui textarea { border-radius: 8px; }
+.veloxa-app-ui input:not([type="checkbox"]):not([type="radio"]), .veloxa-app-ui select { min-height: 44px; }
+.veloxa-app-ui textarea { min-height: 100px; }
+.veloxa-app-ui dialog { margin: auto; width: min(calc(100% - 2rem), 720px); max-height: calc(100dvh - 2rem); overflow-y: auto; border-radius: 12px; }
+.veloxa-app-ui .veloxa-luxury-card:hover, .veloxa-app-ui .veloxa-luxury-card-pink:hover, .veloxa-app-ui .veloxa-card-hover:hover { transform: none; }
+.veloxa-workspace { font-size: 16px; line-height: 1.6; }
+.veloxa-workspace p { overflow-wrap: anywhere; }
+.veloxa-workspace input, .veloxa-workspace textarea, .veloxa-workspace select { max-width: 100%; }
+.veloxa-workspace button, .veloxa-dedicated button { min-height: 40px; }
+@media (max-width: 639px) { .veloxa-workspace button, .veloxa-dedicated button { min-height: 44px; } }
 
 /* Fluid typography with clamp() (modern-web-guidance: responsive-design) */
 .veloxa-hero-title {

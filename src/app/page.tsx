@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
+import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
 import { useRouter } from 'next/navigation';
 import {
@@ -76,8 +77,10 @@ import {
 } from '@/lib/veloxa-i18n';
 import { VeloxaMetaConnections } from '@/components/VeloxaMetaConnections';
 import { veloxaApi } from '@/lib/veloxa-api-client';
-import { VeloxaLuxuryLanding } from '@/components/VeloxaLuxuryLanding';
-import { VeloxaExecutiveDashboardOverview } from '@/components/VeloxaExecutiveDashboardOverview';
+import { VeloxaPublicLanding } from '@/components/VeloxaPublicLanding';
+import { VeloxaPublicHeader } from '@/components/VeloxaPublicHeader';
+import { VeloxaWorkspaceOverview } from '@/components/VeloxaWorkspaceOverview';
+import { VeloxaWorkspaceShell } from '@/components/VeloxaWorkspaceShell';
 import type {
   AutonomyConfig,
   BrandProfile,
@@ -189,6 +192,7 @@ export default function VeloxaAiPlatformPage() {
   const [reviewOAuthAccounts, setReviewOAuthAccounts] = useState(false);
   const [selectedSourceAssetId, setSelectedSourceAssetId] = useState('');
   const [studioTopic, setStudioTopic] = useState<string>('');
+  const [studioFilter, setStudioFilter] = useState<'all' | 'draft' | 'published' | 'attention'>('all');
   const [newAssetTitle, setNewAssetTitle] = useState<string>('');
   const [newAssetDrawer, setNewAssetDrawer] = useState<VaultDrawerType>('real_asset');
   const [newAssetMediaType, setNewAssetMediaType] = useState<'photo' | 'video_reel'>('photo');
@@ -222,7 +226,7 @@ export default function VeloxaAiPlatformPage() {
   );
   const [openAiInputKey, setOpenAiInputKey] = useState<string>('');
   const [statusBanner, setStatusBanner] = useState<string>(
-    'Veloxa AI aktif · Seluruh 4 kanal sosmed (IG, FB, TikTok, YT Shorts) & AI Agent Meta Ads siap dijalankan.',
+    '',
   );
 
   // Stage 1-5 Native <dialog> Modal Refs (modern-web-guidance: dialog)
@@ -236,8 +240,8 @@ export default function VeloxaAiPlatformPage() {
   // Stage 5A & 5B: Production Authentication, Role Separation & Global i18n State
   const [locale, setLocale] = useState<VeloxaLocale>('id');
   const [authUser, setAuthUser] = useState<VeloxaAuthenticatedUser | null>(null);
-  const [authEmailInput, setAuthEmailInput] = useState<string>(SUPER_ADMIN_EMAIL);
-  const [authPasswordInput, setAuthPasswordInput] = useState<string>('VeloxaAdmin2026!');
+  const [authEmailInput, setAuthEmailInput] = useState<string>('');
+  const [authPasswordInput, setAuthPasswordInput] = useState<string>('');
 
   const handleSelectLocale = (nextLocale: VeloxaLocale) => {
     setLocale(nextLocale);
@@ -651,6 +655,7 @@ export default function VeloxaAiPlatformPage() {
     setStatusBanner('Konfigurasi produksi dikelola melalui environment dan Secret Manager backend. Kunci API tidak disimpan di browser.');
   };
 
+  const studioDrafts = drafts.filter(draft => studioFilter === 'all' || (studioFilter === 'published' ? draft.status === 'published' : studioFilter === 'attention' ? ['publish_failed', 'partially_published', 'needs_attention'].includes(draft.status) : !['published', 'publish_failed', 'partially_published', 'needs_attention'].includes(draft.status)));
   const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
   const i18nCopy = VELOXA_I18N_COPY[locale];
 
@@ -664,13 +669,14 @@ export default function VeloxaAiPlatformPage() {
         isUserWorkspaceView ? 'bg-[#F8F9FC]' : 'bg-white'
       }`}
     >
-      {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-bold text-neutral-800">Menyiapkan workspace Anda…</p></div></div>}
+      {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-medium text-neutral-800">Menyiapkan workspace Anda…</p></div></div>}
       {/* Top Global Header — Ditampilkan pada Landing Page, Super Admin, & Mobile (<1024px). Pada Desktop User Workspace, Header menyatu di sisi kanan Sidebar Pink */}
       <header
         className={`sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur ${
-          isUserWorkspaceView ? 'lg:hidden' : ''
+          isUserWorkspaceView ? 'hidden' : ''
         }`}
       >
+        {!authUser ? <VeloxaPublicHeader locale={locale} onLocale={handleSelectLocale} /> : (
         <div
           className={`flex items-center justify-between gap-2 ${
             isUserWorkspaceView
@@ -681,20 +687,20 @@ export default function VeloxaAiPlatformPage() {
           }`}
         >
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-            <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-2xl bg-[#EC749B] font-black text-white shadow-xs shrink-0">
+            <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl bg-[#bd416e] font-semibold text-white shadow-xs shrink-0">
               V
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-base sm:text-xl font-black tracking-tight text-neutral-900 whitespace-nowrap">
+              <span className="text-base sm:text-xl font-semibold tracking-tight text-neutral-900 whitespace-nowrap">
                 VELOXA AI
               </span>
               {authUser &&
                 (authUser.isSuperAdmin && activeRole === 'admin' ? (
-                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
+                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-medium text-[#a92e5d]">
                     Super Admin Control Center
                   </span>
                 ) : (
-                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[11px] font-bold text-[#D85A88]">
+                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-medium text-[#a92e5d]">
                     Workspace: {brand.businessName} ({brand.city})
                   </span>
                 ))}
@@ -711,7 +717,7 @@ export default function VeloxaAiPlatformPage() {
               data-testid="header-lang-select"
               value={locale}
               onChange={(e) => handleSelectLocale(e.target.value as VeloxaLocale)}
-              className="max-w-[136px] sm:max-w-none truncate rounded-xl sm:rounded-2xl border border-neutral-200 bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-[11px] sm:text-xs font-black text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
+              className="max-w-[136px] sm:max-w-none truncate rounded-xl sm:rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-semibold text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
             >
               {VELOXA_LOCALES.map((loc) => (
                 <option key={loc.code} value={loc.code}>
@@ -725,14 +731,14 @@ export default function VeloxaAiPlatformPage() {
                 <Link
                   href="/login"
                   data-testid="open-auth-modal-btn"
-                  className="rounded-xl sm:rounded-2xl border border-neutral-200 bg-white px-3 py-1.5 sm:px-4 sm:py-2 text-[11px] sm:text-xs font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88] whitespace-nowrap"
+                  className="rounded-xl sm:rounded-xl border border-neutral-200 bg-white px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-neutral-800 hover:border-pink-200 hover:text-[#a92e5d] whitespace-nowrap"
                 >
                   {i18nCopy.headerSignIn}
                 </Link>
                 <Link
                   href="/register"
                   data-testid="open-onboarding-public-btn"
-                  className="hidden sm:inline-flex rounded-2xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-xs hover:bg-[#DF608A] whitespace-nowrap"
+                  className="hidden sm:inline-flex rounded-xl bg-[#bd416e] px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-[#a92e5d] whitespace-nowrap"
                 >
                   {i18nCopy.headerStartFree}
                 </Link>
@@ -744,7 +750,7 @@ export default function VeloxaAiPlatformPage() {
                     type="button"
                     data-testid="back-to-admin-btn"
                     onClick={() => setActiveRole('admin')}
-                    className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-300 bg-pink-50/80 px-3.5 py-2 text-xs font-black text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-300 bg-pink-50/80 px-3.5 py-2 text-sm font-semibold text-[#a92e5d] hover:bg-[#bd416e] hover:text-white"
                   >
                     <ShieldCheck className="h-3.5 w-3.5" />
                     ← Super Admin
@@ -759,9 +765,9 @@ export default function VeloxaAiPlatformPage() {
                       setSelectedCheckoutPlanId(activePlanId);
                       billingDialogRef.current?.showModal();
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-2xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-xs font-bold text-[#D85A88] hover:bg-pink-100/70"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-sm font-medium text-[#a92e5d] hover:bg-pink-100/70"
                   >
-                    <CreditCard className="h-3.5 w-3.5 text-[#EC749B]" />
+                    <CreditCard className="h-3.5 w-3.5 text-[#a92e5d]" />
                     {currentPlan.name} · {postsUsedThisMonth}/{currentPlan.monthlyPostQuota}
                   </button>
                 )}
@@ -770,9 +776,9 @@ export default function VeloxaAiPlatformPage() {
                   type="button"
                   data-testid="open-auth-modal-btn"
                   onClick={() => authDialogRef.current?.showModal()}
-                  className="flex items-center gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                  className="flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                 >
-                  <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
+                  <Lock className="h-3.5 w-3.5 text-[#a92e5d]" />
                   <span className="max-w-[140px] truncate sm:max-w-none">{authUser.email}</span>
                 </button>
 
@@ -780,7 +786,7 @@ export default function VeloxaAiPlatformPage() {
                   type="button"
                   data-testid="logout-btn"
                   onClick={handleRequestSignOutClick}
-                  className="rounded-2xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
+                  className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-600 hover:border-pink-200 hover:text-[#a92e5d]"
                 >
                   {i18nCopy.headerLogout}
                 </button>
@@ -788,6 +794,7 @@ export default function VeloxaAiPlatformPage() {
             )}
           </div>
         </div>
+        )}
       </header>
 
       {/* Main Content Container — Flush Full-Width untuk User Sidemenu, atau 1480px untuk Landing/Super Admin */}
@@ -803,7 +810,7 @@ export default function VeloxaAiPlatformPage() {
             /* ======================================================================
                KONDISI 1 (BELUM LOGIN): ULTRA-LUXURY GLOBAL MULTI-LANGUAGE LANDING PAGE
                ====================================================================== */
-            <VeloxaLuxuryLanding
+            <VeloxaPublicLanding
               locale={locale}
               onSelectLocale={handleSelectLocale}
               onOpenOnboarding={(defaultPlanId) => {
@@ -820,99 +827,99 @@ export default function VeloxaAiPlatformPage() {
                MURNI SUPER ADMIN COMMAND CENTER
                ====================================================================== */
             <div className="space-y-6" data-testid="super-admin-dashboard">
-              <div className="flex flex-col justify-between gap-4 rounded-3xl border border-neutral-200/80 bg-white p-6 text-neutral-900 shadow-2xs sm:flex-row sm:items-center">
+              <div className="flex flex-col justify-between gap-4 rounded-xl border border-neutral-200/80 bg-white p-6 text-neutral-900 shadow-2xs sm:flex-row sm:items-center">
                 <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                    <ShieldCheck className="h-3.5 w-3.5 text-[#EC749B]" /> Super Admin Control Center ({authUser.email})
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
+                    <ShieldCheck className="h-3.5 w-3.5 text-[#a92e5d]" /> Super Admin Control Center ({authUser.email})
                   </span>
-                  <h1 className="veloxa-hero-title mt-2 font-black tracking-tight text-neutral-900">
+                  <h1 className="veloxa-hero-title mt-2 font-semibold tracking-tight text-neutral-900">
                     Manajemen Bisnis SaaS Veloxa AI
                   </h1>
-                  <p className="mt-1 text-sm text-neutral-500">
+                  <p className="mt-1 text-base text-neutral-500">
                     Pantau pendapatan langganan (Rp500rb – Rp1,5jt), margin API AI, kuota pelanggan, dan kredensial OAuth terpusat.
                   </p>
                 </div>
-                <div className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
+                  <p className="text-sm font-medium uppercase tracking-wider text-neutral-500">
                     Gross Margin SaaS
                   </p>
-                  <p className="text-3xl font-black text-[#D85A88]">{adminSummary.averageGrossMarginPct}%</p>
-                  <p className="text-xs text-neutral-500">Target sehat: &gt;75%</p>
+                  <p className="text-3xl font-semibold text-[#a92e5d]">{adminSummary.averageGrossMarginPct}%</p>
+                  <p className="text-sm text-neutral-500">Target sehat: &gt;75%</p>
                 </div>
               </div>
 
               {/* Admin KPI Row */}
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-xs font-bold uppercase text-neutral-400">Pendapatan Bulanan (MRR)</p>
-                  <p className="mt-2 text-2xl font-black text-neutral-900">
+                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-sm font-medium uppercase text-neutral-400">Pendapatan Bulanan (MRR)</p>
+                  <p className="mt-2 text-2xl font-semibold text-neutral-900">
                     {formatIdr(adminSummary.totalMrrIdr)}
                   </p>
-                  <p className="mt-1 text-xs font-medium text-neutral-500">
+                  <p className="mt-1 text-sm font-medium text-neutral-500">
                     {tenants.length} bisnis aktif berlangganan
                   </p>
                 </div>
-                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-xs font-bold uppercase text-neutral-400">Modal API (OpenAI + Render)</p>
-                  <p className="mt-2 text-2xl font-black text-neutral-900">
+                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-sm font-medium uppercase text-neutral-400">Modal API (OpenAI + Render)</p>
+                  <p className="mt-2 text-2xl font-semibold text-neutral-900">
                     {formatIdr(adminSummary.totalApiCostIdr)}
                   </p>
-                  <p className="mt-1 text-xs text-neutral-500">
+                  <p className="mt-1 text-sm text-neutral-500">
                     Untuk {adminSummary.totalPublishedPosts} konten tayang bulan ini
                   </p>
                 </div>
-                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-xs font-bold uppercase text-neutral-400">Laba Bersih SaaS</p>
-                  <p className="mt-2 text-2xl font-black text-[#D85A88]">
+                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-sm font-medium uppercase text-neutral-400">Laba Bersih SaaS</p>
+                  <p className="mt-2 text-2xl font-semibold text-[#a92e5d]">
                     {formatIdr(adminSummary.totalNetProfitIdr)}
                   </p>
-                  <p className="mt-1 text-xs font-medium text-neutral-500">
+                  <p className="mt-1 text-sm font-medium text-neutral-500">
                     Margin kotor {adminSummary.averageGrossMarginPct}%
                   </p>
                 </div>
-                <div className="rounded-2xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-xs font-bold uppercase text-neutral-400">Kampanye AI Meta Ads</p>
-                  <p className="mt-2 text-2xl font-black text-neutral-900">
+                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
+                  <p className="text-sm font-medium uppercase text-neutral-400">Kampanye AI Meta Ads</p>
+                  <p className="mt-2 text-2xl font-semibold text-neutral-900">
                     {adminSummary.totalActiveMetaCampaigns} Aktif
                   </p>
-                  <p className="mt-1 text-xs text-neutral-500">
+                  <p className="mt-1 text-sm text-neutral-500">
                     Ad spend ditarik langsung dari kartu user
                   </p>
                 </div>
               </div>
 
               {/* Subscription Pricing Tiers Overview */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                <h2 className="text-lg font-black text-neutral-900">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+                <h2 className="text-lg font-semibold text-neutral-900">
                   Katalog Paket Langganan Veloxa AI (Rp500rb – Rp1,5 Juta)
                 </h2>
-                <p className="mt-1 text-xs text-neutral-500">
+                <p className="mt-1 text-sm text-neutral-500">
                   Pembayaran langganan dilakukan via Web (Midtrans/Xendit QRIS & VA) agar bebas potongan 30% App Store / Play Store.
                 </p>
                 <div className="mt-4 grid gap-4 md:grid-cols-3">
                   {Object.values(SUBSCRIPTION_PLANS).map((plan) => (
                     <div
                       key={plan.id}
-                      className={`rounded-2xl border p-5 ${
+                      className={`rounded-xl border p-5 ${
                         plan.id === 'pro_1500k'
                           ? 'border-pink-300 bg-white ring-2 ring-pink-100'
                           : 'border-neutral-200 bg-white'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-black text-neutral-900">{plan.name}</span>
+                        <span className="text-base font-semibold text-neutral-900">{plan.name}</span>
                         {plan.id === 'pro_1500k' && (
-                          <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-bold text-white">
+                          <span className="rounded-full bg-[#bd416e] px-2.5 py-0.5 text-xs font-medium text-white">
                             TERLARIS
                           </span>
                         )}
                       </div>
-                      <p className="mt-2 text-2xl font-black text-neutral-900">
+                      <p className="mt-2 text-2xl font-semibold text-neutral-900">
                         {formatIdr(plan.priceMonthlyIdr)}
-                        <span className="text-xs font-semibold text-neutral-400">/bulan</span>
+                        <span className="text-sm font-semibold text-neutral-400">/bulan</span>
                       </p>
-                      <p className="mt-1 text-xs text-neutral-500">{plan.tagline}</p>
-                      <ul className="mt-3 space-y-1.5 text-xs text-neutral-600">
+                      <p className="mt-1 text-sm text-neutral-500">{plan.tagline}</p>
+                      <ul className="mt-3 space-y-1.5 text-sm text-neutral-600">
                         <li>• Kuota: <strong className="text-neutral-900">{plan.monthlyPostQuota} postingan/bulan</strong> (maks {plan.maxPostsPerDay}x/hari)</li>
                         <li>• Kanal: <strong className="text-neutral-900">{plan.allowedChannels.join(', ').toUpperCase()}</strong></li>
                         <li>• Kampanye Event: <strong className="text-neutral-900">{plan.includesEventCampaigns ? 'Termasuk' : 'Tidak'}</strong></li>
@@ -924,13 +931,13 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Accessible Sticky Responsive Tenant Table (modern-web-guidance responsive-table) */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h2 id="tenant-table-caption" className="text-lg font-black text-neutral-900">
+                    <h2 id="tenant-table-caption" className="text-lg font-semibold text-neutral-900">
                       Daftar Pelanggan (Tenants) & Kontrol Kuota
                     </h2>
-                    <p className="text-xs text-neutral-500">
+                    <p className="text-sm text-neutral-500">
                       Ubah paket pelanggan secara instan, pantau margin pemakaian API, atau klik &ldquo;Inspeksi Workspace&rdquo; untuk mengecek studio brand pelanggan.
                     </p>
                   </div>
@@ -940,10 +947,10 @@ export default function VeloxaAiPlatformPage() {
                   tabIndex={0}
                   role="region"
                   aria-labelledby="tenant-table-caption"
-                  className="veloxa-table-region rounded-2xl border border-neutral-200"
+                  className="veloxa-table-region rounded-xl border border-neutral-200"
                 >
-                  <table className="text-left text-sm">
-                    <thead className="border-b border-neutral-200 bg-neutral-50 text-xs uppercase text-neutral-500">
+                  <table className="text-left text-base">
+                    <thead className="border-b border-neutral-200 bg-neutral-50 text-sm uppercase text-neutral-500">
                       <tr>
                         <th className="px-4 py-3.5">Brand / Bisnis</th>
                         <th className="px-4 py-3.5">Kategori</th>
@@ -958,31 +965,31 @@ export default function VeloxaAiPlatformPage() {
                     <tbody className="divide-y divide-neutral-200 bg-white">
                       {tenants.map((t) => (
                         <tr key={t.workspaceId} className="hover:bg-neutral-50/70">
-                          <th className="px-4 py-3.5 font-bold text-neutral-900">
+                          <th className="px-4 py-3.5 font-medium text-neutral-900">
                             <div>{t.businessName}</div>
-                            <div className="text-xs font-normal text-neutral-500">
+                            <div className="text-sm font-normal text-neutral-500">
                               {t.ownerName} · {t.ownerEmail}
                             </div>
                           </th>
-                          <td className="px-4 py-3.5 text-xs font-semibold uppercase text-neutral-600">
+                          <td className="px-4 py-3.5 text-sm font-semibold uppercase text-neutral-600">
                             {t.category.replace('_', ' ')}
                           </td>
                           <td className="px-4 py-3.5">
-                            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-1 text-xs font-bold text-[#D85A88]">
+                            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-1 text-sm font-medium text-[#a92e5d]">
                               {SUBSCRIPTION_PLANS[t.planId].name}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-xs font-bold text-neutral-900">
+                          <td className="px-4 py-3.5 text-sm font-medium text-neutral-900">
                             {t.postsPublishedThisMonth} / {t.monthlyPostQuota} post
                           </td>
-                          <td className="px-4 py-3.5 text-xs text-neutral-600">
+                          <td className="px-4 py-3.5 text-sm text-neutral-600">
                             <div>{t.connectedChannels.length} Sosmed Aktif</div>
-                            <div className="font-semibold text-[#D85A88]">
+                            <div className="font-semibold text-[#a92e5d]">
                               {t.metaAdsConnected ? `✓ ${t.activeMetaCampaigns} Kampanye Meta Ads` : 'Tanpa Meta Ads'}
                             </div>
                           </td>
-                          <td className="px-4 py-3.5 text-xs">
-                            <div className="font-bold text-neutral-900">
+                          <td className="px-4 py-3.5 text-sm">
+                            <div className="font-medium text-neutral-900">
                               Bayar: {formatIdr(t.monthlySubscriptionRevenueIdr)}
                             </div>
                             <div className="text-neutral-500">
@@ -999,7 +1006,7 @@ export default function VeloxaAiPlatformPage() {
                                   e.target.value as SubscriptionPlanId,
                                 )
                               }
-                              className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-bold text-neutral-800"
+                              className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-800"
                             >
                               <option value="starter_500k">Starter (Rp500rb)</option>
                               <option value="growth_1000k">Growth (Rp1jt)</option>
@@ -1020,7 +1027,7 @@ export default function VeloxaAiPlatformPage() {
                                 setActivePlanId(t.planId);
                                 setActiveRole('user');
                               }}
-                              className="rounded-xl border border-pink-200 bg-pink-50/70 px-3 py-1.5 text-xs font-bold text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
+                              className="rounded-xl border border-pink-200 bg-pink-50/70 px-3 py-1.5 text-sm font-medium text-[#a92e5d] hover:bg-[#bd416e] hover:text-white"
                             >
                               Inspeksi Workspace →
                             </button>
@@ -1033,677 +1040,75 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Central API & OAuth Vault (1 App Developer for All Users) */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
+              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
                 <div className="flex items-center gap-2">
-                  <Lock className="h-5 w-5 text-[#EC749B]" />
-                  <h2 className="text-lg font-black text-neutral-900">
+                  <Lock className="h-5 w-5 text-[#a92e5d]" />
+                  <h2 className="text-lg font-semibold text-neutral-900">
                     Brankas API & OAuth Terpusat (Dikelola Pemilik SaaS)
                   </h2>
                 </div>
-                <p className="mt-1 text-xs text-neutral-500">
-                  User tidak perlu membuat API sendiri. Seluruh login Instagram, Facebook, TikTok, YouTube Shorts, dan Meta Ads memakai aplikasi resmi Veloxa AI di bawah ini.
+                <p className="mt-1 text-sm text-neutral-500">
+                  Ringkasan layanan platform. Pengaturan teknis dikelola melalui backend.
                 </p>
 
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-                    <p className="text-xs font-black uppercase text-neutral-400">OpenAI Master Engine</p>
-                    <p className="mt-1 text-sm font-bold text-neutral-900">
-                      {centralCreds.openAiModelText} · {centralCreds.openAiModelImage} · {centralCreds.openAiModelVoice}
+                  <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                    <p className="text-sm font-semibold uppercase text-neutral-400">OpenAI Master Engine</p>
+                    <p className="mt-1 text-base font-medium text-neutral-900">
+                      Konfigurasi model dikelola di backend
                     </p>
-                    <p className="mt-1 text-xs font-medium text-neutral-600">
-                      <span className="font-bold text-[#D85A88]">✓ Aktif</span> · Batas Auto-Repair: {centralCreds.globalMaxRepairAttemptsPerJob}x/job
+                    <p className="mt-1 text-sm font-medium text-neutral-600">
+                      <span className="font-medium text-neutral-600">Pengaturan model belum tersedia di UI</span>
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-                    <p className="text-xs font-black uppercase text-neutral-400">Meta Graph & Marketing API</p>
-                    <p className="mt-1 text-sm font-bold text-neutral-900">
+                  <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                    <p className="text-sm font-semibold uppercase text-neutral-400">Meta Graph & Marketing API</p>
+                    <p className="mt-1 text-base font-medium text-neutral-900">
                       App ID: {centralCreds.metaAppId}
                     </p>
-                    <p className="mt-1 text-xs font-medium text-neutral-600">
-                      <span className="font-bold text-[#D85A88]">✓ Advanced Access</span> (IG + FB + ads_management)
+                    <p className="mt-1 text-sm font-medium text-neutral-600">
+                      <span className="font-medium text-neutral-600">Instagram & Facebook · mode pengujian</span>
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-                    <p className="text-xs font-black uppercase text-neutral-400">TikTok & YouTube Shorts</p>
-                    <p className="mt-1 text-sm font-bold text-neutral-900">
-                      TikTok Direct Post · YT Quota {centralCreds.youtubeDailyQuotaUnits.toLocaleString('id-ID')}/hari
+                  <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                    <p className="text-sm font-semibold uppercase text-neutral-400">TikTok & YouTube Shorts</p>
+                    <p className="mt-1 text-base font-medium text-neutral-900">
+                      Integrasi belum tersedia
                     </p>
-                    <p className="mt-1 text-xs font-medium text-neutral-600">
-                      <span className="font-bold text-[#D85A88]">✓ Payment Gateway:</span> {centralCreds.paymentGatewayProvider} (QRIS & VA)
+                    <p className="mt-1 text-sm font-medium text-neutral-600">
+                      <span className="font-medium text-neutral-600">Pembayaran belum tersedia</span>
                     </p>
                   </div>
                 </div>
               </section>
 
               {/* Cloud Firebase Database & 5 OpenAI Agents Configuration Panel (Cendekia-Style Architecture) */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                      Cloud Database & Multi-Agent OpenAI (Arsitektur Setara Cendekia)
-                    </span>
-                    <h2 className="mt-2 text-lg font-black text-neutral-900">
-                      Koneksi Firebase Firestore & 5 OpenAI Agent Khusus Veloxa AI
-                    </h2>
-                    <p className="text-xs text-neutral-500">
-                      Masukkan konfigurasi proyek Firebase baru Anda dan kunci OpenAI untuk mengaktifkan sinkronisasi database real-time & kelima Agent AI produksi.
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-bold text-neutral-700">
-                    Status Sinkronisasi:{' '}
-                    <span className="text-[#D85A88]">
-                      {firebaseCfg.firebaseConnected ? '● Cloud Firestore Aktif' : '● Penyimpanan Lokal + Siap Tautkan Firebase'}
-                    </span>
-                  </span>
-                </div>
-
-                {/* Firebase & OpenAI Connection Inputs */}
-                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                  <div>
-                    <label className="font-bold text-neutral-700">Firebase Project ID</label>
-                    <input
-                      type="text"
-                      value={firebaseCfg.projectId}
-                      onChange={(e) =>
-                        setFirebaseCfg({
-                          ...firebaseCfg,
-                          projectId: e.target.value,
-                          authDomain: `${e.target.value}.firebaseapp.com`,
-                          storageBucket: `${e.target.value}.firebasestorage.app`,
-                        })
-                      }
-                      placeholder="veloxa-ai-prod"
-                      className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold text-neutral-700">Firebase Web API Key</label>
-                    <input
-                      type="password"
-                      value={firebaseCfg.apiKey}
-                      onChange={(e) => setFirebaseCfg({ ...firebaseCfg, apiKey: e.target.value })}
-                      placeholder="AIzaSy..."
-                      className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                    />
-                  </div>
-                  <div>
-                    <label className="font-bold text-neutral-700">OpenAI Master API Key</label>
-                    <input
-                      type="password"
-                      value={openAiInputKey}
-                      onChange={(e) => setOpenAiInputKey(e.target.value)}
-                      placeholder={firebaseCfg.openAiApiKeyMasked || 'sk-proj-...'}
-                      className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <button
-                      type="button"
-                      onClick={handleSaveCloudConnectionConfig}
-                      className="w-full rounded-xl bg-[#EC749B] px-4 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
-                    >
-                      Simpan & Sinkronkan Koneksi Cloud
-                    </button>
-                  </div>
-                </div>
-
-                {/* 5 Specialized OpenAI Agents Directory */}
-                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                  {Object.values(VELOXA_OPENAI_AGENTS).map((agt) => (
-                    <div
-                      key={agt.agentId}
-                      className="flex flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-3.5 text-xs"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="rounded border border-pink-200 bg-pink-50/70 px-2 py-0.5 text-[10px] font-black text-[#D85A88]">
-                            {agt.model}
-                          </span>
-                          <span className="text-[10px] font-bold text-[#D85A88]">● Siap</span>
-                        </div>
-                        <p className="mt-2 font-black text-neutral-900">{agt.name}</p>
-                        <p className="mt-1 text-[11px] text-neutral-500">{agt.roleDescription}</p>
-                      </div>
-                      <p className="mt-2.5 border-t border-neutral-100 pt-2 font-mono text-[10px] text-neutral-400">
-                        ID: {agt.agentId}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Local-First Cost Guard Telemetry Panel (Cendekia-Style Firestore Cost Optimization) */}
-                <div
-                  data-testid="local-first-telemetry-card"
-                  className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4 text-xs"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-                        ★ Local-First Cost Guard (Arsitektur Hemat Firestore Setara Cendekia)
-                      </span>
-                      <h3 className="mt-1.5 text-sm font-black text-neutral-900">
-                        Penghematan Biaya Read/Write Cloud Firestore: {firestoreSavingsPct}% Operasi Dihemat
-                      </h3>
-                      <p className="text-[11px] text-neutral-500">
-                        Seluruh pembacaan UI memakai Local-First Cache (TTL 15 menit, 0ms latency) & penulisan memakai deduplikasi FNV-1a Hash sehingga dokumen yang sama tidak pernah ditulis ulang ke Firestore.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleForceCloudSync()}
-                      className="rounded-xl bg-[#EC749B] px-3.5 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
-                    >
-                      Push Snapshot ke Cloud Firestore Sekarang
-                    </button>
-                  </div>
-
-                  <div className="mt-3 grid gap-2.5 sm:grid-cols-4">
-                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
-                      <span className="text-[11px] text-neutral-500">Local Reads/Writes (Rp0):</span>
-                      <p className="mt-0.5 text-sm font-black text-neutral-900">
-                        {localTelemetry.localReads} Read · {localTelemetry.localWrites} Write
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
-                      <span className="text-[11px] text-neutral-500">Operasi Firestore Dihemat:</span>
-                      <p className="mt-0.5 text-sm font-black text-[#D85A88]">
-                        {localTelemetry.firestoreOpsSaved}x Read/Write Dicegah
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
-                      <span className="text-[11px] text-neutral-500">FNV-1a Payload Fingerprint:</span>
-                      <p className="mt-0.5 font-mono text-xs font-bold text-neutral-900">
-                        {localTelemetry.lastPayloadHash}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-neutral-200 bg-white p-3">
-                      <span className="text-[11px] text-neutral-500">Sinkronisasi Terakhir:</span>
-                      <p className="mt-0.5 text-xs font-bold text-neutral-900">
-                        {localTelemetry.lastCloudSyncWib || localTelemetry.lastLocalSaveWib}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </section>
+              <section className="veloxa-panel p-6"><h2 className="text-lg font-semibold">Pengaturan platform</h2><p className="mt-3 text-base leading-relaxed text-neutral-500">Konfigurasi AI dan koneksi layanan dikelola di backend. Pengaturan Super Admin akan dikembangkan pada tahap berikutnya.</p></section>
             </div>
           ) : (
             /* ======================================================================
                ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD
                (FULL-HEIGHT SOLID PINK LEFT SIDEBAR FROM TOP TO BOTTOM + RIGHT HEADER)
                ====================================================================== */
-            <div
-              className="relative min-h-dvh w-full bg-[#F8F9FC]"
-              data-testid="user-workspace-dashboard"
+            <VeloxaWorkspaceShell
+              activeTab={activeTab} brandName={brand.businessName} planName={currentPlan.name}
+              email={authUser.email} displayName={authUser.displayName || brand.businessName}
+              used={postsUsedThisMonth} quota={currentPlan.monthlyPostQuota} locale={locale}
+              onNavigate={setActiveTab} onCreate={() => setActiveTab('studio')}
+              onConnections={() => handleOpenOAuthConfigModal(connections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
+              onBilling={() => { setSelectedCheckoutPlanId(activePlanId); billingDialogRef.current?.showModal(); }}
+              onAccount={() => authDialogRef.current?.showModal()} onSignOut={handleRequestSignOutClick}
+              onSync={() => void handleForceCloudSync()} onLocale={handleSelectLocale}
+              isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => setActiveRole('admin')}
+              status={statusBanner || undefined}
+              presetControls={authUser.isSuperAdmin ? <select aria-label="Pilih Inspeksi Brand" value={selectedPresetKey} onChange={event => handleSelectBrandPreset(event.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom')} className="mt-3 w-full rounded-lg border p-2 text-base"><option value="running_event">Nusantara Run</option><option value="cafe_fnb">Kopi Senja</option><option value="clinic_beauty">GlowDerm</option><option value="custom">Brand aktif</option></select> : undefined}
             >
-              {/* ====================================================================
-                 FULL-HEIGHT SOLID PINK LEFT SIDEMENU (TOP: 0 TO BOTTOM: 0, LEFT: 0)
-                 ==================================================================== */}
-              <aside
-                data-testid="user-workspace-sidebar"
-                aria-label="Sidebar Navigasi Workspace"
-                className="bg-gradient-to-b from-[#E86691] via-[#DF5885] to-[#D14876] p-4 text-white shadow-xl lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex lg:w-[268px] lg:flex-col lg:justify-between lg:overflow-y-auto lg:px-4 lg:py-5"
-              >
-                <div className="space-y-5">
-                  {/* 1. Top Brand Logo inside Full-Height Pink Sidebar */}
-                  <div className="flex items-center gap-3 px-1.5 pt-0.5">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/20 text-base font-black text-white shadow-xs ring-1 ring-white/35">
-                      V
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-[9px] font-extrabold uppercase tracking-[0.16em] text-pink-100">
-                        AUTONOMOUS AI STUDIO
-                      </p>
-                      <p className="truncate text-lg font-black tracking-tight text-white leading-tight">
-                        VELOXA AI
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* 2. RUANG KERJA Frosted Glass Card inside Pink Sidebar */}
-                  <div className="rounded-2xl border border-white/25 bg-white/12 p-3.5 backdrop-blur-xs">
-                    <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-pink-100">
-                      RUANG KERJA
-                    </p>
-                    <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-white/25 bg-white/15 px-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-black text-white">
-                          {brand.businessName}
-                        </p>
-                        <p className="truncate text-[10px] font-medium text-pink-100">
-                          {brand.city} · {currentPlan.name}
-                        </p>
-                      </div>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 rotate-90 text-pink-100" />
-                    </div>
-
-                    {authUser?.isSuperAdmin ? (
-                      <div className="mt-2">
-                        <label htmlFor="workspace-preset-select" className="sr-only">
-                          Pilih Inspeksi Brand
-                        </label>
-                        <select
-                          id="workspace-preset-select"
-                          value={selectedPresetKey}
-                          onChange={(e) =>
-                            handleSelectBrandPreset(
-                              e.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom',
-                            )
-                          }
-                          className="w-full rounded-xl border border-white/30 bg-white/20 px-2.5 py-1.5 text-[11px] font-bold text-white focus:outline-hidden"
-                        >
-                          <option value="running_event" className="text-neutral-900">
-                            🏃 Inspeksi: Nusantara Run
-                          </option>
-                          <option value="cafe_fnb" className="text-neutral-900">
-                            ☕ Inspeksi: Kopi Senja
-                          </option>
-                          <option value="clinic_beauty" className="text-neutral-900">
-                            ✨ Inspeksi: GlowDerm
-                          </option>
-                          <option value="custom" className="text-neutral-900">
-                            🎨 Brand Aktif
-                          </option>
-                        </select>
-                      </div>
-                    ) : null}
-
-                    <p className="mt-2.5 text-[11px] font-semibold text-pink-100">
-                      {activeTab === 'overview'
-                        ? 'Dashboard'
-                        : activeTab === 'brand_vault'
-                          ? 'Brand & Vault'
-                          : activeTab === 'studio'
-                            ? 'Content Studio'
-                            : activeTab === 'autonomy'
-                              ? 'Autonomy Engine'
-                              : 'AI Meta Ads'}
-                    </p>
-                  </div>
-
-                  {/* 3. NAVIGASI Section inside Pink Sidebar */}
-                  <div>
-                    <p className="px-2.5 text-[10px] font-extrabold uppercase tracking-[0.14em] text-pink-100/90">
-                      NAVIGASI
-                    </p>
-                    <nav
-                      aria-label="Menu Utama User Workspace"
-                      data-testid="user-workspace-sidebar-nav"
-                      className="mt-2 grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"
-                    >
-                      {(
-                        [
-                          {
-                            id: 'overview',
-                            label: 'Dashboard',
-                            sublabel: i18nCopy.workspaceTabs.overview,
-                            badge: `${connections.filter((c) => c.connected).length}/4`,
-                            icon: LayoutDashboard,
-                          },
-                          {
-                            id: 'brand_vault',
-                            label: 'Brand & Vault',
-                            sublabel: 'Brand Brain & Foto Asli',
-                            badge: `${vaultAssets.length}`,
-                            icon: Camera,
-                          },
-                          {
-                            id: 'studio',
-                            label: 'Content Studio',
-                            sublabel: 'Reels 9:16, Carousel & Poster',
-                            badge: `${drafts.length}`,
-                            icon: Wand2,
-                          },
-                          {
-                            id: 'autonomy',
-                            label: 'Autonomy Engine',
-                            sublabel: 'Jadwal Tayang & Mode Event',
-                            badge: autonomyConfig.enabled ? 'ON' : 'OFF',
-                            icon: Bot,
-                          },
-                          {
-                            id: 'meta_ads',
-                            label: 'AI Meta Ads',
-                            sublabel: 'AI Media Buyer & Pagar Budget',
-                            badge: `${metaAdCampaigns.filter((c) => c.status === 'active_running').length}`,
-                            icon: Megaphone,
-                          },
-                        ] as const
-                      ).map((tab) => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        return (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            data-testid={`workspace-tab-${tab.id}`}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`group flex w-full items-center justify-between gap-2.5 rounded-xl px-3.5 py-2.5 text-left transition ${
-                              isActive
-                                ? 'bg-white text-[#D14876] shadow-md font-black'
-                                : 'text-white/95 hover:bg-white/15 font-bold'
-                            }`}
-                          >
-                            <div className="flex min-w-0 items-center gap-2.5">
-                              <Icon
-                                className={`h-4 w-4 shrink-0 ${
-                                  isActive ? 'text-[#DF5885]' : 'text-white/90'
-                                }`}
-                              />
-                              <span className="truncate text-xs leading-tight">{tab.label}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <span
-                                className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
-                                  isActive
-                                    ? 'bg-pink-50 text-[#D14876] border border-pink-200'
-                                    : 'bg-white/20 text-white'
-                                }`}
-                              >
-                                {tab.badge}
-                              </span>
-                              {!isActive && (
-                                <ChevronRight className="hidden h-3.5 w-3.5 text-white/70 lg:block" />
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </nav>
-                  </div>
-                </div>
-
-                {/* Bottom Section of Full-Height Pink Sidemenu */}
-                <div className="mt-5 space-y-2.5 border-t border-white/20 pt-4">
-                  {/* Monthly Quota & Autopilot Progress Card */}
-                  <div className="rounded-xl border border-white/25 bg-white/12 p-3">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-pink-50">Kuota Konten AI</span>
-                      <span className="font-black text-white">
-                        {postsUsedThisMonth}/{currentPlan.monthlyPostQuota} Tayang
-                      </span>
-                    </div>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/25">
-                      <div
-                        className="h-full rounded-full bg-white transition-all duration-300"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            Math.max(
-                              6,
-                              Math.round((postsUsedThisMonth / Math.max(1, currentPlan.monthlyPostQuota)) * 100),
-                            ),
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-pink-100">
-                      <span>{connections.filter((c) => c.connected).length}/4 Sosmed Aktif</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCheckoutPlanId(activePlanId);
-                          billingDialogRef.current?.showModal();
-                        }}
-                        className="font-black text-white underline-offset-2 hover:underline"
-                      >
-                        Upgrade Paket →
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Quick Actions in Pink Sidebar */}
-                  <div className="space-y-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('studio')}
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3.5 py-2.5 text-xs font-black text-[#D14876] shadow-sm hover:bg-pink-50 transition"
-                    >
-                      <Wand2 className="h-3.5 w-3.5" />
-                      <span>Buat Konten AI Baru</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      data-testid="header-connect-social-btn"
-                      onClick={() => handleOpenOAuthConfigModal('facebook')}
-                      className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/30 bg-white/15 px-3 py-2 text-xs font-bold text-white hover:bg-white/25 transition"
-                    >
-                      <span>🔗 Hubungkan 4 Sosmed</span>
-                    </button>
-
-                    <Link
-                      href="/onboarding?edit=1"
-                      data-testid="open-onboarding-modal-btn"
-                      className="flex w-full items-center justify-center gap-1 rounded-xl border border-white/20 bg-transparent px-2.5 py-1.5 text-[11px] font-semibold text-pink-50 hover:bg-white/10 transition"
-                    >
-                      <Plus className="h-3 w-3" />
-                      <span>Edit Profil Brand</span>
-                    </Link>
-                  </div>
-                </div>
-              </aside>
-
-              {/* ====================================================================
-                 RIGHT MAIN WORKSPACE CONTENT COLUMN (WITH MATCHING TOP HEADER & SUMMARY)
-                 ==================================================================== */}
-              <div
-                className="min-w-0 lg:pl-[268px]"
-                data-testid="user-workspace-main"
-              >
-                {statusBanner && (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="mb-4 rounded-2xl border border-pink-100 bg-pink-50/70 px-4 py-3 text-sm font-semibold leading-relaxed text-neutral-800 shadow-sm"
-                  >
-                    {statusBanner}
-                  </div>
-                )}
-                <div className="mx-auto max-w-[1600px] space-y-5 px-4 py-4 sm:px-6 lg:px-7">
-                  {/* 1. Right Top Header Bar (Matching Reference Image Header) */}
-                  <div
-                    data-testid="workspace-right-header"
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200/90 bg-white px-4 py-3 sm:px-5 shadow-2xs"
-                  >
-                    {/* Left: Sidebar Icon Box + WORKSPACE + Active Page Title */}
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50/80 text-neutral-600">
-                        <LayoutDashboard className="h-4 w-4 text-[#D85A88]" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">
-                          WORKSPACE
-                        </p>
-                        <h1 className="text-lg sm:text-xl font-black tracking-tight text-neutral-900 leading-tight">
-                          {activeTab === 'overview'
-                            ? 'Dashboard'
-                            : activeTab === 'brand_vault'
-                              ? 'Brand & Vault'
-                              : activeTab === 'studio'
-                                ? 'Content Studio'
-                                : activeTab === 'autonomy'
-                                  ? 'Autonomy Engine'
-                                  : 'AI Meta Ads'}
-                        </h1>
-                      </div>
-                    </div>
-
-                    {/* Right: Quick Action Pill + Data Siap + Tersinkron + Language + Profile Pill + Keluar */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenOAuthConfigModal('facebook')}
-                        className="hidden xl:inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50/80 px-3.5 py-1.5 text-xs font-semibold text-neutral-500 hover:border-pink-200 hover:text-[#D85A88] transition"
-                      >
-                        <span>🔗 Koneksi 4 Sosmed ({connections.filter((c) => c.connected).length}/4)</span>
-                      </button>
-
-                      <span
-                        data-testid="real-firestore-workspace-badge"
-                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/90 px-3 py-1.5 text-xs font-extrabold text-emerald-700"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        <span>Data siap</span>
-                      </span>
-
-                      <button
-                        type="button"
-                        data-testid="local-first-sync-btn"
-                        onClick={() => void handleForceCloudSync()}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50/90 px-3 py-1.5 text-xs font-extrabold text-emerald-700 hover:bg-emerald-100/80 transition"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                        <span>Tersinkron</span>
-                      </button>
-
-                      <select
-                        aria-label="Pilih Bahasa Workspace"
-                        value={locale}
-                        onChange={(e) => handleSelectLocale(e.target.value as VeloxaLocale)}
-                        className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-extrabold text-neutral-700 hover:border-pink-200 focus:outline-hidden"
-                      >
-                        {VELOXA_LOCALES.map((loc) => (
-                          <option key={loc.code} value={loc.code}>
-                            {loc.flag} {loc.code.toUpperCase()} ({loc.currencyCode})
-                          </option>
-                        ))}
-                      </select>
-
-                      {/* User Profile Pill (Matching Reference Image: Avatar + Name + Role) */}
-                      <button
-                        type="button"
-                        onClick={() => authDialogRef.current?.showModal()}
-                        className="flex items-center gap-2.5 rounded-full border border-neutral-200 bg-neutral-50/70 py-1 pl-1.5 pr-3.5 text-left hover:border-pink-200 transition"
-                      >
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-[#D14876] shadow-2xs ring-1 ring-neutral-200">
-                          {brand.businessName.slice(0, 2).toUpperCase()}
-                        </span>
-                        <div className="hidden sm:block leading-tight">
-                          <p className="max-w-[140px] truncate text-xs font-black text-neutral-900 uppercase">
-                            {authUser?.displayName || brand.businessName}
-                          </p>
-                          <p className="text-[10px] font-semibold text-neutral-500">
-                            Pemilik / Admin
-                          </p>
-                        </div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleRequestSignOutClick}
-                        className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88] transition"
-                      >
-                        {i18nCopy.headerLogout}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 2. RINGKASAN HARI INI — Welcome Banner + INSIGHT CEPAT (Matching Reference Image) */}
-                  <div className="flex flex-col justify-between gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 shadow-2xs lg:flex-row lg:items-center">
-                    <div className="flex items-start sm:items-center gap-4">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#EC749B] text-lg font-black text-white shadow-sm">
-                        {brand.businessName.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#D85A88]">
-                          RINGKASAN HARI INI
-                        </p>
-                        <h2 className="mt-0.5 text-lg sm:text-xl font-black tracking-tight text-neutral-900">
-                          Selamat Datang di {brand.businessName} ({brand.city})
-                        </h2>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-                          <span>
-                            Pemilik:{' '}
-                            <strong className="font-bold text-neutral-800 uppercase">
-                              {authUser?.displayName || brand.businessName}
-                            </strong>
-                          </span>
-                          <span>·</span>
-                          <span>Unit Usaha:</span>
-                          <span className="rounded-md border border-pink-200 bg-pink-50 px-2 py-0.5 text-[11px] font-extrabold text-[#D85A88]">
-                            {brand.businessName} · {brand.city}
-                          </span>
-                          {connections
-                            .filter((c) => c.connected)
-                            .map((conn) => (
-                              <span
-                                key={conn.channel}
-                                className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-extrabold text-emerald-700"
-                              >
-                                ✓ {CHANNEL_META[conn.channel].shortLabel}: {conn.handle}
-                              </span>
-                            ))}
-                        </div>
-                        <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs text-neutral-500">
-                          <span>
-                            Cakupan:{' '}
-                            <strong className="text-neutral-900">
-                              {connections.filter((c) => c.connected).length} dari 4 sosmed aktif
-                            </strong>{' '}
-                            <span className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-bold text-neutral-600">
-                              {currentPlan.name}
-                            </span>
-                          </span>
-                          <span>•</span>
-                          <span>
-                            Konten Tayang:{' '}
-                            <strong className="text-neutral-900">{postsUsedThisMonth}</strong>
-                          </span>
-                          <span>•</span>
-                          <span>
-                            Kampanye Meta Ads:{' '}
-                            <strong className="text-neutral-900">{metaAdCampaigns.length}</strong>{' '}
-                            <span className="rounded bg-pink-50 px-1.5 py-0.5 text-[9px] font-black text-[#D85A88] uppercase">
-                              BULAN INI
-                            </span>
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right Side: INSIGHT CEPAT Box (Matching Reference Image) */}
-                    <div className="rounded-2xl border border-pink-200/80 bg-pink-50/50 p-3.5 lg:w-[370px] shrink-0">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#D85A88]">
-                          ⚡ INSIGHT CEPAT
-                        </span>
-                        <span className="rounded-md bg-[#EC749B] px-2 py-0.5 text-[9px] font-black uppercase text-white">
-                          PEMILIK
-                        </span>
-                      </div>
-                      <div className="mt-2.5 grid grid-cols-2 gap-2">
-                        <div className="rounded-xl border border-pink-100 bg-white p-2.5 shadow-2xs">
-                          <p className="text-[9px] font-bold uppercase text-neutral-400">
-                            KANAL SOSMED AKTIF
-                          </p>
-                          <p className="mt-0.5 truncate text-xs font-black text-neutral-900">
-                            {connections.filter((c) => c.connected).length > 0
-                              ? connections
-                                  .filter((c) => c.connected)
-                                  .map((c) => c.handle || CHANNEL_META[c.channel].shortLabel)
-                                  .join(', ')
-                              : 'Belum ada (0/4)'}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-pink-100 bg-white p-2.5 shadow-2xs">
-                          <p className="text-[9px] font-bold uppercase text-neutral-400">
-                            PRIORITAS HARI INI
-                          </p>
-                          <p className="mt-0.5 truncate text-xs font-black text-[#D85A88]">
-                            {connections.filter((c) => c.connected).length > 0
-                              ? 'Siap Buat Konten AI'
-                              : 'Hubungkan 4 Sosmed'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
               {/* ====================================================================
                  TAB 1: EXECUTIVE ANALYTICS OVERVIEW, CHARTS & 4-CHANNEL COMMAND HUB
                  ==================================================================== */}
               {activeTab === 'overview' && (
-                <VeloxaExecutiveDashboardOverview
+                <VeloxaWorkspaceOverview
+                  onCreateContent={(format) => { setStudioFormat(format); setActiveTab('studio'); }}
                   brand={brand}
                   currentPlan={currentPlan}
                   postsUsedThisMonth={postsUsedThisMonth}
@@ -1732,22 +1137,22 @@ export default function VeloxaAiPlatformPage() {
                 <div className="space-y-6">
                   <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
                     {/* Brand Brain Configuration */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                        Brand Brain · Otak Identitas Bisnis
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
+                        Profil bisnis
                       </span>
-                      <h2 className="mt-2 text-lg font-black text-neutral-900">
-                        Pengaturan Karakter & Produk Unggulan
+                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
+                        Identitas & karakter brand
                       </h2>
-                      <p className="text-xs text-neutral-500">
-                        AI Agent mempelajari profil ini agar setiap naskah, visual, dan voiceover Reels terasa 100% khas bisnis Anda.
+                      <p className="text-sm text-neutral-500">
+                        Lengkapi informasi ini agar konten sesuai dengan identitas bisnis Anda.
                       </p>
 
-                      <div className="mt-4 space-y-3.5 text-xs">
+                      <div className="mt-4 space-y-3.5 text-sm">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="font-bold text-neutral-700">Nama Bisnis / Acara</label>
-                            <input
+                            <label htmlFor="veloxa-field-1" className="font-medium text-neutral-700">Nama Bisnis / Acara</label>
+                            <input id="veloxa-field-1"
                               type="text"
                               value={brand.businessName}
                               onChange={(e) => setBrand({ ...brand, businessName: e.target.value })}
@@ -1755,8 +1160,8 @@ export default function VeloxaAiPlatformPage() {
                             />
                           </div>
                           <div>
-                            <label className="font-bold text-neutral-700">Kota / Target Area</label>
-                            <input
+                            <label htmlFor="veloxa-field-2" className="font-medium text-neutral-700">Kota / Target Area</label>
+                            <input id="veloxa-field-2"
                               type="text"
                               value={brand.city}
                               onChange={(e) => setBrand({ ...brand, city: e.target.value })}
@@ -1766,8 +1171,8 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         <div>
-                          <label className="font-bold text-neutral-700">Target Audiens</label>
-                          <input
+                          <label htmlFor="veloxa-field-3" className="font-medium text-neutral-700">Target Audiens</label>
+                          <input id="veloxa-field-3"
                             type="text"
                             value={brand.targetAudience}
                             onChange={(e) => setBrand({ ...brand, targetAudience: e.target.value })}
@@ -1776,8 +1181,8 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         <div>
-                          <label className="font-bold text-neutral-700">Gaya Bahasa & Tone Merek</label>
-                          <input
+                          <label htmlFor="veloxa-field-4" className="font-medium text-neutral-700">Gaya Bahasa & Tone Merek</label>
+                          <input id="veloxa-field-4"
                             type="text"
                             value={brand.brandTone}
                             onChange={(e) => setBrand({ ...brand, brandTone: e.target.value })}
@@ -1786,10 +1191,10 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         <div>
-                          <label className="font-bold text-neutral-700">
+                          <label htmlFor="veloxa-field-5" className="font-medium text-neutral-700">
                             Produk / Menu / Event Unggulan Utama
                           </label>
-                          <input
+                          <input id="veloxa-field-5"
                             type="text"
                             value={brand.offerings[0]?.title || ''}
                             onChange={(e) => {
@@ -1809,8 +1214,8 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         <div>
-                          <label className="font-bold text-neutral-700">Ajakan Bertindak (Default CTA)</label>
-                          <input
+                          <label htmlFor="veloxa-field-6" className="font-medium text-neutral-700">Ajakan Bertindak (Default CTA)</label>
+                          <input id="veloxa-field-6"
                             type="text"
                             value={brand.defaultCta}
                             onChange={(e) => setBrand({ ...brand, defaultCta: e.target.value })}
@@ -1818,7 +1223,7 @@ export default function VeloxaAiPlatformPage() {
                           />
                         </div>
 
-                        <label className="flex cursor-pointer items-center gap-2.5 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5">
+                        <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5">
                           <input
                             type="checkbox"
                             checked={brand.prioritizeRealAssets}
@@ -1840,49 +1245,49 @@ export default function VeloxaAiPlatformPage() {
                     </section>
 
                     {/* Upload to Dual Brand Vault */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
                         Dual Brand Vault · Web, Kamera Android & iOS
                       </span>
-                      <h2 className="mt-2 text-lg font-black text-neutral-900">
+                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
                         Upload Contoh Referensi atau Dokumentasi Asli
                       </h2>
-                      <p className="text-xs text-neutral-500">
+                      <p className="text-sm text-neutral-500">
                         Unggah contoh poster/Reels yang Anda sukai (untuk ditiru gayanya oleh AI) atau stok foto/video asli bisnis Anda.
                       </p>
 
-                      <div className="mt-4 space-y-3 text-xs">
+                      <div className="mt-4 space-y-3 text-sm">
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
                             onClick={() => setNewAssetDrawer('style_reference')}
-                            className={`rounded-xl border p-3 text-left font-bold transition ${
+                            className={`rounded-xl border p-3 text-left font-medium transition ${
                               newAssetDrawer === 'style_reference'
                                 ? 'border-[#EC749B] bg-pink-50/50 text-neutral-900'
                                 : 'border-neutral-200 bg-white text-neutral-600'
                             }`}
                           >
-                            <Sparkles className="mb-1 h-4 w-4 text-[#EC749B]" />
-                            Laci 1: Contoh Referensi Gaya (Style DNA)
+                            <Sparkles className="mb-1 h-4 w-4 text-[#a92e5d]" />
+                            Referensi gaya
                           </button>
                           <button
                             type="button"
                             onClick={() => setNewAssetDrawer('real_asset')}
-                            className={`rounded-xl border p-3 text-left font-bold transition ${
+                            className={`rounded-xl border p-3 text-left font-medium transition ${
                               newAssetDrawer === 'real_asset'
                                 ? 'border-[#EC749B] bg-pink-50/50 text-neutral-900'
                                 : 'border-neutral-200 bg-white text-neutral-600'
                             }`}
                           >
-                            <Camera className="mb-1 h-4 w-4 text-[#EC749B]" />
-                            Laci 2: Foto / Video Asli Milik Bisnis
+                            <Camera className="mb-1 h-4 w-4 text-[#a92e5d]" />
+                            Foto & video bisnis
                           </button>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="font-bold text-neutral-700">Jenis Media</label>
-                            <select
+                            <label htmlFor="veloxa-field-7" className="font-medium text-neutral-700">Jenis Media</label>
+                            <select id="veloxa-field-7"
                               value={newAssetMediaType}
                               onChange={(e) =>
                                 setNewAssetMediaType(e.target.value as 'photo' | 'video_reel')
@@ -1894,8 +1299,8 @@ export default function VeloxaAiPlatformPage() {
                             </select>
                           </div>
                           <div>
-                            <label className="font-bold text-neutral-700">Judul / Catatan Aset</label>
-                            <input
+                            <label htmlFor="veloxa-field-8" className="font-medium text-neutral-700">Judul / Catatan Aset</label>
+                            <input id="veloxa-field-8"
                               type="text"
                               placeholder="Misal: Foto Pelari 10K / Kopi Susu"
                               value={newAssetTitle}
@@ -1909,7 +1314,7 @@ export default function VeloxaAiPlatformPage() {
                           <button
                             type="button"
                             onClick={() => void handleUploadVaultAsset(false)}
-                            className="flex-1 rounded-xl bg-[#EC749B] px-4 py-3 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                            className="flex-1 rounded-xl bg-[#bd416e] px-4 py-3 font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
                           >
                             <Upload className="mr-1.5 inline h-4 w-4" />
                             Simpan ke {newAssetDrawer === 'style_reference' ? 'Laci Referensi Gaya' : 'Galeri Aset Asli'}
@@ -1917,9 +1322,9 @@ export default function VeloxaAiPlatformPage() {
                           <label
                             htmlFor="veloxa-real-file-upload"
                             data-testid="real-file-upload-label"
-                            className="cursor-pointer rounded-xl border border-pink-200 bg-pink-50/70 px-3.5 py-3 font-bold text-[#D85A88] hover:bg-pink-100/70"
+                            className="cursor-pointer rounded-xl border border-pink-200 bg-pink-50/70 px-3.5 py-3 font-medium text-[#a92e5d] hover:bg-pink-100/70"
                           >
-                            <Upload className="mr-1 inline h-4 w-4 text-[#EC749B]" />
+                            <Upload className="mr-1 inline h-4 w-4 text-[#a92e5d]" />
                             Pilih File Laptop/HP
                             <input
                               id="veloxa-real-file-upload"
@@ -1933,9 +1338,9 @@ export default function VeloxaAiPlatformPage() {
                           <button
                             type="button"
                             onClick={() => void handleUploadVaultAsset(true)}
-                            className="rounded-xl border border-neutral-200 bg-white px-3.5 py-3 font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                            className="rounded-xl border border-neutral-200 bg-white px-3.5 py-3 font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                           >
-                            <Camera className="mr-1 inline h-4 w-4 text-[#EC749B]" />
+                            <Camera className="mr-1 inline h-4 w-4 text-[#a92e5d]" />
                             Kamera HP
                           </button>
                         </div>
@@ -1944,15 +1349,15 @@ export default function VeloxaAiPlatformPage() {
                   </div>
 
                   {/* Vault Gallery Display */}
-                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                    <h3 className="text-base font-black text-neutral-900">
+                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+                    <h3 className="text-base font-semibold text-neutral-900">
                       Isi Brand Vault Anda ({vaultAssets.length} Aset Tersimpan)
                     </h3>
                     <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       {vaultAssets.map((asset) => (
                         <article
                           key={asset.id}
-                          className="overflow-hidden rounded-2xl border border-neutral-200 bg-white"
+                          className="overflow-hidden rounded-xl border border-neutral-200 bg-white"
                         >
                           <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-100">
                             <img
@@ -1961,24 +1366,24 @@ export default function VeloxaAiPlatformPage() {
                               className="h-full w-full object-cover"
                             />
                             <span
-                              className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase ${
+                              className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
                                 asset.drawer === 'style_reference'
-                                  ? 'bg-[#EC749B] text-white shadow-2xs'
+                                  ? 'bg-[#bd416e] text-white shadow-2xs'
                                   : 'border border-neutral-200 bg-white/95 text-neutral-800'
                               }`}
                             >
                               {asset.drawer === 'style_reference' ? '★ Referensi Gaya' : '✓ Aset Asli User'}
                             </span>
-                            <span className="absolute bottom-2 right-2 rounded-md border border-neutral-200 bg-white/95 px-2 py-0.5 text-[10px] font-bold text-neutral-800">
+                            <span className="absolute bottom-2 right-2 rounded-md border border-neutral-200 bg-white/95 px-2 py-0.5 text-xs font-medium text-neutral-800">
                               {asset.mediaType === 'video_reel' ? 'Reels 9:16' : 'Foto 4:5'} · via {asset.uploadedFrom.toUpperCase()}
                             </span>
                           </div>
-                          <div className="p-3.5 text-xs">
-                            <h4 className="font-black text-neutral-900">{asset.title}</h4>
+                          <div className="p-3.5 text-sm">
+                            <h4 className="font-semibold text-neutral-900">{asset.title}</h4>
                             <p className="mt-1 text-neutral-500">{asset.description}</p>
                             {asset.extractedStyleDna && (
-                              <div className="mt-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 text-[11px] text-neutral-700">
-                                <strong className="text-[#D85A88]">Style DNA Diekstrak AI:</strong>
+                              <div className="mt-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 text-xs text-neutral-700">
+                                <strong className="text-[#a92e5d]">Style DNA Diekstrak AI:</strong>
                                 <p className="mt-0.5">• Layout: {asset.extractedStyleDna.layoutPattern}</p>
                                 <p>• Hook: {asset.extractedStyleDna.hookFormula}</p>
                               </div>
@@ -1996,100 +1401,38 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                          Studio Konten AI · Self-Healing Quality Gate
-                        </span>
-                        <h2 className="mt-2 text-lg font-black text-neutral-900">
-                          Buat Konten Baru Sesuai Referensi & Aset {brand.businessName}
-                        </h2>
-                      </div>
-                    </div>
+                  <VeloxaStudioComposer brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetId={selectedSourceAssetId} assets={vaultAssets} creating={isCreatingContent} onFormat={format => { setStudioFormat(format); if (format !== 'single_post') setSelectedSourceAssetId(''); }} onTopic={setStudioTopic} onAsset={setSelectedSourceAssetId} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
 
-                    <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                      <div>
-                        <label className="text-xs font-bold text-neutral-700">Format Konten</label>
-                        <select
-                          value={studioFormat}
-                          onChange={(e) => { setStudioFormat(e.target.value as ContentFormat); if (e.target.value !== 'single_post') setSelectedSourceAssetId(''); }}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-xs font-bold text-neutral-900"
-                        >
-                          <option value="short_video">
-                            Reels 9:16 dengan Voiceover (Instagram + Facebook)
-                          </option>
-                          <option value="carousel">
-                            Carousel 5 Slide 4:5 (Instagram + Facebook)
-                          </option>
-                          <option value="single_post">
-                            Post Tunggal 4:5 (Instagram + Facebook)
-                          </option>
-                        </select>
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <label className="text-xs font-bold text-neutral-700">
-                          Topik / Brief Khusus (Kosongkan bila ingin AI memilih otomatis dari Brand Brain & Event)
-                        </label>
-                        <div className="mt-1 flex gap-2">
-                          <input
-                            type="text"
-                            placeholder={`Contoh: Promo ${brand.offerings[0]?.title || brand.businessName} minggu ini...`}
-                            value={studioTopic}
-                            onChange={(e) => setStudioTopic(e.target.value)}
-                            className="flex-1 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs text-neutral-900"
-                          />
-                          <button
-                            type="button"
-                            disabled={isCreatingContent}
-                            onClick={() => handleGenerateStudioDraft('manual_studio')}
-                            className="shrink-0 rounded-xl bg-[#EC749B] px-5 py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
-                          >
-                            <Sparkles className="mr-1.5 inline h-4 w-4" />
-                            Buat & Periksa Otomatis
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    {studioFormat === 'short_video' && <p className="mt-3 text-xs text-neutral-600">Reels 20–30 detik dengan empat adegan dan narasi bergaya bercerita. Pembuatan video dapat memerlukan beberapa menit. Dengarkan suara AI sebelum terbit.</p>}
-                    {studioFormat === 'carousel' && <p className="mt-3 text-xs text-neutral-600">Lima gambar AI akan dibuat. Tinjau seluruh slide sebelum terbit. Satu carousel memakai satu kuota publikasi. Foto Brand Vault tersedia untuk post tunggal.</p>}
-                    <label className="mt-4 block text-xs font-bold text-neutral-700">Foto Brand Vault (opsional)
-                      <select disabled={studioFormat !== 'single_post'} value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
-                        <option value="">Buat gambar AI dengan Sunburst</option>
-                        {vaultAssets.filter(asset => /^[a-f0-9-]{36}$/.test(asset.id) && asset.mediaType === 'photo').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}
-                      </select>
-                    </label>
-                    <p className="mt-3 text-xs text-neutral-500">Post tunggal, carousel 5 slide, dan Reels tersedia untuk Instagram/Facebook. Tinjau media final sebelum menerbitkan.</p>
-                  </section>
+                  <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{drafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
+                  {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{drafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{drafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
 
                   {/* Generated Drafts List */}
                   <div className="space-y-4">
-                    {drafts.map((draft) => (
+                    {studioDrafts.map((draft) => (
                       <article
                         key={draft.id}
-                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6"
+                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-black text-[#D85A88]">
+                              <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-sm font-semibold text-[#a92e5d]">
                                 {draft.status === 'published' ? '✓ Sudah Tayang' : draft.status === 'needs_attention' ? 'Perlu diperiksa di Meta' : draft.status === 'partially_published' ? 'Sebagian kanal berhasil' : draft.status === 'publish_failed' ? 'Publikasi gagal' : draft.status === 'publishing' ? 'Sedang mengirim' : 'Draf — tinjau sebelum terbit'}
                               </span>
-                              <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs font-bold text-neutral-700">
+                              <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-sm font-medium text-neutral-700">
                                 {draft.format === 'short_video'
                                   ? `Video 9:16 (${draft.videoDurationSeconds || 28} dtk)`
                                   : draft.format === 'carousel'
-                                    ? `Carousel (${draft.slides?.length || 4} Slide)`
+                                    ? `Carousel (${draft.renderedSlides?.length || draft.slides?.length || 0} slide)`
                                     : 'Post Tunggal'}
                               </span>
                               {draft.usedRealAssetIds.length > 0 && (
-                                <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-xs font-bold text-neutral-700">
+                                <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-sm font-medium text-neutral-700">
                                   ★ Memakai {draft.usedRealAssetIds.length} Foto/Video Asli User
                                 </span>
                               )}
                             </div>
-                            <h3 className="mt-2 text-base font-black text-neutral-900">{draft.title}</h3>
+                            <h3 className="mt-2 text-base font-semibold text-neutral-900">{draft.title}</h3>
                           </div>
 
                           <div className="flex flex-wrap gap-2">
@@ -2098,10 +1441,10 @@ export default function VeloxaAiPlatformPage() {
                                 type="button"
                                 disabled={!!publishingDraftId || !draft.qualityReview.passed || ['needs_attention', 'publishing'].includes(draft.status) || (draft.format === 'short_video' ? !draft.renderedVideo : draft.format === 'carousel' ? draft.renderedSlides?.length !== 5 : !draft.renderedMedia)}
                                 onClick={() => handlePublishDraftNow(draft.id)}
-                                className="rounded-xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                                className="rounded-xl bg-[#bd416e] px-4 py-2 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
                               >
                                 <Send className="mr-1.5 inline h-3.5 w-3.5" />
-                                {draft.status === 'partially_published' ? 'Coba lagi kanal yang gagal' : `Terbitkan ke ${draft.targetChannels.length} Sosmed Sekarang`}
+                                {draft.status === 'partially_published' ? 'Tinjau kanal yang gagal' : 'Tinjau & terbitkan'}
                               </button>
                             )}
                             <button
@@ -2119,62 +1462,53 @@ export default function VeloxaAiPlatformPage() {
                                   setStatusBanner('Template SVG draf lama dibuka untuk diunduh. Buat ulang melalui Studio untuk menyiapkan JPEG publikasi.');
                                 }
                               }}
-                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                             >
-                              <Download className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
-                              {draft.format === 'short_video' ? 'Buka Video MP4' : 'Unduh Visual Poster'}
+                              <Download className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />
+                              {draft.format === 'short_video' ? 'Buka Video MP4' : 'Buka gambar'}
                             </button>
                             {draft.format !== 'short_video' && (
                             <button
                               type="button"
                               data-testid={`play-voiceover-btn-${draft.id}`}
                               onClick={() => handlePlayDraftVoiceover(draft)}
-                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                             >
-                              <Volume2 className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
+                              <Volume2 className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />
                               {playingVoiceoverDraftId === draft.id
                                 ? 'Hentikan pembacaan teks'
-                                : 'Dengarkan teks (suara perangkat)'}
+                                : 'Dengarkan caption'}
                             </button>
                             )}
                             <button
                               type="button"
                               onClick={() => handleDesignMetaAdsWithAi(draft)}
-                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
+                              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                             >
-                              <Megaphone className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
-                              Jadikan Materi Meta Ads
+                              <Megaphone className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />
+                              Rancang iklan
                             </button>
                           </div>
                         </div>
 
                         {/* Live Rendered Visual Poster / Carousel Preview + Quality Gate */}
                         <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr]">
-                          <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-2">
+                          <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50 p-2">
                             <StudioMediaPreview draft={draft} fallbackUrl={buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })} />
                           </div>
                           <div className="space-y-3">
-                            {/* Quality Gate Proof */}
-                            <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3.5 text-xs text-neutral-800">
-                              <div className="flex items-center justify-between font-bold text-neutral-900">
-                                <span>
-                                  <span className="text-[#D85A88]">✓ Self-Healing Quality Gate:</span> {draft.qualityReview.score}/100 ({draft.qualityReview.issues.length} Masalah Tersisa)
-                                </span>
-                                <span className="text-neutral-500">Iterasi perbaikan: {draft.qualityReview.repairAttempts}x</span>
-                              </div>
-                              <p className="mt-1 text-neutral-600">{draft.qualityReview.summary}</p>
-                            </div>
+                            <details className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600"><summary className="cursor-pointer font-medium text-neutral-800">Pemeriksaan kualitas · {draft.qualityReview.score}/100</summary><p className="mt-3 leading-relaxed">{draft.qualityReview.summary}</p><p className="mt-2">{draft.qualityReview.issues.length} masalah · {draft.qualityReview.repairAttempts} perbaikan</p></details>
 
                             {/* Multi-Channel Distribution Badges */}
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <span className="font-bold text-neutral-500">Distribusi Lintas Platform:</span>
+                            <div className="flex flex-wrap items-center gap-2 text-sm">
+                              <span className="font-medium text-neutral-500">Tujuan publikasi:</span>
                               {draft.channelStatuses.map((cs) => (
                                 <span
                                   key={cs.channel}
-                                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${CHANNEL_META[cs.channel].badgeClass}`}
+                                  className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${CHANNEL_META[cs.channel].badgeClass}`}
                                 >
                                   {CHANNEL_META[cs.channel].shortLabel}:{' '}
-                                  <span className="text-[#D85A88]">
+                                  <span className="text-[#a92e5d]">
                                     {cs.status === 'published' ? '✓ Sudah Tayang' : cs.status === 'failed' ? 'Gagal dikirim' : cs.status === 'unknown' ? 'Perlu diperiksa' : 'Belum diterbitkan'}
                                     {cs.permalink && <a href={cs.permalink} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Lihat posting ↗</a>}
                                     {cs.note && <span className="ml-2 text-red-700">{cs.note}</span>}
@@ -2182,61 +1516,61 @@ export default function VeloxaAiPlatformPage() {
                                 </span>
                               ))}
                             </div>
-                            <p className="whitespace-pre-line rounded-xl border border-neutral-100 bg-white p-3 text-xs text-neutral-600">
-                              <strong className="text-neutral-900">Caption Siap Kirim:</strong> {[draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n')}
+                            <p className="whitespace-pre-line rounded-xl border border-neutral-100 bg-white p-3 text-sm text-neutral-600">
+                              <strong className="text-neutral-900">Caption:</strong> {[draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n')}
                             </p>
                           </div>
                         </div>
 
                         {/* Storyboard / Slides Preview — Clean White Cards */}
                         {draft.videoScenes && (
-                          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <details className="mt-5 border-t border-neutral-100 pt-4"><summary className="cursor-pointer text-sm font-medium text-neutral-600">Lihat naskah & storyboard</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {draft.videoScenes.map((scene) => (
                               <div
                                 key={scene.sceneNumber}
-                                className="flex flex-col justify-between rounded-2xl border border-neutral-200 bg-white p-4 text-xs text-neutral-900"
+                                className="flex flex-col justify-between rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-900"
                               >
                                 <div>
-                                  <div className="flex items-center justify-between text-[11px] font-bold text-[#D85A88]">
+                                  <div className="flex items-center justify-between text-xs font-medium text-[#a92e5d]">
                                     <span>ADEGAN {scene.sceneNumber}</span>
-                                    <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] text-neutral-600">
+                                    <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600">
                                       {scene.timeRange}
                                     </span>
                                   </div>
-                                  <p className="mt-2 font-black text-neutral-900">{scene.textOverlay}</p>
-                                  <p className="mt-2 text-[11px] text-neutral-600">
+                                  <p className="mt-2 font-semibold text-neutral-900">{scene.textOverlay}</p>
+                                  <p className="mt-2 text-xs text-neutral-600">
                                     <strong className="text-neutral-800">VO:</strong> &ldquo;{scene.voiceover}&rdquo;
                                   </p>
                                 </div>
-                                <p className="mt-3 border-t border-neutral-100 pt-2 text-[10px] text-neutral-500">
+                                <p className="mt-3 border-t border-neutral-100 pt-2 text-xs text-neutral-500">
                                   Visual: {scene.visualDirection}
                                 </p>
                               </div>
                             ))}
-                          </div>
+                          </div></details>
                         )}
 
                         {draft.slides && (
-                          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <details className="mt-5 border-t border-neutral-100 pt-4"><summary className="cursor-pointer text-sm font-medium text-neutral-600">Lihat isi setiap slide</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {draft.slides.map((slide) => (
                               <div
                                 key={slide.slideNumber}
-                                className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs"
+                                className="rounded-xl border border-neutral-200 bg-white p-4 text-sm"
                               >
-                                <div className="flex items-center justify-between font-bold text-[#D85A88]">
+                                <div className="flex items-center justify-between font-medium text-[#a92e5d]">
                                   <span>SLIDE 0{slide.slideNumber}</span>
-                                  <span className="rounded border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 text-[10px] text-neutral-600">
+                                  <span className="rounded border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 text-xs text-neutral-600">
                                     {slide.badgeText}
                                   </span>
                                 </div>
-                                <p className="mt-2 font-black text-neutral-900">{slide.headline}</p>
+                                <p className="mt-2 font-semibold text-neutral-900">{slide.headline}</p>
                                 <p className="mt-1 text-neutral-600">{slide.body}</p>
-                                <p className="mt-2 border-t border-neutral-100 pt-2 text-[10px] text-neutral-400">
+                                <p className="mt-2 border-t border-neutral-100 pt-2 text-xs text-neutral-400">
                                   {!draft.renderedMedia && slide.visualDirection}
                                 </p>
                               </div>
                             ))}
-                          </div>
+                          </div></details>
                         )}
                       </article>
                     ))}
@@ -2251,19 +1585,19 @@ export default function VeloxaAiPlatformPage() {
                 <div className="space-y-6">
                   <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
                     {/* User-Controlled Autonomous Schedule */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
                       <div className="flex items-center justify-between">
-                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                          Agent Konten Otonom 24/7
+                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
+                          Rencana konten
                         </span>
                         <button
                           type="button"
                           onClick={() =>
                             setStatusBanner('Penjadwalan otomatis belum diaktifkan. Gunakan Studio untuk meninjau dan menerbitkan post tunggal dahulu.')
                           }
-                          className={`rounded-full px-3.5 py-1 text-xs font-black ${
+                          className={`rounded-full px-3.5 py-1 text-sm font-semibold ${
                             autonomyConfig.enabled
-                              ? 'bg-[#EC749B] text-white shadow-2xs'
+                              ? 'bg-[#bd416e] text-white shadow-2xs'
                               : 'border border-neutral-200 bg-neutral-100 text-neutral-600'
                           }`}
                         >
@@ -2271,20 +1605,20 @@ export default function VeloxaAiPlatformPage() {
                         </button>
                       </div>
 
-                      <h2 className="mt-2 text-lg font-black text-neutral-900">
-                        Atur Sendiri Frekuensi & Jam Posting Harian Anda
+                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
+                        Atur jadwal konten
                       </h2>
-                      <p className="text-xs text-neutral-500">
-                        Agent akan memilih ide topik, memadukan foto/video dari Brand Vault, memeriksa kualitas sampai 0 masalah, dan menerbitkan otomatis ke kanal Anda.
+                      <p className="text-sm text-neutral-500">
+                        Penjadwalan otomatis belum tersedia. Anda tetap dapat membuat dan menerbitkan konten melalui Studio.
                       </p>
 
-                      <div className="mt-4 space-y-4 text-xs">
+                      <div className="mt-4 space-y-4 text-sm">
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="font-bold text-neutral-700">
+                            <label htmlFor="veloxa-field-9" className="font-medium text-neutral-700">
                               Frekuensi Posting per Hari
                             </label>
-                            <select
+                            <select id="veloxa-field-9"
                               aria-label="Frekuensi Posting per Hari"
                               value={autonomyConfig.postsPerDay}
                               onChange={(e) => {
@@ -2301,7 +1635,7 @@ export default function VeloxaAiPlatformPage() {
                                   scheduleTimesWib: presets[count],
                                 });
                               }}
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
                             >
                               <option value={1}>1x Sehari (30 konten/bulan)</option>
                               <option value={2}>2x Sehari · Pagi & Malam (60 konten/bulan)</option>
@@ -2311,8 +1645,8 @@ export default function VeloxaAiPlatformPage() {
                           </div>
 
                           <div>
-                            <label className="font-bold text-neutral-700">Mode Kepercayaan Otonom</label>
-                            <select
+                            <label htmlFor="veloxa-field-10" className="font-medium text-neutral-700">Mode Kepercayaan Otonom</label>
+                            <select id="veloxa-field-10"
                               value={autonomyConfig.executionMode}
                               onChange={(e) =>
                                 setAutonomyConfig({
@@ -2320,25 +1654,25 @@ export default function VeloxaAiPlatformPage() {
                                   executionMode: e.target.value as AutonomyConfig['executionMode'],
                                 })
                               }
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
+                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
                             >
                               <option value="full_autonomous">
-                                100% Full Otonom (Langsung Tayang Tanpa Disentuh)
+                                Publikasi otomatis · belum tersedia
                               </option>
                               <option value="copilot_review">
-                                Co-Pilot H-1 (Kirim Notif WA/HP Sebelum Tayang)
+                                Tinjau sebelum terbit
                               </option>
                             </select>
                           </div>
                         </div>
 
                         <div>
-                          <label className="font-bold text-neutral-700">
+                          <p id="veloxa-field-11" className="font-medium text-neutral-700">
                             Jam Tayang Otomatis (WIB): {autonomyConfig.scheduleTimesWib.join(' · ')} WIB
-                          </label>
-                          <div className="mt-2 flex flex-wrap gap-2">
+                          </p>
+                          <div role="group" aria-labelledby="veloxa-field-11" className="mt-2 flex flex-wrap gap-2">
                             {autonomyConfig.scheduleTimesWib.map((slot, idx) => (
-                              <input
+                              <input aria-label={`Jam tayang ${idx + 1} (WIB)`}
                                 key={idx}
                                 type="time"
                                 value={slot}
@@ -2347,34 +1681,34 @@ export default function VeloxaAiPlatformPage() {
                                   next[idx] = e.target.value;
                                   setAutonomyConfig({ ...autonomyConfig, scheduleTimesWib: next });
                                 }}
-                                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 font-bold text-neutral-900"
+                                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 font-medium text-neutral-900"
                               />
                             ))}
                           </div>
                         </div>
 
-                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4">
-                          <p className="font-bold text-neutral-800">
+                        <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-4">
+                          <p className="font-medium text-neutral-800">
                             Komposisi Pilar Konten Otomatis:
                           </p>
                           <div className="mt-2 grid grid-cols-3 gap-2 text-center">
                             <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
-                              <span className="text-lg font-black text-[#D85A88]">
+                              <span className="text-lg font-semibold text-[#a92e5d]">
                                 {autonomyConfig.contentMixPct.educationTips}%
                               </span>
-                              <p className="text-[11px] text-neutral-500">Edukasi & Tips</p>
+                              <p className="text-xs text-neutral-500">Edukasi & Tips</p>
                             </div>
                             <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
-                              <span className="text-lg font-black text-neutral-900">
+                              <span className="text-lg font-semibold text-neutral-900">
                                 {autonomyConfig.contentMixPct.communityStory}%
                               </span>
-                              <p className="text-[11px] text-neutral-500">Cerita & Testimoni</p>
+                              <p className="text-xs text-neutral-500">Cerita & Testimoni</p>
                             </div>
                             <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
-                              <span className="text-lg font-black text-neutral-900">
+                              <span className="text-lg font-semibold text-neutral-900">
                                 {autonomyConfig.contentMixPct.productEventPromo}%
                               </span>
-                              <p className="text-[11px] text-neutral-500">Promo Produk/Event</p>
+                              <p className="text-xs text-neutral-500">Promo Produk/Event</p>
                             </div>
                           </div>
                         </div>
@@ -2387,53 +1721,53 @@ export default function VeloxaAiPlatformPage() {
                               `Hari ini, ${autonomyConfig.scheduleTimesWib[0] || '07:00'} WIB`,
                             )
                           }
-                          className="w-full rounded-2xl bg-[#EC749B] py-3 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                          className="w-full rounded-xl bg-[#bd416e] py-3 font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
                         >
                           <Bot className="mr-1.5 inline h-4 w-4 text-white" />
-                          Jalankan 1 Slot Agent Otonom Sekarang (Simulasi Produksi & Jadwal)
+                          Coba rencana jadwal
                         </button>
                       </div>
                     </section>
 
                     {/* Event Campaign Countdown Manager */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                        Mode Kampanye Event & Promo Terjadwal
+                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
+                        Kampanye event
                       </span>
-                      <h2 className="mt-2 text-lg font-black text-neutral-900">
-                        Kalender Hitung Mundur Event (Teaser → Early Bird → Hari-H)
+                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
+                        Rencanakan konten event
                       </h2>
-                      <p className="text-xs text-neutral-500">
+                      <p className="text-sm text-neutral-500">
                         Sangat cocok untuk Event Lari, Launching Menu Baru Cafe, atau Promo Tanggal Kembar.
                       </p>
 
-                      <div className="mt-4 space-y-3 text-xs">
+                      <div className="mt-4 space-y-3 text-sm">
                         {eventCampaigns.map((camp) => {
                           const phase = computeEventCampaignPhase(camp.eventDateIso);
                           return (
                             <div
                               key={camp.id}
-                              className="rounded-2xl border border-neutral-200 bg-white p-4"
+                              className="rounded-xl border border-neutral-200 bg-white p-4"
                             >
                               <div className="flex items-center justify-between">
-                                <span className="rounded-full bg-[#EC749B] px-2.5 py-0.5 text-[10px] font-bold text-white">
+                                <span className="rounded-full bg-[#bd416e] px-2.5 py-0.5 text-xs font-medium text-white">
                                   {phase.phaseLabel}
                                 </span>
-                                <span className="font-bold text-neutral-600">
+                                <span className="font-medium text-neutral-600">
                                   Target: {camp.currentConversions}/{camp.targetRegistrationsOrSales} pendaftar/pembeli
                                 </span>
                               </div>
-                              <h3 className="mt-2 text-sm font-black text-neutral-900">{camp.name}</h3>
+                              <h3 className="mt-2 text-base font-semibold text-neutral-900">{camp.name}</h3>
                               <p className="mt-0.5 text-neutral-600">{camp.ticketOrPromoHighlight}</p>
-                              <p className="mt-1.5 text-[11px] font-semibold text-[#D85A88]">
+                              <p className="mt-1.5 text-xs font-semibold text-[#a92e5d]">
                                 Arahan AI Hari Ini: {phase.contentAngleDirective}
                               </p>
                             </div>
                           );
                         })}
 
-                        <div className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-3.5">
-                          <p className="font-bold text-neutral-900">+ Tambah Kampanye Event Baru</p>
+                        <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-3.5">
+                          <p className="font-medium text-neutral-900">+ Tambah Kampanye Event Baru</p>
                           <div className="mt-2 grid gap-2 sm:grid-cols-2">
                             <input
                               type="text"
@@ -2459,7 +1793,7 @@ export default function VeloxaAiPlatformPage() {
                           <button
                             type="button"
                             onClick={handleCreateEventCampaign}
-                            className="mt-2 w-full rounded-xl bg-[#EC749B] py-2.5 font-bold text-white shadow-2xs hover:bg-[#DF608A]"
+                            className="mt-2 w-full rounded-xl bg-[#bd416e] py-2.5 font-medium text-white shadow-2xs hover:bg-[#a92e5d]"
                           >
                             Aktifkan Kampanye Event ke Agent Otonom
                           </button>
@@ -2475,29 +1809,30 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'meta_ads' && (
                 <div className="space-y-6" data-testid="meta-ads-agent-panel">
+                  <p role="note" className="rounded-lg border border-neutral-200 bg-white px-5 py-4 text-base leading-relaxed text-neutral-600">Fitur ini membantu menyusun rencana dan materi iklan. Penayangan serta optimasi iklan otomatis belum diaktifkan.</p>
                   {/* AI Meta Ads Campaign Designer */}
-                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6">
+                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-xs font-bold text-[#D85A88]">
-                          AI Agent Marketing · Terhubung ke Meta Marketing API
+                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
+                          Perencanaan iklan
                         </span>
-                        <h2 className="mt-2 text-lg font-black text-neutral-900">
-                          Rancang, Susun Demografi & Interest, dan Eksekusi Meta Ads Otomatis
+                        <h2 className="mt-2 text-lg font-semibold text-neutral-900">
+                          Susun rencana iklan Anda
                         </h2>
-                        <p className="text-xs text-neutral-500">
-                          AI memvalidasi ID Interest resmi di Meta Graph API, memetakan radius lokasi, membagi A/B testing materi iklan, dan menjaga budget di bawah pagar pengaman Anda.
+                        <p className="text-sm text-neutral-500">
+                          Tentukan tujuan, audiens, materi, dan anggaran. Rencana ini belum menjalankan iklan.
                         </p>
                       </div>
                     </div>
 
-                    <div className="mt-5 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
                       <div>
-                        <label className="font-bold text-neutral-700">Tujuan Kampanye (Objective)</label>
-                        <select
+                        <label htmlFor="veloxa-field-12" className="font-medium text-neutral-700">Tujuan Kampanye (Objective)</label>
+                        <select id="veloxa-field-12"
                           value={adObjective}
                           onChange={(e) => setAdObjective(e.target.value as MetaAdObjective)}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
                         >
                           <option value="WHATSAPP_MESSAGES">
                             Pesan Chat WhatsApp (CTWA)
@@ -2515,8 +1850,8 @@ export default function VeloxaAiPlatformPage() {
                       </div>
 
                       <div>
-                        <label className="font-bold text-neutral-700">Produk / Event yang Diiklankan</label>
-                        <input
+                        <label htmlFor="veloxa-field-13" className="font-medium text-neutral-700">Produk / Event yang Diiklankan</label>
+                        <input id="veloxa-field-13"
                           type="text"
                           value={adPromoTitle}
                           onChange={(e) => setAdPromoTitle(e.target.value)}
@@ -2525,56 +1860,56 @@ export default function VeloxaAiPlatformPage() {
                       </div>
 
                       <div>
-                        <label className="font-bold text-neutral-700">
+                        <p id="veloxa-field-14" className="font-medium text-neutral-700">
                           Kota Target & Radius (km)
-                        </label>
-                        <div className="mt-1 flex gap-2">
-                          <input
+                        </p>
+                        <div role="group" aria-labelledby="veloxa-field-14" className="mt-1 flex gap-2">
+                          <input aria-label="Kota target"
                             type="text"
                             value={adCity}
                             onChange={(e) => setAdCity(e.target.value)}
                             className="w-2/3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
                           />
-                          <input
+                          <input aria-label="Radius area (km)"
                             type="number"
                             value={adRadiusKm}
                             min={3}
                             max={80}
                             onChange={(e) => setAdRadiusKm(Number(e.target.value))}
-                            className="w-1/3 rounded-xl border border-neutral-200 bg-white px-2.5 py-2.5 font-bold text-neutral-900"
+                            className="w-1/3 rounded-xl border border-neutral-200 bg-white px-2.5 py-2.5 font-medium text-neutral-900"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="font-bold text-neutral-700">
+                        <p id="veloxa-field-15" className="font-medium text-neutral-700">
                           Rentang Usia Demografi ({adAgeMin} – {adAgeMax} thn)
-                        </label>
-                        <div className="mt-1 flex gap-2">
-                          <input
+                        </p>
+                        <div role="group" aria-labelledby="veloxa-field-15" className="mt-1 flex gap-2">
+                          <input aria-label="Usia minimum"
                             type="number"
                             value={adAgeMin}
                             min={18}
                             max={55}
                             onChange={(e) => setAdAgeMin(Number(e.target.value))}
-                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
+                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
                           />
-                          <input
+                          <input aria-label="Usia maksimum"
                             type="number"
                             value={adAgeMax}
                             min={20}
                             max={65}
                             onChange={(e) => setAdAgeMax(Number(e.target.value))}
-                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
+                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="font-bold text-neutral-700">
+                        <label htmlFor="veloxa-field-16" className="font-medium text-neutral-700">
                           Kata Kunci Interest Tambahan
                         </label>
-                        <input
+                        <input id="veloxa-field-16"
                           type="text"
                           value={adCustomInterest}
                           onChange={(e) => setAdCustomInterest(e.target.value)}
@@ -2584,33 +1919,33 @@ export default function VeloxaAiPlatformPage() {
                       </div>
 
                       <div>
-                        <label className="font-bold text-neutral-700">Budget Harian (IDR)</label>
-                        <input
+                        <label htmlFor="veloxa-field-17" className="font-medium text-neutral-700">Budget Harian (IDR)</label>
+                        <input id="veloxa-field-17"
                           type="number"
                           step={25000}
                           value={adDailyBudgetIdr}
                           onChange={(e) => setAdDailyBudgetIdr(Number(e.target.value))}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-black text-neutral-900"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-neutral-700">Durasi Tayang (Hari)</label>
-                        <input
+                        <label htmlFor="veloxa-field-18" className="font-medium text-neutral-700">Durasi Tayang (Hari)</label>
+                        <input id="veloxa-field-18"
                           type="number"
                           min={1}
                           max={90}
                           value={adDurationDays}
                           onChange={(e) => setAdDurationDays(Number(e.target.value))}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-bold text-neutral-900"
+                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
                         />
                       </div>
 
                       <div>
-                        <label className="font-bold text-[#D85A88]">
+                        <label htmlFor="veloxa-field-19" className="font-medium text-[#a92e5d]">
                           Pagar Pengaman Budget Harian
                         </label>
-                        <input
+                        <input id="veloxa-field-19"
                           type="number"
                           step={25000}
                           value={metaAccount.dailyHardCapIdr}
@@ -2620,22 +1955,22 @@ export default function VeloxaAiPlatformPage() {
                               dailyHardCapIdr: Number(e.target.value),
                             })
                           }
-                          className="mt-1 w-full rounded-xl border border-pink-200 bg-white px-3 py-2.5 font-black text-neutral-900"
+                          className="mt-1 w-full rounded-xl border border-pink-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
                         />
                       </div>
                     </div>
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-2">
-                      <p className="text-xs text-neutral-500">
-                        Estimasi total anggaran: <strong className="text-neutral-900">{formatIdr(Math.min(adDailyBudgetIdr, metaAccount.dailyHardCapIdr) * adDurationDays)}</strong> ({adDurationDays} hari) · Ditarik langsung oleh Meta dari akun iklan <code>{metaAccount.adAccountId}</code>.
+                      <p className="text-sm text-neutral-500">
+                        Estimasi total anggaran: <strong className="text-neutral-900">{formatIdr(Math.min(adDailyBudgetIdr, metaAccount.dailyHardCapIdr) * adDurationDays)}</strong> ({adDurationDays} hari) · Belum ada anggaran yang dibelanjakan.
                       </p>
                       <button
                         type="button"
                         onClick={() => handleDesignMetaAdsWithAi()}
-                        className="rounded-2xl bg-[#EC749B] px-6 py-3 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                        className="rounded-xl bg-[#bd416e] px-6 py-3 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
                       >
                         <Sparkles className="mr-1.5 inline h-4 w-4" />
-                        Rancang & Susun Kampanye Meta Ads dengan AI
+                        Buat rencana iklan
                       </button>
                     </div>
                   </section>
@@ -2645,35 +1980,35 @@ export default function VeloxaAiPlatformPage() {
                     {metaAdCampaigns.map((camp) => (
                       <article
                         key={camp.id}
-                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-3xl border border-neutral-200/90 bg-white p-6"
+                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span
-                                className={`rounded-full border px-3 py-0.5 text-xs font-black ${
+                                className={`rounded-full border px-3 py-0.5 text-sm font-semibold ${
                                   camp.status === 'active_running'
-                                    ? 'border-pink-200 bg-pink-50/70 text-[#D85A88]'
+                                    ? 'border-pink-200 bg-pink-50/70 text-[#a92e5d]'
                                     : 'border-neutral-200 bg-neutral-50 text-neutral-600'
                                 }`}
                               >
                                 {camp.status === 'active_running'
-                                  ? '● ACTIVE · Sedang Tayang di Meta Ads'
-                                  : '⏸ PAUSED · Siap Diluncurkan 1-Klik'}
+                                  ? 'Rencana tersimpan'
+                                  : 'Rencana tersimpan · belum ditayangkan'}
                               </span>
-                              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-xs font-bold text-neutral-600">
+                              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-sm font-medium text-neutral-600">
                                 Objective: {camp.objective.replace('_', ' ')}
                               </span>
                               {camp.budget.hardCapClamped && (
-                                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-bold text-[#D85A88]">
+                                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-sm font-medium text-[#a92e5d]">
                                   ✓ Dijaga Pagar Budget ({formatIdr(camp.budget.appliedDailyBudgetIdr)}/hari)
                                 </span>
                               )}
                             </div>
-                            <h3 className="mt-2 text-lg font-black text-neutral-900">
+                            <h3 className="mt-2 text-lg font-semibold text-neutral-900">
                               {camp.campaignName}
                             </h3>
-                            <p className="text-xs text-neutral-500">
+                            <p className="text-sm text-neutral-500">
                               Tujuan Klik: <code>{camp.destinationUrlOrWa}</code> · Total Anggaran {camp.budget.durationDays} Hari:{' '}
                               <strong className="text-neutral-900">{formatIdr(camp.budget.totalBudgetIdr)}</strong>
                             </p>
@@ -2682,24 +2017,24 @@ export default function VeloxaAiPlatformPage() {
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
+                              disabled
                               onClick={() => handleToggleMetaCampaignRun(camp.id)}
-                              className={`rounded-xl px-4 py-2.5 text-xs font-black transition ${
+                              className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
                                 camp.status === 'active_running'
-                                  ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]'
-                                  : 'bg-[#EC749B] text-white shadow-2xs hover:bg-[#DF608A]'
+                                  ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]'
+                                  : 'bg-[#bd416e] text-white shadow-2xs hover:bg-[#a92e5d]'
                               }`}
                             >
-                              {camp.status === 'active_running'
-                                ? 'Jeda Kampanye'
-                                : 'Setujui & Jalankan Iklan di Meta'}
+                              Penayangan belum tersedia
                             </button>
                             <button
                               type="button"
+                              disabled
                               onClick={() => handleRunMetaAutoOptimizer(camp.id)}
-                              className="rounded-xl bg-[#EC749B] px-4 py-2.5 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
+                              className="rounded-xl bg-[#bd416e] px-4 py-2.5 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
                             >
                               <Zap className="mr-1.5 inline h-3.5 w-3.5 text-white" />
-                              Jalankan Optimasi AI Media Buyer
+                              Optimasi belum tersedia
                             </button>
                           </div>
                         </div>
@@ -2707,8 +2042,8 @@ export default function VeloxaAiPlatformPage() {
                         {/* 3 Pillars of Meta Ads: Demographics, Validated Interests, Budget & Outcome */}
                         <div className="mt-4 grid gap-4 lg:grid-cols-3">
                           {/* Column 1: Demografi & Geo */}
-                          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
-                            <p className="font-black uppercase tracking-wider text-neutral-400">
+                          <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm">
+                            <p className="font-semibold uppercase tracking-wider text-neutral-400">
                               1. Sisi Demografi & Lokasi
                             </p>
                             <ul className="mt-2.5 space-y-1.5 text-neutral-600">
@@ -2731,8 +2066,8 @@ export default function VeloxaAiPlatformPage() {
                           </div>
 
                           {/* Column 2: Validated Meta Interests */}
-                          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
-                            <p className="font-black uppercase tracking-wider text-neutral-400">
+                          <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm">
+                            <p className="font-semibold uppercase tracking-wider text-neutral-400">
                               2. Sisi Interest Resmi Meta API
                             </p>
                             <div className="mt-2.5 space-y-2">
@@ -2741,13 +2076,13 @@ export default function VeloxaAiPlatformPage() {
                                   key={interest.id}
                                   className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-2.5"
                                 >
-                                  <div className="flex items-center justify-between font-bold text-neutral-900">
+                                  <div className="flex items-center justify-between font-medium text-neutral-900">
                                     <span>{interest.name}</span>
-                                    <span className="text-[10px] text-[#D85A88]">
+                                    <span className="text-xs text-[#a92e5d]">
                                       ID #{interest.id.slice(-5)}
                                     </span>
                                   </div>
-                                  <p className="mt-0.5 text-[11px] text-neutral-500">
+                                  <p className="mt-0.5 text-xs text-neutral-500">
                                     Ukuran audiens: {(interest.audienceSizeLower / 1_000_000).toFixed(1)}M –{' '}
                                     {(interest.audienceSizeUpper / 1_000_000).toFixed(1)}M orang
                                   </p>
@@ -2757,8 +2092,8 @@ export default function VeloxaAiPlatformPage() {
                           </div>
 
                           {/* Column 3: Sisi Budget & Estimasi Hasil */}
-                          <div className="rounded-2xl border border-neutral-200 bg-white p-4 text-xs">
-                            <p className="font-black uppercase tracking-wider text-neutral-400">
+                          <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm">
+                            <p className="font-semibold uppercase tracking-wider text-neutral-400">
                               3. Sisi Budget & Proyeksi Harian
                             </p>
                             <div className="mt-2.5 space-y-2 text-neutral-600">
@@ -2784,7 +2119,7 @@ export default function VeloxaAiPlatformPage() {
                               </div>
                               <div className="flex justify-between">
                                 <span>Target Biaya per Hasil (CPR):</span>
-                                <strong className="text-[#D85A88]">
+                                <strong className="text-[#a92e5d]">
                                   ~{formatIdr(camp.estimatedDailyOutcome.estimatedCostPerResultIdr)} / konversi
                                 </strong>
                               </div>
@@ -2797,7 +2132,7 @@ export default function VeloxaAiPlatformPage() {
                           {camp.creatives.map((cr) => (
                             <div
                               key={cr.id}
-                              className={`rounded-2xl border p-4 text-xs ${
+                              className={`rounded-xl border p-4 text-sm ${
                                 cr.status === 'winner_scaled'
                                   ? 'border-pink-300 bg-white ring-1 ring-pink-100'
                                   : cr.status === 'paused_by_ai_loser'
@@ -2806,14 +2141,14 @@ export default function VeloxaAiPlatformPage() {
                               }`}
                             >
                               <div className="flex items-center justify-between">
-                                <span className="font-black text-neutral-900">{cr.variantLabel}</span>
+                                <span className="font-semibold text-neutral-900">{cr.variantLabel}</span>
                                 <span
-                                  className={`rounded-full px-2.5 py-0.5 text-[10px] font-black ${
+                                  className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                                     cr.status === 'winner_scaled'
-                                      ? 'bg-[#EC749B] text-white'
+                                      ? 'bg-[#bd416e] text-white'
                                       : cr.status === 'paused_by_ai_loser'
                                         ? 'border border-neutral-200 bg-white text-neutral-500'
-                                        : 'border border-pink-200 bg-pink-50/70 text-[#D85A88]'
+                                        : 'border border-pink-200 bg-pink-50/70 text-[#a92e5d]'
                                   }`}
                                 >
                                   {cr.status === 'winner_scaled'
@@ -2823,8 +2158,8 @@ export default function VeloxaAiPlatformPage() {
                                       : `Alokasi Budget ${cr.budgetSharePct}%`}
                                 </span>
                               </div>
-                              <p className="mt-1.5 font-bold text-neutral-900">{cr.headline}</p>
-                              <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-500">
+                              <p className="mt-1.5 font-medium text-neutral-900">{cr.headline}</p>
+                              <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-500">
                                 <span>CTR: <strong className="text-neutral-900">{cr.metrics.ctrPct}%</strong></span>
                                 <span>Konversi: <strong className="text-neutral-900">{cr.metrics.conversions} hasil</strong></span>
                                 <span>
@@ -2840,17 +2175,17 @@ export default function VeloxaAiPlatformPage() {
 
                         {/* AI Media Buyer Optimization Logs */}
                         {camp.optimizationLogs.length > 0 && (
-                          <div className="mt-4 rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4 text-xs">
-                            <p className="font-black text-neutral-900">
+                          <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50/70 p-4 text-sm">
+                            <p className="font-semibold text-neutral-900">
                               Riwayat Tindakan Otonom AI Media Buyer:
                             </p>
                             <ul className="mt-2 space-y-1.5 text-neutral-600">
                               {camp.optimizationLogs.map((log) => (
                                 <li key={log.id} className="flex items-start gap-2">
-                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#EC749B]" />
+                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#a92e5d]" />
                                   <span>
                                     <strong className="text-neutral-900">[{log.timestampWib}]</strong> {log.summary} (Efisiensi anggaran:{' '}
-                                    <strong className="text-[#D85A88]">{formatIdr(log.savedOrReallocatedIdr)}/hari</strong>)
+                                    <strong className="text-[#a92e5d]">{formatIdr(log.savedOrReallocatedIdr)}/hari</strong>)
                                   </span>
                                 </li>
                               ))}
@@ -2862,15 +2197,13 @@ export default function VeloxaAiPlatformPage() {
                   </div>
                 </div>
               )}
-                </div>
-              </div>
-            </div>
+            </VeloxaWorkspaceShell>
           )}
 
-          {authUser && (
+          {authUser && !isUserWorkspaceView && (
             <footer
               data-testid="veloxa-workspace-footer"
-              className={`mt-10 rounded-3xl border border-neutral-200/80 bg-white px-6 py-4 text-xs text-neutral-500 shadow-2xs ${
+              className={`mt-10 rounded-xl border border-neutral-200/80 bg-white px-6 py-4 text-sm text-neutral-500 shadow-2xs ${
                 !(authUser.isSuperAdmin && activeRole === 'admin')
                   ? 'mx-4 sm:mx-7 lg:ml-[312px] lg:mr-9'
                   : ''
@@ -2878,16 +2211,16 @@ export default function VeloxaAiPlatformPage() {
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#EC749B] text-[11px] font-black text-white">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#bd416e] text-xs font-semibold text-white">
                     V
                   </span>
-                  <span className="font-bold text-neutral-800">
-                    © 2026 Veloxa AI Global Cloud · Web, Android (.apk) & iOS Native
+                  <span className="font-medium text-neutral-800">
+                    © 2026 Veloxa AI
                   </span>
                 </div>
-                <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold">
-                  <span className="text-[#D85A88]">● 5 OpenAI Agents & 4 Social APIs Active</span>
-                  <span>Local-First Hemat {firestoreSavingsPct}% Firestore</span>
+                <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
+                  <span className="text-neutral-500">Workspace Veloxa</span>
+                  <Link href="/privacy">Privasi</Link>
                 </div>
               </div>
             </footer>
@@ -2903,13 +2236,13 @@ export default function VeloxaAiPlatformPage() {
           >
             <Link
               href="/login"
-              className="flex-1 rounded-2xl border border-neutral-200 bg-white py-2.5 text-center text-xs font-black text-neutral-800"
+              className="flex-1 rounded-xl border border-neutral-200 bg-white py-2.5 text-center text-sm font-semibold text-neutral-800"
             >
               {i18nCopy.headerSignIn}
             </Link>
             <Link
               href="/register"
-              className="flex-[1.4] rounded-2xl bg-[#EC749B] py-2.5 text-center text-xs font-black text-white shadow-xs"
+              className="flex-[1.4] rounded-xl bg-[#bd416e] py-2.5 text-center text-sm font-semibold text-white shadow-xs"
             >
               {i18nCopy.headerStartFree} →
             </Link>
@@ -2919,14 +2252,14 @@ export default function VeloxaAiPlatformPage() {
             <nav
               aria-label="Bottom Navigation Android dan iOS"
               data-testid="mobile-workspace-bottom-nav"
-              className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t border-neutral-200/90 bg-white/95 px-2.5 pt-2 shadow-lg backdrop-blur md:hidden"
+              className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t border-neutral-200/90 bg-white/95 px-2.5 pt-2 shadow-lg backdrop-blur lg:hidden"
             >
               {(
                 [
                   { id: 'overview', label: i18nCopy.mobileTabs.overview, icon: LayoutDashboard },
-                  { id: 'brand_vault', label: i18nCopy.mobileTabs.brand_vault, icon: Camera },
+                  { id: 'brand_vault', label: 'Profil', icon: Camera },
                   { id: 'studio', label: i18nCopy.mobileTabs.studio, icon: Wand2 },
-                  { id: 'autonomy', label: i18nCopy.mobileTabs.autonomy, icon: Bot },
+                  { id: 'autonomy', label: 'Jadwal', icon: Bot },
                   { id: 'meta_ads', label: i18nCopy.mobileTabs.meta_ads, icon: Megaphone },
                 ] as const
               ).map((tab) => {
@@ -2938,9 +2271,9 @@ export default function VeloxaAiPlatformPage() {
                     type="button"
                     data-testid={`mobile-nav-tab-${tab.id}`}
                     onClick={() => setActiveTab(tab.id)}
-                    className={`flex flex-col items-center gap-1 rounded-2xl py-1.5 text-[10px] font-black transition ${
+                    className={`flex flex-col items-center gap-1 rounded-xl py-1.5 text-xs font-semibold transition ${
                       isActive
-                        ? 'bg-pink-50/90 text-[#EC749B] ring-1 ring-pink-200'
+                        ? 'bg-pink-50/90 text-[#a92e5d] ring-1 ring-pink-200'
                         : 'text-neutral-500 hover:text-neutral-900'
                     }`}
                   >
@@ -2961,29 +2294,29 @@ export default function VeloxaAiPlatformPage() {
         ref={onboardingDialogRef}
         aria-labelledby="onboarding-dialog-title"
         data-testid="onboarding-dialog"
-        className="w-full max-w-lg rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+        className="w-full max-w-lg rounded-xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
           <div>
-            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
               Tahap 1 · Onboarding Workspace Pelanggan Baru
             </span>
-            <h2 id="onboarding-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
+            <h2 id="onboarding-dialog-title" className="mt-1 text-lg font-semibold text-neutral-900">
               Daftarkan Brand / Bisnis Baru ke Veloxa AI
             </h2>
           </div>
           <button
             type="button"
             onClick={() => onboardingDialogRef.current?.close()}
-            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600 hover:text-neutral-900"
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-sm font-medium text-neutral-600 hover:text-neutral-900"
           >
             Tutup
           </button>
         </div>
 
-        <form onSubmit={handleCompleteNewBusinessOnboarding} className="mt-4 space-y-3 text-xs">
+        <form onSubmit={handleCompleteNewBusinessOnboarding} className="mt-4 space-y-3 text-sm">
           <div>
-            <label htmlFor="onboard-biz-name" className="font-bold text-neutral-700">
+            <label htmlFor="onboard-biz-name" className="font-medium text-neutral-700">
               Nama Bisnis / Brand / Event
             </label>
             <input
@@ -3000,14 +2333,14 @@ export default function VeloxaAiPlatformPage() {
 
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label htmlFor="onboard-category" className="font-bold text-neutral-700">
+              <label htmlFor="onboard-category" className="font-medium text-neutral-700">
                 Kategori Industri
               </label>
               <select
                 id="onboard-category"
                 value={onboardCategory}
                 onChange={(e) => setOnboardCategory(e.target.value as BusinessCategory)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-bold text-neutral-900"
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-medium text-neutral-900"
               >
                 <option value="cafe_fnb">Cafe, Resto & F&B</option>
                 <option value="running_event">Event Lari / Konser / EO</option>
@@ -3017,7 +2350,7 @@ export default function VeloxaAiPlatformPage() {
               </select>
             </div>
             <div>
-              <label htmlFor="onboard-city" className="font-bold text-neutral-700">
+              <label htmlFor="onboard-city" className="font-medium text-neutral-700">
                 Kota Target Utama
               </label>
               <input
@@ -3033,7 +2366,7 @@ export default function VeloxaAiPlatformPage() {
           </div>
 
           <div>
-            <label htmlFor="onboard-offering" className="font-bold text-neutral-700">
+            <label htmlFor="onboard-offering" className="font-medium text-neutral-700">
               Produk / Menu / Tiket Event Unggulan
             </label>
             <input
@@ -3049,7 +2382,7 @@ export default function VeloxaAiPlatformPage() {
 
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label htmlFor="onboard-email" className="font-bold text-neutral-700">
+              <label htmlFor="onboard-email" className="font-medium text-neutral-700">
                 Email Pemilik (Tenant)
               </label>
               <input
@@ -3061,14 +2394,14 @@ export default function VeloxaAiPlatformPage() {
               />
             </div>
             <div>
-              <label htmlFor="onboard-plan" className="font-bold text-neutral-700">
+              <label htmlFor="onboard-plan" className="font-medium text-neutral-700">
                 Paket Langganan Awal
               </label>
               <select
                 id="onboard-plan"
                 value={onboardPlanId}
                 onChange={(e) => setOnboardPlanId(e.target.value as SubscriptionPlanId)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-bold text-neutral-900"
+                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-medium text-neutral-900"
               >
                 <option value="starter_500k">Starter (Rp500rb/bln)</option>
                 <option value="growth_1000k">Growth (Rp1jt/bln)</option>
@@ -3081,14 +2414,14 @@ export default function VeloxaAiPlatformPage() {
             <button
               type="button"
               onClick={() => onboardingDialogRef.current?.close()}
-              className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-bold text-neutral-700"
+              className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-medium text-neutral-700"
             >
               Batal
             </button>
             <button
               type="submit"
               data-testid="submit-onboarding-btn"
-              className="rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
+              className="rounded-xl bg-[#bd416e] px-5 py-2.5 font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
             >
               Buat Workspace & Aktifkan Brand Brain
             </button>
@@ -3108,27 +2441,27 @@ export default function VeloxaAiPlatformPage() {
             oauthDialogRef.current?.close();
           }
         }}
-        className="m-auto w-full max-w-xl rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+        className="m-auto w-full max-w-xl rounded-xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3.5">
           <div>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-              🔗 KONEKSI AKUN SOSIAL
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
+              Akun sosial
             </span>
-            <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-black text-neutral-900">
+            <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-semibold text-neutral-900">
               Hubungkan akun sosial ke {brand.businessName}
             </h2>
           </div>
           <button
             type="button"
             onClick={() => oauthDialogRef.current?.close()}
-            className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
+            className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-sm font-medium text-neutral-600 hover:border-pink-200 hover:text-[#a92e5d]"
           >
             Tutup ✕
           </button>
         </div>
 
-        <p className="mt-4 text-sm text-neutral-600">Pilih Instagram saja atau Facebook + Instagram sesuai akun yang Anda miliki.</p>
+        <p className="mt-4 text-base text-neutral-600">Pilih cara menghubungkan akun bisnis Anda.</p>
 
         {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
           setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => verified.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
@@ -3142,133 +2475,27 @@ export default function VeloxaAiPlatformPage() {
         ref={billingDialogRef}
         aria-labelledby="billing-dialog-title"
         data-testid="billing-checkout-dialog"
-        className="w-full max-w-xl rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+        className="w-full max-w-xl rounded-xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
           <div>
-            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-              Tahap 4 · Pembayaran Langganan Web (Bebas Potongan 30% App Store)
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
+              Paket & kuota
             </span>
-            <h2 id="billing-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
-              Pilih / Upgrade Paket Langganan Veloxa AI
+            <h2 id="billing-dialog-title" className="mt-1 text-lg font-semibold text-neutral-900">
+              Paket workspace
             </h2>
           </div>
           <button
             type="button"
             onClick={() => billingDialogRef.current?.close()}
-            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600"
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-sm font-medium text-neutral-600"
           >
             Tutup
           </button>
         </div>
 
-        <div className="mt-4 space-y-4 text-xs">
-          <div className="grid grid-cols-3 gap-2">
-            {Object.values(SUBSCRIPTION_PLANS).map((plan) => (
-              <button
-                key={plan.id}
-                type="button"
-                data-testid={`select-plan-btn-${plan.id}`}
-                onClick={() => setSelectedCheckoutPlanId(plan.id)}
-                className={`rounded-2xl border p-3 text-left transition ${
-                  selectedCheckoutPlanId === plan.id
-                    ? 'border-[#EC749B] bg-pink-50/50 ring-1 ring-pink-200'
-                    : 'border-neutral-200 bg-white'
-                }`}
-              >
-                <p className="font-black text-neutral-900">{plan.name}</p>
-                <p className="mt-1 text-sm font-black text-[#D85A88]">
-                  {formatIdr(plan.priceMonthlyIdr)}
-                </p>
-                <p className="mt-0.5 text-[10px] text-neutral-500">
-                  {plan.monthlyPostQuota} Konten/bln
-                </p>
-              </button>
-            ))}
-          </div>
-
-          <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethodTab('qris')}
-                  className={`rounded-xl px-3 py-1.5 font-bold ${
-                    paymentMethodTab === 'qris'
-                      ? 'bg-[#EC749B] text-white'
-                      : 'border border-neutral-200 bg-white text-neutral-700'
-                  }`}
-                >
-                  QRIS Instan (Semua Bank / E-Wallet)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethodTab('va_bca')}
-                  className={`rounded-xl px-3 py-1.5 font-bold ${
-                    paymentMethodTab === 'va_bca'
-                      ? 'bg-[#EC749B] text-white'
-                      : 'border border-neutral-200 bg-white text-neutral-700'
-                  }`}
-                >
-                  BCA / Mandiri Virtual Account
-                </button>
-              </div>
-              <span className="font-black text-neutral-900">
-                Total: {formatIdr(SUBSCRIPTION_PLANS[selectedCheckoutPlanId].priceMonthlyIdr)}
-              </span>
-            </div>
-
-            {paymentMethodTab === 'qris' ? (
-              <div className="mt-3 flex items-center gap-4 rounded-xl border border-neutral-200 bg-white p-3">
-                <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-neutral-50 font-mono text-[10px] font-black text-neutral-800">
-                  [QRIS VLX]
-                </div>
-                <div>
-                  <p className="font-black text-neutral-900">
-                    NMID: ID2026VELOXAAISAAS · PT Veloxa Kreasi AI
-                  </p>
-                  <p className="mt-0.5 text-neutral-500">
-                    Scan dengan BCA Mobile, Livin Mandiri, GoPay, OVO, atau ShopeePay. Kuota {SUBSCRIPTION_PLANS[selectedCheckoutPlanId].monthlyPostQuota} postingan/bulan aktif otomatis.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-3">
-                <p className="text-neutral-500">Nomor BCA Virtual Account:</p>
-                <p className="font-mono text-base font-black text-neutral-900">88012 0812 9900 441</p>
-              </div>
-            )}
-          </div>
-
-          {billingReceipts.length > 0 && (
-            <div className="rounded-xl border border-neutral-200 bg-white p-3">
-              <p className="font-bold text-neutral-800">Riwayat Pembayaran Terakhir:</p>
-              <p className="mt-1 text-[11px] text-neutral-600">
-                ✓ {billingReceipts[0].id} · {billingReceipts[0].workspaceName} ·{' '}
-                <strong>{billingReceipts[0].planName}</strong> ({formatIdr(billingReceipts[0].amountIdr)}) —{' '}
-                <span className="font-bold text-[#D85A88]">{billingReceipts[0].paidAtWib}</span>
-              </p>
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => billingDialogRef.current?.close()}
-              className="rounded-xl border border-neutral-200 bg-white px-4 py-2.5 font-bold text-neutral-700"
-            >
-              Tutup
-            </button>
-            <button
-              type="button"
-              data-testid="confirm-qris-payment-btn"
-              onClick={() => void handleConfirmQrisSubscriptionUpgrade()}
-              className="rounded-xl bg-[#EC749B] px-5 py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
-            >
-              ✓ Simulasikan Pembayaran Lunas QRIS (Aktifkan Paket Instan)
-            </button>
-          </div>
-        </div>
+        <div className="mt-5 space-y-5"><p className="text-base leading-relaxed text-neutral-500">Bandingkan kuota paket untuk kebutuhan bisnis Anda. Aktivasi paket berbayar dan pembayaran belum tersedia.</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{Object.values(SUBSCRIPTION_PLANS).map(plan => <button type="button" key={plan.id} data-testid={`select-plan-btn-${plan.id}`} aria-pressed={selectedCheckoutPlanId === plan.id} onClick={() => setSelectedCheckoutPlanId(plan.id)} className={`rounded-lg border p-4 text-left ${selectedCheckoutPlanId === plan.id ? 'border-[#bd416e] bg-[#faf2f5]' : 'border-neutral-200 bg-white'}`}><p className="text-base font-medium">{plan.name}</p><p className="mt-2 text-lg font-semibold">{formatIdr(plan.priceMonthlyIdr)}<span className="text-sm font-normal text-neutral-500">{plan.id === 'free_trial' ? ' / uji coba' : ' / bulan'}</span></p><p className="mt-2 text-sm text-neutral-500">{plan.monthlyPostQuota} publikasi</p></button>)}</div><div className="flex flex-wrap justify-end gap-3 border-t border-neutral-100 pt-4"><button type="button" onClick={() => billingDialogRef.current?.close()} className="veloxa-button-secondary">Tutup</button><button type="button" disabled data-testid="confirm-qris-payment-btn" className="veloxa-button-primary">Pembayaran belum tersedia</button></div></div>
       </dialog>
 
       {/* ========================================================================
@@ -3278,126 +2505,27 @@ export default function VeloxaAiPlatformPage() {
         ref={authDialogRef}
         aria-labelledby="auth-dialog-title"
         data-testid="firebase-auth-dialog"
-        className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
+        className="w-full max-w-md rounded-xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
           <div>
-            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-[10px] font-black text-[#D85A88]">
-              Autentikasi Resmi Veloxa AI (veloxa-ai-saas)
+            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
+              Profil akun
             </span>
-            <h2 id="auth-dialog-title" className="mt-1 text-lg font-black text-neutral-900">
-              Masuk ke Akun Veloxa AI
+            <h2 id="auth-dialog-title" className="mt-1 text-lg font-semibold text-neutral-900">
+              {authUser ? 'Akun Anda' : 'Masuk ke Veloxa'}
             </h2>
           </div>
           <button
             type="button"
             onClick={() => authDialogRef.current?.close()}
-            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-xs font-bold text-neutral-600"
+            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-sm font-medium text-neutral-600"
           >
             Tutup
           </button>
         </div>
 
-        <div className="mt-4 space-y-3.5 text-xs">
-          {authUser ? (
-            <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3">
-              <p className="text-[11px] text-neutral-500">Sedang Login Sebagai:</p>
-              <p className="font-black text-neutral-900">
-                {authUser.displayName} ({authUser.email})
-              </p>
-              <span className="mt-1 inline-block rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-[10px] font-bold text-[#D85A88]">
-                {authUser.isSuperAdmin ? '★ Super Admin (Owner SaaS)' : '✓ Pelanggan Bisnis (Workspace)'}
-              </span>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-neutral-200 bg-neutral-50/70 p-3 text-neutral-600">
-              Masuk dengan email bisnis Anda untuk membuka <strong>Workspace Pelanggan</strong>, atau masuk dengan <code>sosrospg@gmail.com</code> untuk membuka <strong>Super Admin Control Center</strong>.
-            </div>
-          )}
-
-          <button
-            type="button"
-            data-testid="google-signin-btn"
-            onClick={() => void handleGoogleSignInClick()}
-            className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 font-black text-neutral-800 shadow-2xs hover:border-pink-200 hover:text-[#D85A88]"
-          >
-            G · Masuk dengan Google (Firebase OAuth)
-          </button>
-
-          <form onSubmit={(e) => void handleEmailSignInSubmit(e)} className="space-y-2.5 border-t border-neutral-100 pt-3">
-            <div>
-              <label htmlFor="auth-email-input" className="font-bold text-neutral-700">
-                Email Akun
-              </label>
-              <input
-                id="auth-email-input"
-                data-testid="auth-email-input"
-                type="email"
-                required
-                value={authEmailInput}
-                onChange={(e) => setAuthEmailInput(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-              />
-            </div>
-            <div>
-              <label htmlFor="auth-password-input" className="font-bold text-neutral-700">
-                Kata Sandi
-              </label>
-              <input
-                id="auth-password-input"
-                data-testid="auth-password-input"
-                type="password"
-                required
-                minLength={6}
-                value={authPasswordInput}
-                onChange={(e) => setAuthPasswordInput(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-              />
-            </div>
-            <button
-              type="submit"
-              data-testid="email-signin-submit-btn"
-              className="w-full rounded-xl bg-[#EC749B] py-2.5 font-black text-white shadow-2xs hover:bg-[#DF608A]"
-            >
-              Masuk dengan Email & Kata Sandi
-            </button>
-          </form>
-
-          {/* Quick 1-Click Role Login for Instant Testing */}
-          <div className="space-y-2 border-t border-neutral-100 pt-3">
-            <p className="text-[11px] font-bold text-neutral-500">
-              Akses Cepat 1-Klik (Pilih Akun Sesuai Peran):
-            </p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <button
-                type="button"
-                data-testid="quick-login-user-btn"
-                onClick={() => handleQuickLoginRole('user')}
-                className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-left font-bold text-neutral-800 hover:border-pink-200 hover:text-[#D85A88]"
-              >
-                <span className="block text-[11px] font-black text-neutral-900">
-                  🏢 Masuk sebagai Pelanggan
-                </span>
-                <span className="block text-[10px] text-neutral-500">
-                  owner@nusantararun.id
-                </span>
-              </button>
-              <button
-                type="button"
-                data-testid="quick-login-admin-btn"
-                onClick={() => handleQuickLoginRole('admin')}
-                className="rounded-xl border border-pink-200 bg-pink-50/60 px-3 py-2.5 text-left font-bold text-[#D85A88] hover:bg-[#EC749B] hover:text-white"
-              >
-                <span className="block text-[11px] font-black">
-                  🔑 Masuk sebagai Super Admin
-                </span>
-                <span className="block text-[10px] opacity-80">
-                  sosrospg@gmail.com
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><Link href="/onboarding?edit=1" className="veloxa-button-secondary">Edit profil bisnis</Link><button type="button" onClick={() => { setSelectedCheckoutPlanId(activePlanId); authDialogRef.current?.close(); billingDialogRef.current?.showModal(); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
       </dialog>
 
       <PublishReviewDialog draft={drafts.find(draft => draft.id === publishReviewDraftId) || null} brandName={brand.businessName} onCancel={() => setPublishReviewDraftId(null)} onConfirm={() => { if (publishReviewDraftId) void confirmPublishDraftNow(publishReviewDraftId); }} />
@@ -3416,65 +2544,9 @@ export default function VeloxaAiPlatformPage() {
             logoutConfirmDialogRef.current?.close();
           }
         }}
-        className="m-auto w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-2xl"
+        className="m-auto w-full max-w-md rounded-xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-2xl"
       >
-        <div className="space-y-4 p-6">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-3 py-1 text-[11px] font-black text-[#D85A88]">
-                <Lock className="h-3.5 w-3.5 text-[#EC749B]" />
-                KONFIRMASI KEAMANAN SESI
-              </span>
-              <h2 id="logout-confirm-title" className="mt-2 text-lg font-black text-neutral-900">
-                Konfirmasi Keluar Akun (Logout)
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={() => logoutConfirmDialogRef.current?.close()}
-              aria-label="Tutup dialog konfirmasi keluar"
-              className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs font-bold text-neutral-600 hover:border-pink-200 hover:text-[#D85A88]"
-            >
-              ✕
-            </button>
-          </div>
-
-          <p id="logout-confirm-desc" className="text-xs leading-relaxed text-neutral-600">
-            Apakah Anda yakin ingin keluar dari sesi akun{' '}
-            <strong className="text-neutral-900">{authUser?.email || 'Veloxa AI'}</strong>? Seluruh data profil brand{' '}
-            <strong className="text-[#EC749B]">{brand.businessName}</strong>, progres onboarding, serta aset studio Anda telah tersimpan aman di Cloud Firestore (<code>veloxa-ai-saas</code>).
-          </p>
-
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3.5 text-xs text-emerald-800">
-            <div className="flex items-center gap-2 font-black">
-              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-              <span>Status Onboarding & Data Cloud Tersinkron</span>
-            </div>
-            <p className="mt-1 text-[11px] text-emerald-700">
-              Saat Anda login kembali nanti, Anda akan langsung masuk ke Dashboard Workspace ini tanpa perlu mengisi ulang form Onboarding.
-            </p>
-          </div>
-
-          <div className="flex flex-col-reverse gap-2.5 pt-2 sm:flex-row sm:justify-end">
-            <button
-              type="button"
-              autoFocus
-              data-testid="cancel-logout-btn"
-              onClick={() => logoutConfirmDialogRef.current?.close()}
-              className="rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-xs font-black text-neutral-800 hover:border-pink-200 hover:text-[#D85A88] transition"
-            >
-              Batal, Tetap di Dashboard
-            </button>
-            <button
-              type="button"
-              data-testid="confirm-logout-submit-btn"
-              onClick={() => void handleConfirmSignOut()}
-              className="veloxa-luxury-card-pink rounded-2xl bg-[#EC749B] px-5 py-3 text-xs font-black text-white hover:bg-[#DF608A] transition"
-            >
-              Ya, Keluar Akun Sekarang
-            </button>
-          </div>
-        </div>
+        <div className="space-y-5"><div className="flex items-center justify-between gap-4"><h2 id="logout-confirm-title" className="text-xl font-semibold">Keluar dari akun?</h2><button type="button" aria-label="Tutup konfirmasi keluar" onClick={() => logoutConfirmDialogRef.current?.close()} className="h-10 w-10 rounded-lg border border-neutral-200">×</button></div><p id="logout-confirm-desc" className="break-words text-base leading-relaxed text-neutral-500">Anda akan keluar dari {authUser?.email || 'akun Veloxa'}. Anda dapat masuk kembali kapan saja.</p><div className="flex flex-wrap justify-end gap-3 border-t border-neutral-100 pt-4"><button type="button" autoFocus onClick={() => logoutConfirmDialogRef.current?.close()} className="veloxa-button-secondary">Batal</button><button type="button" onClick={() => void handleConfirmSignOut()} className="veloxa-button-primary">Keluar akun</button></div></div>
       </dialog>
     </div>
   );

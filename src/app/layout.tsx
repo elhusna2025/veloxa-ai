@@ -22,7 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="id">
-      <body className="min-h-dvh bg-white text-neutral-900 antialiased selection:bg-pink-100 selection:text-neutral-900">
+      <body className="veloxa-app-ui min-h-dvh bg-white text-neutral-900 antialiased selection:bg-pink-100 selection:text-neutral-900">
         <CanonicalAppOrigin />
         {children}
       </body>

@@ -134,26 +134,26 @@ export default function VeloxaPrivacyPolicyPage() {
       }
     >
       {/* Top Highlights */}
-      <div className="veloxa-luxury-card-pink rounded-[28px] p-6 sm:p-8 bg-white mb-8">
+      <div className="veloxa-luxury-card-pink rounded-xl p-6 sm:p-8 bg-white mb-8">
         <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-5 border-b border-neutral-100">
           <div className="flex items-center gap-3">
-            <span className="inline-flex items-center rounded-full bg-[#EC749B] px-3.5 py-1 text-xs font-extrabold text-white">
+            <span className="inline-flex items-center rounded-full bg-[#bd416e] px-3.5 py-1 text-sm font-semibold text-white">
               ISO/IEC 27001 & GDPR Aligned
             </span>
-            <span className="text-xs font-bold text-neutral-500">
+            <span className="text-sm font-medium text-neutral-500">
               {isId ? "Pembaruan Terakhir: 3 November 2026" : "Last Updated: November 3, 2026"}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/terms"
-              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-[#EC749B] hover:text-[#EC749B] transition"
+              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-[#EC749B] hover:text-[#a92e5d] transition"
             >
               {isId ? "Lihat Terms of Use →" : "View Terms of Use →"}
             </Link>
             <Link
               href="/register"
-              className="veloxa-btn-pink rounded-xl px-4 py-2 text-xs font-extrabold"
+              className="veloxa-btn-pink rounded-xl px-4 py-2 text-sm font-semibold"
             >
               {isId ? "Mulai Gratis / Daftar" : "Get Started"}
             </Link>
@@ -161,31 +161,31 @@ export default function VeloxaPrivacyPolicyPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
+            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
               🔒 AES-256 + TLS 1.3
             </div>
-            <p className="mt-1 text-xs text-neutral-700 leading-relaxed">
+            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
               {isId
                 ? "Seluruh token OAuth Instagram, Facebook, TikTok, dan YouTube disimpan dalam brankas terenkripsi."
                 : "All Instagram, Facebook, TikTok, and YouTube OAuth tokens are stored in encrypted vaults."}
             </p>
           </div>
-          <div className="rounded-2xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
+            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
               🛡️ 0% PUBLIC AI TRAINING
             </div>
-            <p className="mt-1 text-xs text-neutral-700 leading-relaxed">
+            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
               {isId
                 ? "Foto produk asli & aset event Anda tidak pernah digunakan untuk melatih model AI publik."
                 : "Your authentic product & event photos are never used to train public AI models."}
             </p>
           </div>
-          <div className="rounded-2xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
+            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
               ⚡ 1-CLICK DATA DELETION
             </div>
-            <p className="mt-1 text-xs text-neutral-700 leading-relaxed">
+            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
               {isId
                 ? "Penghapusan instan seluruh data tenant & pencabutan token OAuth sesuai syarat Meta/TikTok."
                 : "Instant workspace erasure & OAuth token revocation compliant with Meta/TikTok App Review."}
@@ -199,24 +199,24 @@ export default function VeloxaPrivacyPolicyPage() {
         {policies.map((pol) => (
           <article
             key={pol.badge}
-            className="veloxa-luxury-card rounded-[26px] p-6 sm:p-8 bg-white space-y-3"
+            className="veloxa-luxury-card rounded-xl p-6 sm:p-8 bg-white space-y-3"
           >
-            <span className="inline-flex items-center rounded-full bg-[#FFF0F5] border border-[#FBCFE0] px-3 py-1 text-[11px] font-extrabold text-[#EC749B]">
+            <span className="inline-flex items-center rounded-full bg-[#FFF0F5] border border-[#FBCFE0] px-3 py-1 text-xs font-semibold text-[#a92e5d]">
               {pol.badge}
             </span>
-            <h2 className="text-lg sm:text-xl font-extrabold text-neutral-900">
+            <h2 className="text-lg sm:text-xl font-semibold text-neutral-900">
               {pol.title}
             </h2>
-            <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
+            <p className="text-sm sm:text-base text-neutral-600 leading-relaxed">
               {pol.description}
             </p>
             <ul className="space-y-2 pt-1">
               {pol.points.map((pt, i) => (
                 <li
                   key={i}
-                  className="flex items-start gap-2.5 text-xs sm:text-sm text-neutral-700"
+                  className="flex items-start gap-2.5 text-sm sm:text-base text-neutral-700"
                 >
-                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#EC749B]" />
+                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#bd416e]" />
                   <span>{pt}</span>
                 </li>
               ))}
@@ -228,18 +228,18 @@ export default function VeloxaPrivacyPolicyPage() {
       {/* Interactive OAuth & User Data Deletion Callback Section (Required for Meta/TikTok/YouTube Production Review) */}
       <section
         id="data-deletion-request"
-        className="veloxa-luxury-card-pink rounded-[28px] p-6 sm:p-9 bg-white"
+        className="veloxa-luxury-card-pink rounded-xl p-6 sm:p-9 bg-white"
       >
         <div className="max-w-3xl space-y-4">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FFF0F5] border border-[#FBCFE0] px-3.5 py-1 text-[11px] font-extrabold text-[#EC749B]">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FFF0F5] border border-[#FBCFE0] px-3.5 py-1 text-xs font-semibold text-[#a92e5d]">
             🗑️ {isId ? "PORTAL PENGHAPUSAN DATA PENGGUNA & OAUTH" : "USER & OAUTH DATA DELETION PORTAL"}
           </span>
-          <h2 className="text-xl sm:text-2xl font-extrabold text-neutral-900">
+          <h2 className="text-xl sm:text-2xl font-semibold text-neutral-900">
             {isId
               ? "Permintaan Penghapusan Data Instan (Right to Erasure)"
               : "Instant Data Deletion Request (Right to Erasure)"}
           </h2>
-          <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
+          <p className="text-sm sm:text-base text-neutral-600 leading-relaxed">
             {isId
               ? "Sesuai standar kepatuhan Meta Platform Terms, TikTok Developer Guidelines, Google API Services User Data Policy, dan UU PDP, Anda dapat mengajukan penghapusan permanen atas akun, Brand Vault, serta seluruh token OAuth sosial media Anda melalui formulir di bawah ini."
               : "In compliance with Meta Platform Terms, TikTok Developer Guidelines, Google API Services User Data Policy, and GDPR, you can submit an immediate permanent deletion request for your account, Brand Vaults, and connected OAuth tokens below."}
@@ -249,17 +249,17 @@ export default function VeloxaPrivacyPolicyPage() {
             <div
               role="status"
               aria-live="polite"
-              className="rounded-2xl border-2 border-[#EC749B] bg-[#FFF9FB] p-5 space-y-2"
+              className="rounded-xl border-2 border-[#EC749B] bg-[#FFF9FB] p-5 space-y-2"
             >
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-xs font-extrabold uppercase tracking-wider text-[#EC749B]">
+                <span className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
                   ✓ {isId ? "Permintaan Penghapusan Diterima" : "Deletion Request Logged"}
                 </span>
-                <span className="rounded-lg bg-white border border-[#FBCFE0] px-3 py-1 font-mono text-xs font-extrabold text-neutral-900">
+                <span className="rounded-lg bg-white border border-[#FBCFE0] px-3 py-1 font-mono text-sm font-semibold text-neutral-900">
                   TICKET: {deletionTicket}
                 </span>
               </div>
-              <p className="text-xs sm:text-sm text-neutral-700">
+              <p className="text-sm sm:text-base text-neutral-700">
                 {isId
                   ? `Konfirmasi pencabutan token OAuth dan jadwal pembersihan data untuk ${deletionEmail} telah dibuat dengan nomor tiket ${deletionTicket}.`
                   : `OAuth token revocation and data purge confirmation for ${deletionEmail} has been queued under ticket ${deletionTicket}.`}
@@ -274,7 +274,7 @@ export default function VeloxaPrivacyPolicyPage() {
               <div className="sm:col-span-5">
                 <label
                   htmlFor="privacy-delete-email"
-                  className="block text-xs font-extrabold uppercase tracking-wider text-neutral-700 mb-1.5"
+                  className="block text-sm font-semibold uppercase tracking-wider text-neutral-700 mb-1.5"
                 >
                   {isId ? "Email Akun Terdaftar" : "Registered Account Email"}
                 </label>
@@ -292,7 +292,7 @@ export default function VeloxaPrivacyPolicyPage() {
               <div className="sm:col-span-4">
                 <label
                   htmlFor="privacy-delete-tenant"
-                  className="block text-xs font-extrabold uppercase tracking-wider text-neutral-700 mb-1.5"
+                  className="block text-sm font-semibold uppercase tracking-wider text-neutral-700 mb-1.5"
                 >
                   {isId ? "Nama Brand / Workspace" : "Brand / Workspace Name"}
                 </label>
@@ -309,7 +309,7 @@ export default function VeloxaPrivacyPolicyPage() {
               <div className="sm:col-span-3 flex items-end">
                 <button
                   type="submit"
-                  className="w-full veloxa-btn-pink rounded-2xl px-4 py-3.5 text-xs sm:text-sm font-extrabold"
+                  className="w-full veloxa-btn-pink rounded-xl px-4 py-3.5 text-sm sm:text-base font-semibold"
                 >
                   {isId ? "Kirim Permintaan" : "Submit Request"}
                 </button>

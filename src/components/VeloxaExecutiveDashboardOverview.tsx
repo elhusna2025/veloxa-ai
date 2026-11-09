@@ -36,7 +36,7 @@ import type {
 } from '@/lib/veloxa-types';
 import { buildSocialProfileUrl } from '@/lib/veloxa-social-publisher';
 
-interface VeloxaExecutiveDashboardOverviewProps {
+export interface VeloxaExecutiveDashboardOverviewProps {
   brand: BrandProfile;
   currentPlan: SubscriptionPlanSpec;
   postsUsedThisMonth: number;
