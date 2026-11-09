@@ -73,6 +73,12 @@ export async function createSocialContent(request: Request, dependencies: {
   let brandPalette:string[];
   try { brandPalette=savedBrandPalette(brand); } catch { throw new ApiError(409,'Periksa palet warna di Profil & aset, lalu simpan ulang.'); }
   const paletteParams=brandPalette.length?{brandPalette}:{};
+  const businessContext={
+    description:[brand.businessDescription,...(Array.isArray(brand.offerings)?brand.offerings.slice(0,4).flatMap(item=>[item.title,item.highlight]):[])].filter((value):value is string=>typeof value==='string'&&!!value.trim()).join(' · ').slice(0,2500),
+    audience:typeof brand.targetAudience==='string'?brand.targetAudience.slice(0,500):'',
+    topic:input.topic,
+  };
+  const imageContextParams={businessContext};
   const selected = await ref.collection('private_meta_connections').get();
   const connections = selected.docs.map(doc => publicConnection(doc.data() as MetaConnection));
   if (!connections.some(connection => connection.connected)) throw new ApiError(409, 'Hubungkan Facebook Page atau Instagram terlebih dahulu.');
@@ -105,7 +111,7 @@ export async function createSocialContent(request: Request, dependencies: {
     const renderImage = dependencies.renderImage || generateSocialPostImage;
     progress('media');
     const results = await Promise.allSettled([
-      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...paletteParams, ...referenceImageParams }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
+      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...imageContextParams, ...paletteParams, ...referenceImageParams }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
       (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes.map(scene => scene.voiceover).join(' ')),
     ] as const);
     if (results[0].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Visual Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'images');
@@ -131,9 +137,10 @@ export async function createSocialContent(request: Request, dependencies: {
       title: slide.headline,
       hook: slide.body,
       cta: index === 4 ? brand.defaultCta || 'Simpan' : `${index + 1}/5 · Geser untuk lanjut`,
+      ...imageContextParams,
       ...paletteParams,
       ...referenceImageParams,
-      ...(references.length ? { visualDirection: slide.visualDirection } : {}),
+      visualDirection: slide.visualDirection,
     })));
     if (results.some(result => result.status === 'rejected')) throw new ApiError(502, 'Gambar carousel belum dapat dibuat. Silakan coba lagi.', 'carousel_image_unavailable');
     const slideBytes = results.map(result => result.status === 'fulfilled' ? result.value : Buffer.alloc(0));
@@ -162,6 +169,7 @@ export async function createSocialContent(request: Request, dependencies: {
         title: draft.title,
         hook: draft.hook,
         cta: brand.defaultCta || 'Selengkapnya',
+        ...imageContextParams,
         ...paletteParams,
         ...referenceImageParams,
       });

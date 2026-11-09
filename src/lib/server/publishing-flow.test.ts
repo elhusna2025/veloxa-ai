@@ -80,7 +80,7 @@ function fixture() {
     referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; brandPalette?:string[] }) => Promise<Buffer>;
+    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:{description:string;audience:string;topic:string}; brandPalette?:string[] }) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
@@ -111,6 +111,19 @@ async function seedPhoto(f: ReturnType<typeof fixture>) {
  return {asset,storagePath};
 }
 function photoRequest(f: ReturnType<typeof fixture>, action: 'trash'|'restore', assetId=photoId) { return new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,assetId,action})}); }
+test('each no-reference carousel image receives its own exact slide copy and distinct semantic scene',async()=>{
+ const f=fixture();const scenes=['Pemilik usaha merencanakan operasional','Kasir mencatat transaksi penjualan','Petugas gudang menghitung persediaan','Tim keuangan meninjau catatan','Tim bisnis berkoordinasi di meja rapat'];let rendered=0;
+ await f.create({format:'carousel',generate:async input=>{const draft=generateBrandContentDraft(input);draft.slides=scenes.map((visualDirection,index)=>({slideNumber:index+1,headline:`Pesan ${index+1}`,body:`Penjelasan ${index+1}`,visualDirection,badgeText:`${index+1}/5`}));return{draft,engineMode:'deterministic_local'};},renderImage:async params=>{const index=rendered++;assert.equal(params.title,`Pesan ${index+1}`);assert.equal(params.hook,`Penjelasan ${index+1}`);assert.equal(params.visualDirection,scenes[index]);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(rendered,5);assert.equal(f.generationCount(),1);
+});
+
+test('no-reference single and carousel forward real business context; every carousel scene direction reaches renderer',async()=>{
+ for(const format of ['single_post','carousel'] as const){
+  const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,businessDescription:'Berez ERP untuk stok dan penjualan',targetAudience:'Pemilik usaha',offerings:[{id:'erp',title:'Sistem pengelolaan usaha',highlight:'Catatan stok',priceLabel:'',category:'service'}]};record.snapshotJson=JSON.stringify(snapshot);
+  let seen=0;await f.create({format,topic:'Kenalan dengan Berez ERP',renderImage:async params=>{seen++;assert.match(params.businessContext!.description,/Berez ERP untuk stok dan penjualan/);assert.match(params.businessContext!.description,/Catatan stok/);assert.equal(params.businessContext!.audience,'Pemilik usaha');assert.equal(params.businessContext!.topic,'Kenalan dengan Berez ERP');if(format==='carousel')assert.equal(params.visualDirection,'Visual direction');return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});
+  assert.equal(seen,format==='carousel'?5:1);assert.equal(f.generationCount(),1);
+ }
+});
+
 test('saved DNA reaches single and all carousel images with or without references; invalid palette fails before quota',async()=>{
  for(const format of ['single_post','carousel'] as const)for(const references of [false,true]){
   const f=fixture();if(references)await seedPhoto(f);

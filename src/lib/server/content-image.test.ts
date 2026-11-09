@@ -22,6 +22,14 @@ async function createJpegFixture(): Promise<Buffer> {
   }).jpeg().toBuffer();
 }
 
+test('without references the provider receives actual business/subject context and a contextual visual brief',async()=>{
+ const fixture=await createJpegFixture();let prompt='';let calls=0;
+ const businessContext={description:'Berez ERP mengelola stok dan penjualan.',audience:'Pemilik usaha',topic:'Stok yang tercatat rapi'};
+ await generateSocialPostImage({...params,businessName:'Berez ERP',businessContext,visualDirection:'Tim memeriksa persediaan di ruang kerja modern.'},{imageClient:{images:{generate:async request=>{calls++;prompt=request.prompt;return{data:[{b64_json:fixture.toString('base64')}]};}}}});
+ assert.equal(calls,1);assert.ok(prompt.includes(JSON.stringify(businessContext)));assert.match(prompt,/high-quality photography or a purposeful editorial illustration/);assert.match(prompt,/Tim memeriksa persediaan/);assert.match(prompt,/without fabricated product UI/);assert.ok(!prompt.includes('Use neutral abstract artwork only'));assert.ok(!prompt.includes('Use a restrained neutral palette'));
+ await assert.rejects(generateSocialPostImage({...params,businessContext:{...businessContext,description:'x'.repeat(2501)}},{imageClient:{images:{generate:async()=>{calls++;return{data:[]};}}}}),error=>error instanceof ApiError&&error.status===400);assert.equal(calls,1);
+});
+
 test('explicit saved palette overrides reference decoration colors while protecting products; legacy omits override',async()=>{
  const image=await sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();let requests:string[]=[];
  const imageClient={images:{generate:async(request:any)=>{requests.push(request.prompt);return{data:[{b64_json:image.toString('base64')}]};},edit:async(request:any)=>{requests.push(request.prompt);return{data:[{b64_json:image.toString('base64')}]};}}};

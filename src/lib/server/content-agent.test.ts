@@ -156,8 +156,9 @@ test('carousel memakai tepat lima slide AI sesuai urutan keluaran', async () => 
   const { client, calls } = mockClient({ ...generatedCopy, slides: carouselSlides });
   const result = await createContentAgentGenerator(client as never, agentId)(params);
 
-  assert.deepEqual(JSON.parse(String(calls.request?.input)).extraInstructions,
-    'Untuk format carousel, hasilkan tepat 5 slide dengan headline, body, dan visualDirection masing-masing.');
+  assert.match(JSON.parse(String(calls.request?.input)).extraInstructions, /tepat 5 slide/);
+  assert.match(JSON.parse(String(calls.request?.input)).extraInstructions, /pesan spesifik headline\/body/);
+  assert.match(JSON.parse(String(calls.request?.input)).extraInstructions, /satu seri/);
   assert.deepEqual(result.draft.slides, carouselSlides.map((slide, index) => ({
     slideNumber: index + 1,
     ...slide,
