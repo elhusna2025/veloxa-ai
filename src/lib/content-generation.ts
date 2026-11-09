@@ -1,10 +1,10 @@
 /** Shared, credential-free generation feedback protocol. No estimated percentages. */
-export const GENERATION_STAGES = ['sync', 'validation', 'script', 'images', 'media', 'voiceover', 'rendering', 'saving'] as const;
+export const GENERATION_STAGES = ['sync', 'validation', 'references', 'script', 'images', 'media', 'voiceover', 'rendering', 'saving'] as const;
 export type GenerationStage = typeof GENERATION_STAGES[number];
 export interface GenerationProgress { stage: GenerationStage }
 export interface GenerationFeedback { status: 'running' | 'success' | 'error'; stage: GenerationStage; message?: string; requestId?: string; uncertain?: boolean }
 export const GENERATION_LABELS: Record<GenerationStage, string> = {
-  sync: 'Menyimpan profil bisnis', validation: 'Memeriksa akun dan kuota', script: 'Menyusun naskah dan caption',
+  sync: 'Menyimpan profil bisnis', validation: 'Memeriksa akun dan kuota', references: 'Memuat foto referensi', script: 'Menyusun naskah dan caption',
   images: 'Membuat visual konten', media: 'Membuat visual dan voiceover', voiceover: 'Membuat voiceover',
   rendering: 'Merangkai video Reels', saving: 'Menyimpan draf dan media',
 };

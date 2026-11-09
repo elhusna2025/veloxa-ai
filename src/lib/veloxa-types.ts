@@ -43,6 +43,7 @@ export interface BrandOfferingItem {
 export interface BrandProfile {
   workspaceId: string;
   businessName: string;
+  businessDescription?: string;
   category: BusinessCategory;
   city: string;
   targetAudience: string;
@@ -82,6 +83,7 @@ export interface BrandVaultAsset {
   createdAt: string;
   usedInPostsCount: number;
   extractedStyleDna?: ExtractedStyleDna;
+  trashedAt?: string;
 }
 
 export interface ChannelConnectionState {
@@ -183,6 +185,7 @@ export interface ContentDraft {
   voiceoverModel?: string;
   usedStyleReferenceId?: string;
   usedRealAssetIds: string[];
+  referenceInstruction?: string;
   qualityReview: QualityReviewReport;
   organicMetrics?: OrganicPerformanceMetrics;
   linkedCampaignId?: string;

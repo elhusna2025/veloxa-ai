@@ -74,10 +74,12 @@ function fixture() {
     renderVideo?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderVideo'];
     topic?: string;
     sourceAssetId?: string;
+    referenceAssetIds?: string[];
+    referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -104,6 +106,16 @@ function fixture() {
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+test('Reels sends selected references into all four scene image calls and retains source ids',async()=>{
+ for(const count of [2,4,5,6]){
+ const f=fixture();const ids=Array.from({length:count},(_,index)=>'123e4567-e89b-42d3-a456-42661417400'+index);const bytes=await sharp({create:{width:80,height:80,channels:3,background:'#abcdef'}}).jpeg().toBuffer();
+ for(const id of ids){const storagePath=`workspaces/${f.ref.id}/vault/${id}.jpg`;f.database.values.set(`${f.ref.path}/server_assets/${id}`,{asset:{id,workspaceId:f.ref.id,title:'Reference',mediaType:'photo'},storagePath});f.blobs.set(storagePath,bytes);}
+ const seen:any[]=[];const{draft}=await f.create({referenceAssetIds:ids,referenceInstruction:'Presentasi ERP di ruang rapat.',renderImage:async input=>{seen.push(input);return bytes;}});
+ assert.equal(seen.length,4);for(const input of seen){assert.equal(input.aspectRatio,'9:16');assert.deepEqual(input.referenceImages,ids.map(()=>bytes));assert.equal(input.referenceInstruction,'Presentasi ERP di ruang rapat.');}
+ assert.deepEqual(draft.usedRealAssetIds,ids);assert.ok(draft.renderedVideo?.url);assert.equal(f.generationCount(),1);
+ }
+});
 
 test('Reels reports actual media/render/save stages and distinguishes failed voice from failed images', async () => {
   const f = fixture(); const stages: string[] = [];

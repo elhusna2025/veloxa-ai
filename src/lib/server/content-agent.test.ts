@@ -121,6 +121,17 @@ const carouselSlides = [
   { headline: 'Judul slide lima', body: 'Isi slide lima', visualDirection: 'Arahan visual lima' },
 ];
 
+test('composition brief reaches the saved Luna agent without sending arbitrary reference URLs',async()=>{
+ const params=makeParams();params.referenceBrief={titles:['Orang','Aplikasi','Ruang rapat'],instruction:'Gabungkan ketiga referensi dalam presentasi.'};
+ const{client,calls}=mockClient(generatedCopy);await createContentAgentGenerator(client as never,agentId)(params);const brief=JSON.parse(String(calls.request!.input));assert.deepEqual(brief.referenceBrief,params.referenceBrief);assert.match(brief.extraInstructions,/referenceBrief/);
+});
+
+test('deskripsi bisnis tersimpan dikirim sebagai konteks ke agen konten', async () => {
+ const params=makeParams();params.brand.businessDescription='Aplikasi untuk mengelola stok dan transaksi usaha.';
+ const {client,calls}=mockClient(generatedCopy);await createContentAgentGenerator(client as never,agentId)(params);
+ assert.equal(JSON.parse(String(calls.request!.input)).businessDescription,params.brand.businessDescription);
+});
+
 test('post tunggal dan carousel menerima bagian video kosong dari schema agen tersimpan', async () => {
   for (const format of ['single_post', 'carousel'] as const) {
     const params = makeParams(); params.format = format;

@@ -22,6 +22,23 @@ async function createJpegFixture(): Promise<Buffer> {
   }).jpeg().toBuffer();
 }
 
+test('multi-reference memakai images.edit Sunburst2.6 dengan file asli berurutan dan arahan komposisi', async () => {
+ const references=await Promise.all(['#cc3344','#2277aa','#aabbcc'].map(background=>sharp({create:{width:64,height:64,channels:3,background}}).jpeg().toBuffer()));
+ const output=await createJpegFixture();let editCalls=0;let generateCalls=0;
+ const image=await generateSocialPostImage({...params,referenceImages:references,referenceInstruction:'Orang dari foto1 mempresentasikan aplikasi foto2 di ruang rapat foto3.'},{imageClient:{images:{generate:async()=>{generateCalls++;throw new Error('wrong route');},edit:async request=>{editCalls++;assert.equal(request.model,'gpt-image-2.6-sunburst');assert.equal(request.image.length,3);assert.match(request.prompt,/mempresentasikan aplikasi/);for(let index=0;index<3;index++){assert.deepEqual(Buffer.from(await request.image[index].arrayBuffer()),references[index]);assert.equal(request.image[index].name,`reference-${index+1}.jpg`);}return{data:[{b64_json:output.toString('base64')}]};}}}});
+ assert.equal(editCalls,1);assert.equal(generateCalls,0);assert.equal((await sharp(image).metadata()).width,1080);
+});
+test('Sunburst2.6 edit accepts 4,5 and6 chosen image files in one request',async()=>{
+ const image=await createJpegFixture();
+ for(const count of [4,5,6]){let edits=0;await generateSocialPostImage({...params,referenceImages:Array.from({length:count},()=>image)},{imageClient:{images:{generate:async()=>{throw Error('References must use edit');},edit:async request=>{edits++;assert.equal(request.image.length,count);assert.equal(request.model,'gpt-image-2.6-sunburst');return{data:[{b64_json:image.toString('base64')}]};}}}});assert.equal(edits,1);}
+});
+
+test('failed reference editing never silently drops photos or switches to text-only generation', async () => {
+ const reference=await createJpegFixture();let generated=0;
+ await assert.rejects(generateSocialPostImage({...params,referenceImages:[reference]},{imageClient:{images:{generate:async()=>{generated++;return{data:[]};},edit:async()=>{throw new Error('PRIVATE_EDIT_RESPONSE');}}}}),error=>error instanceof ApiError&&!error.message.includes('PRIVATE_EDIT_RESPONSE'));
+ assert.equal(generated,0);
+});
+
 test('meminta model yang ditentukan dan menghasilkan JPEG berukuran 1080x1350', async () => {
   const fixture = await createJpegFixture();
   let request: Record<string, unknown> | undefined;
@@ -40,7 +57,7 @@ test('meminta model yang ditentukan dan menghasilkan JPEG berukuran 1080x1350', 
   assert.deepEqual(
     Object.fromEntries(Object.entries(request || {}).filter(([key]) => key !== 'prompt')),
     {
-      model: 'gpt-image-2.5-sunburst',
+      model: 'gpt-image-2.6-sunburst',
       n: 1,
       size: '1024x1280',
       quality: 'medium',

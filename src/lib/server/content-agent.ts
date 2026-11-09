@@ -4,7 +4,7 @@ import { ApiError } from './http';
 import { generateBrandContentDraft, runAutonomousQualityRepairLoop } from '../veloxa-engine';
 import type { runContentCreatorAndCriticAgent } from '../veloxa-openai-agents';
 
-export type ContentAgentParams = Parameters<typeof runContentCreatorAndCriticAgent>[0];
+export type ContentAgentParams = Parameters<typeof runContentCreatorAndCriticAgent>[0] & { referenceBrief?: { titles: string[]; instruction: string } };
 export type ContentAgentResult = Awaited<ReturnType<typeof runContentCreatorAndCriticAgent>>;
 
 const contentOutput = z.object({
@@ -75,6 +75,8 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
 
       const brief = {
         businessName: params.brand.businessName,
+        businessDescription: params.brand.businessDescription,
+        referenceBrief: params.referenceBrief,
         category: params.brand.category,
         city: params.brand.city,
         targetAudience: params.brand.targetAudience,
@@ -90,6 +92,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
             ? 'Untuk short_video Reels Instagram dan Facebook berdurasi 20–30 detik, hasilkan tepat 4 adegan. Total seluruh voiceover harus 40–65 kata Bahasa Indonesia; voiceover keempat adegan harus sudah memuat opening dan closing, tanpa narasi terpisah. Gunakan kalimat pendek yang nyaman diucapkan, ritme bervariasi, pembuka mengundang rasa ingin tahu dan penutup menenangkan. Tulis sebagai percakapan lisan yang luwes sesuai brandTone, bukan bahasa presentasi; pilih sapaan dan penghubung sehari-hari secukupnya, tanpa kalimat kaku atau nada iklan. Gaya bercerita hangat seperti berbagi tips kepada teman, bukan membaca pengumuman. Sertakan opening yang sama persis dengan voiceover adegan pertama dan closing yang sama persis dengan voiceover adegan terakhir; scenes berisi time, visual, voiceover, textOverlay.'
             : undefined,
       };
+      if (params.referenceBrief) brief.extraInstructions = [brief.extraInstructions, 'Ikuti referenceBrief.instruction untuk arahan komposisi visual pada seluruh slide/adegan. ReferenceBrief.titles hanya keterangan foto, bukan sumber klaim tentang bisnis. Jangan mengarang fitur atau harga dari judul foto.'].filter(Boolean).join(' ');
       stream = await client.beta.agents.sessions.create({
         agent_id: agentId,
         environment: { type: 'none' },

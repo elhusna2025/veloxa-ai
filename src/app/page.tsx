@@ -3,6 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
+import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
+import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
 import { ContentGenerationError, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
@@ -15,7 +17,6 @@ import {
   calculateTenantUnitEconomics,
   canConsumePostingQuota,
   computeEventCampaignPhase,
-  extractStyleDnaFromReference,
   generateBrandContentDraft,
   runMetaAdsAutonomousOptimizer,
 } from '@/lib/veloxa-engine';
@@ -98,7 +99,6 @@ import type {
   SocialChannelId,
   SubscriptionPlanId,
   TenantWorkspaceSummary,
-  VaultDrawerType,
   VeloxaRole,
 } from '@/lib/veloxa-types';
 import {
@@ -176,6 +176,7 @@ export default function VeloxaAiPlatformPage() {
   const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>('free_trial');
   const [postsUsedThisMonth, setPostsUsedThisMonth] = useState<number>(0);
   const [connections, setConnections] = useState<ChannelConnectionState[]>(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
+  const [connectionsVerified, setConnectionsVerified] = useState(false);
   const [metaAccount, setMetaAccount] = useState<MetaAdsAccountConnection>(INITIAL_META_ADS_ACCOUNT);
   const [vaultAssets, setVaultAssets] = useState<BrandVaultAsset[]>([]);
   const [autonomyConfig, setAutonomyConfig] = useState<AutonomyConfig>(INITIAL_AUTONOMY_CONFIG);
@@ -193,12 +194,11 @@ export default function VeloxaAiPlatformPage() {
   const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null);
   const [publishReviewDraftId, setPublishReviewDraftId] = useState<string | null>(null);
   const [reviewOAuthAccounts, setReviewOAuthAccounts] = useState(false);
-  const [selectedSourceAssetId, setSelectedSourceAssetId] = useState('');
+  const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
+  const [referenceInstruction, setReferenceInstruction] = useState('');
+  useEffect(() => { setSelectedReferenceIds([]); setReferenceInstruction(''); }, [brand.workspaceId]);
   const [studioTopic, setStudioTopic] = useState<string>('');
   const [studioFilter, setStudioFilter] = useState<'all' | 'draft' | 'published' | 'attention'>('all');
-  const [newAssetTitle, setNewAssetTitle] = useState<string>('');
-  const [newAssetDrawer, setNewAssetDrawer] = useState<VaultDrawerType>('real_asset');
-  const [newAssetMediaType, setNewAssetMediaType] = useState<'photo' | 'video_reel'>('photo');
 
   // Event campaign creator state
   const [newCampaignName, setNewCampaignName] = useState<string>('');
@@ -311,6 +311,7 @@ export default function VeloxaAiPlatformPage() {
         return;
       }
 
+      setConnectionsVerified(false);
       const targetWsId =
         user.activeWorkspaceId || `ws_${encodeURIComponent(user.uid)}`;
 
@@ -341,22 +342,33 @@ export default function VeloxaAiPlatformPage() {
         void syncWorkspaceSnapshotToStore(builtSnap, savedCfg, { forceCloudPush: true });
       }
 
-      try {
-        const [meta, content, media] = await Promise.all([
-          veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
-          veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
-          veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}`),
-        ]);
-        if (epoch !== hydrationEpoch.current) return;
+      const [metaResult, contentResult, mediaResult] = await Promise.allSettled([
+        veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
+        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
+        veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}&includeTrash=1`),
+      ]);
+      if (epoch !== hydrationEpoch.current) return;
+      const resourceIssues: string[] = [];
+      if (metaResult.status === 'fulfilled') {
+        const meta = metaResult.value;
+        setConnectionsVerified(true);
         setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => meta.connections.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
+      } else {
+        // Keep the last known account metadata. A failed check is not a disconnect.
+        setConnectionsVerified(false);
+        resourceIssues.push('Status akun sosial belum dapat diperiksa. Muat ulang halaman untuk mencoba lagi.');
+      }
+      if (contentResult.status === 'fulfilled') {
+        const content = contentResult.value;
         setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
         setPostsUsedThisMonth(content.quotaUsed);
-        setVaultAssets(previous => [...media.assets, ...previous.filter(asset => !media.assets.some(item => item.id === asset.id))]);
-      } catch (error) {
-        if (epoch !== hydrationEpoch.current) return;
-        setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
-        setStatusBanner(error instanceof Error ? error.message : 'Koneksi server belum siap.');
+      } else resourceIssues.push('Koleksi konten belum dapat diperbarui.');
+      if (mediaResult.status === 'fulfilled') setVaultAssets(mediaResult.value.assets);
+      else {
+        setVaultAssets([]); setSelectedReferenceIds([]);
+        resourceIssues.push('Galeri foto belum dapat dimuat. Coba Muat ulang di Profil & aset.');
       }
+      if (resourceIssues.length) setStatusBanner(resourceIssues.join(' '));
       if (epoch !== hydrationEpoch.current) return;
       const callback = new URL(window.location.href);
       if (callback.searchParams.has('meta') || callback.searchParams.has('instagram')) {
@@ -479,18 +491,34 @@ export default function VeloxaAiPlatformPage() {
     router.push(authUser ? '/onboarding' : '/register');
   };
 
-  const handleRealFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      setStatusBanner('Mengunggah foto Brand Vault…');
-      const form = new FormData(); form.set('workspaceId', brand.workspaceId); form.set('file', file);
-      const result = await veloxaApi<{ asset: BrandVaultAsset }>('/api/veloxa/media', { method: 'POST', body: form });
-      setVaultAssets(previous => [result.asset, ...previous]);
-      setSelectedSourceAssetId(result.asset.id);
-      setStatusBanner('Foto tersimpan. Anda dapat memakainya untuk membuat post tunggal.');
-    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Unggah foto gagal.'); }
+  const handleSaveBrandProfile = async (value: BrandProfile) => {
+    if (value.workspaceId !== brand.workspaceId) throw new Error('Workspace berubah. Buka kembali profil yang ingin disimpan.');
+    const epoch = hydrationEpoch.current; const next = normalizeBrandProfile(value);
+    const result = await syncWorkspaceSnapshotToStore({ brand: next, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
+    if (!result.syncedToFirestore) throw new Error('Profil belum tersimpan ke cloud. Isian Anda tetap ada; periksa koneksi lalu simpan lagi.');
+    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Muat ulang untuk memeriksa profil tersimpan.');
+    setBrand(next); setLocalTelemetry(result.telemetry);
+  };
+  const handleReloadBrandPhotos = async () => {
+    const epoch = hydrationEpoch.current;
+    const result = await veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(brand.workspaceId)}&includeTrash=1`);
+    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Buka kembali galeri foto.');
+    setVaultAssets(result.assets);
+    setSelectedReferenceIds(previous => previous.filter(id => result.assets.some(asset => asset.id === id && !asset.trashedAt)));
+  };
+  const handleUploadBrandPhoto = async (file: File, title: string) => {
+    const epoch = hydrationEpoch.current;
+    const form = new FormData(); form.set('workspaceId', brand.workspaceId); form.set('file', file); form.set('title', title);
+    const result = await veloxaApi<{ asset: BrandVaultAsset }>('/api/veloxa/media', { method: 'POST', body: form });
+    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Buka kembali galeri foto.');
+    setVaultAssets(previous => [result.asset, ...previous.filter(asset => asset.id !== result.asset.id)]);
+  };
+  const handleAssetState = async (assetId: string, action: 'trash' | 'restore') => {
+    const epoch = hydrationEpoch.current;
+    const result = await veloxaApi<{ asset: BrandVaultAsset }>('/api/veloxa/media', { method: 'PATCH', body: JSON.stringify({ workspaceId: brand.workspaceId, assetId, action }) });
+    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Buka kembali galeri foto.');
+    setVaultAssets(previous => previous.map(asset => asset.id === assetId ? result.asset : asset));
+    if (action === 'trash') setSelectedReferenceIds(previous => previous.filter(id => id !== assetId));
   };
 
   const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => setEditingChannel(channel);
@@ -560,11 +588,6 @@ export default function VeloxaAiPlatformPage() {
 
   const handleToggleChannel = (channel: SocialChannelId) => handleOpenOAuthConfigModal(channel);
 
-  const handleUploadVaultAsset = async (_useDevicePicker = false) => {
-    if (newAssetMediaType !== 'photo') { setStatusBanner('Unggah video akan diaktifkan setelah alur post gambar selesai.'); return; }
-    (document.getElementById('veloxa-real-file-upload') as HTMLInputElement | null)?.click();
-  };
-
   const handleGenerateStudioDraft = async (_source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
     if (generationAttempt.current) return;
     if (scheduledSlotWib) { setStatusBanner('Penjadwalan belum diaktifkan. Buat dan tinjau post tunggal di Studio dahulu.'); return; }
@@ -579,7 +602,7 @@ export default function VeloxaAiPlatformPage() {
       if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, ...(studioFormat === 'single_post' && selectedSourceAssetId ? { sourceAssetId: selectedSourceAssetId } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic('');
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });
@@ -1123,6 +1146,8 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'overview' && (
                 <VeloxaWorkspaceOverview
+                  connectionsVerified={connectionsVerified}
+                  onEditProfile={() => setActiveTab('brand_vault')}
                   onCreateContent={(format) => { setStudioFormat(format); setActiveTab('studio'); }}
                   brand={brand}
                   currentPlan={currentPlan}
@@ -1149,266 +1174,7 @@ export default function VeloxaAiPlatformPage() {
                  TAB 2: BRAND BRAIN & DUAL ASSET VAULT (REFERENSI GAYA vs FOTO ASLI)
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
-                <div className="space-y-6">
-                  <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-                    {/* Brand Brain Configuration */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
-                        Profil bisnis
-                      </span>
-                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
-                        Identitas & karakter brand
-                      </h2>
-                      <p className="text-sm text-neutral-500">
-                        Lengkapi informasi ini agar konten sesuai dengan identitas bisnis Anda.
-                      </p>
-
-                      <div className="mt-4 space-y-3.5 text-sm">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div>
-                            <label htmlFor="veloxa-field-1" className="font-medium text-neutral-700">Nama Bisnis / Acara</label>
-                            <input id="veloxa-field-1"
-                              type="text"
-                              value={brand.businessName}
-                              onChange={(e) => setBrand({ ...brand, businessName: e.target.value })}
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor="veloxa-field-2" className="font-medium text-neutral-700">Kota / Target Area</label>
-                            <input id="veloxa-field-2"
-                              type="text"
-                              value={brand.city}
-                              onChange={(e) => setBrand({ ...brand, city: e.target.value })}
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label htmlFor="veloxa-field-3" className="font-medium text-neutral-700">Target Audiens</label>
-                          <input id="veloxa-field-3"
-                            type="text"
-                            value={brand.targetAudience}
-                            onChange={(e) => setBrand({ ...brand, targetAudience: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                          />
-                        </div>
-
-                        <div>
-                          <label htmlFor="veloxa-field-4" className="font-medium text-neutral-700">Gaya Bahasa & Tone Merek</label>
-                          <input id="veloxa-field-4"
-                            type="text"
-                            value={brand.brandTone}
-                            onChange={(e) => setBrand({ ...brand, brandTone: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                          />
-                        </div>
-
-                        <div>
-                          <label htmlFor="veloxa-field-5" className="font-medium text-neutral-700">
-                            Produk / Menu / Event Unggulan Utama
-                          </label>
-                          <input id="veloxa-field-5"
-                            type="text"
-                            value={brand.offerings[0]?.title || ''}
-                            onChange={(e) => {
-                              const first = brand.offerings[0] || {
-                                id: 'off_1',
-                                category: 'product' as const,
-                                priceLabel: 'Promo Spesial',
-                                highlight: '',
-                              };
-                              setBrand({
-                                ...brand,
-                                offerings: [{ ...first, title: e.target.value }, ...brand.offerings.slice(1)],
-                              });
-                            }}
-                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                          />
-                        </div>
-
-                        <div>
-                          <label htmlFor="veloxa-field-6" className="font-medium text-neutral-700">Ajakan Bertindak (Default CTA)</label>
-                          <input id="veloxa-field-6"
-                            type="text"
-                            value={brand.defaultCta}
-                            onChange={(e) => setBrand({ ...brand, defaultCta: e.target.value })}
-                            className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                          />
-                        </div>
-
-                        <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5">
-                          <input
-                            type="checkbox"
-                            checked={brand.prioritizeRealAssets}
-                            onChange={(e) =>
-                              setBrand({ ...brand, prioritizeRealAssets: e.target.checked })
-                            }
-                            className="h-4 w-4 accent-[#EC749B]"
-                          />
-                          <span>
-                            <strong className="block text-neutral-900">
-                              Prioritaskan Foto & Klip Video Asli Saya di Setiap Konten AI
-                            </strong>
-                            <span className="text-neutral-500">
-                              AI akan mengambil foto menu cafe / foto pelari asli dari Laci 2 dan memadukannya dengan tipografi & voiceover otomatis.
-                            </span>
-                          </span>
-                        </label>
-                      </div>
-                    </section>
-
-                    {/* Upload to Dual Brand Vault */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
-                        Dual Brand Vault · Web, Kamera Android & iOS
-                      </span>
-                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
-                        Upload Contoh Referensi atau Dokumentasi Asli
-                      </h2>
-                      <p className="text-sm text-neutral-500">
-                        Unggah contoh poster/Reels yang Anda sukai (untuk ditiru gayanya oleh AI) atau stok foto/video asli bisnis Anda.
-                      </p>
-
-                      <div className="mt-4 space-y-3 text-sm">
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setNewAssetDrawer('style_reference')}
-                            className={`rounded-xl border p-3 text-left font-medium transition ${
-                              newAssetDrawer === 'style_reference'
-                                ? 'border-[#EC749B] bg-pink-50/50 text-neutral-900'
-                                : 'border-neutral-200 bg-white text-neutral-600'
-                            }`}
-                          >
-                            <Sparkles className="mb-1 h-4 w-4 text-[#a92e5d]" />
-                            Referensi gaya
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setNewAssetDrawer('real_asset')}
-                            className={`rounded-xl border p-3 text-left font-medium transition ${
-                              newAssetDrawer === 'real_asset'
-                                ? 'border-[#EC749B] bg-pink-50/50 text-neutral-900'
-                                : 'border-neutral-200 bg-white text-neutral-600'
-                            }`}
-                          >
-                            <Camera className="mb-1 h-4 w-4 text-[#a92e5d]" />
-                            Foto & video bisnis
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label htmlFor="veloxa-field-7" className="font-medium text-neutral-700">Jenis Media</label>
-                            <select id="veloxa-field-7"
-                              value={newAssetMediaType}
-                              onChange={(e) =>
-                                setNewAssetMediaType(e.target.value as 'photo' | 'video_reel')
-                              }
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-semibold text-neutral-900"
-                            >
-                              <option value="photo">Foto / Poster / Carousel</option>
-                              <option value="video_reel">Video Reels / TikTok (9:16)</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label htmlFor="veloxa-field-8" className="font-medium text-neutral-700">Judul / Catatan Aset</label>
-                            <input id="veloxa-field-8"
-                              type="text"
-                              placeholder="Misal: Foto Pelari 10K / Kopi Susu"
-                              value={newAssetTitle}
-                              onChange={(e) => setNewAssetTitle(e.target.value)}
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2 pt-2">
-                          <button
-                            type="button"
-                            onClick={() => void handleUploadVaultAsset(false)}
-                            className="flex-1 rounded-xl bg-[#bd416e] px-4 py-3 font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
-                          >
-                            <Upload className="mr-1.5 inline h-4 w-4" />
-                            Simpan ke {newAssetDrawer === 'style_reference' ? 'Laci Referensi Gaya' : 'Galeri Aset Asli'}
-                          </button>
-                          <label
-                            htmlFor="veloxa-real-file-upload"
-                            data-testid="real-file-upload-label"
-                            className="cursor-pointer rounded-xl border border-pink-200 bg-pink-50/70 px-3.5 py-3 font-medium text-[#a92e5d] hover:bg-pink-100/70"
-                          >
-                            <Upload className="mr-1 inline h-4 w-4 text-[#a92e5d]" />
-                            Pilih File Laptop/HP
-                            <input
-                              id="veloxa-real-file-upload"
-                              data-testid="real-file-upload-input"
-                              type="file"
-                              accept="image/*,video/*"
-                              onChange={handleRealFileInputChange}
-                              className="sr-only"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => void handleUploadVaultAsset(true)}
-                            className="rounded-xl border border-neutral-200 bg-white px-3.5 py-3 font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
-                          >
-                            <Camera className="mr-1 inline h-4 w-4 text-[#a92e5d]" />
-                            Kamera HP
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-                  </div>
-
-                  {/* Vault Gallery Display */}
-                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
-                    <h3 className="text-base font-semibold text-neutral-900">
-                      Isi Brand Vault Anda ({vaultAssets.length} Aset Tersimpan)
-                    </h3>
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                      {vaultAssets.map((asset) => (
-                        <article
-                          key={asset.id}
-                          className="overflow-hidden rounded-xl border border-neutral-200 bg-white"
-                        >
-                          <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-100">
-                            <img
-                              src={asset.previewUrl}
-                              alt={asset.title}
-                              className="h-full w-full object-cover"
-                            />
-                            <span
-                              className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${
-                                asset.drawer === 'style_reference'
-                                  ? 'bg-[#bd416e] text-white shadow-2xs'
-                                  : 'border border-neutral-200 bg-white/95 text-neutral-800'
-                              }`}
-                            >
-                              {asset.drawer === 'style_reference' ? '★ Referensi Gaya' : '✓ Aset Asli User'}
-                            </span>
-                            <span className="absolute bottom-2 right-2 rounded-md border border-neutral-200 bg-white/95 px-2 py-0.5 text-xs font-medium text-neutral-800">
-                              {asset.mediaType === 'video_reel' ? 'Reels 9:16' : 'Foto 4:5'} · via {asset.uploadedFrom.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="p-3.5 text-sm">
-                            <h4 className="font-semibold text-neutral-900">{asset.title}</h4>
-                            <p className="mt-1 text-neutral-500">{asset.description}</p>
-                            {asset.extractedStyleDna && (
-                              <div className="mt-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-2.5 text-xs text-neutral-700">
-                                <strong className="text-[#a92e5d]">Style DNA Diekstrak AI:</strong>
-                                <p className="mt-0.5">• Layout: {asset.extractedStyleDna.layoutPattern}</p>
-                                <p>• Hook: {asset.extractedStyleDna.hookFormula}</p>
-                              </div>
-                            )}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                </div>
+                <VeloxaBrandWorkspace key={brand.workspaceId} brand={brand} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
               )}
 
               {/* ====================================================================
@@ -1416,7 +1182,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <VeloxaStudioComposer brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetId={selectedSourceAssetId} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} onFormat={format => { setStudioFormat(format); if (format !== 'single_post') setSelectedSourceAssetId(''); }} onTopic={setStudioTopic} onAsset={setSelectedSourceAssetId} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
+                  <VeloxaStudioComposer brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
 
                   <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{drafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
                   {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{drafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{drafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
@@ -1443,7 +1209,7 @@ export default function VeloxaAiPlatformPage() {
                               </span>
                               {draft.usedRealAssetIds.length > 0 && (
                                 <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-sm font-medium text-neutral-700">
-                                  ★ Memakai {draft.usedRealAssetIds.length} Foto/Video Asli User
+                                  Referensi visual: {draft.usedRealAssetIds.length} foto
                                 </span>
                               )}
                             </div>
@@ -2479,6 +2245,7 @@ export default function VeloxaAiPlatformPage() {
         <p className="mt-4 text-base text-neutral-600">Pilih cara menghubungkan akun bisnis Anda.</p>
 
         {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
+          setConnectionsVerified(true);
           setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => verified.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
         }} />}
       </dialog>
@@ -2540,7 +2307,7 @@ export default function VeloxaAiPlatformPage() {
           </button>
         </div>
 
-        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><Link href="/onboarding?edit=1" className="veloxa-button-secondary">Edit profil bisnis</Link><button type="button" onClick={() => { setSelectedCheckoutPlanId(activePlanId); authDialogRef.current?.close(); billingDialogRef.current?.showModal(); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
+        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><button type="button" onClick={() => { authDialogRef.current?.close(); setActiveTab('brand_vault'); }} className="veloxa-button-secondary">Edit profil bisnis</button><button type="button" onClick={() => { setSelectedCheckoutPlanId(activePlanId); authDialogRef.current?.close(); billingDialogRef.current?.showModal(); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
       </dialog>
 
       <PublishReviewDialog draft={drafts.find(draft => draft.id === publishReviewDraftId) || null} brandName={brand.businessName} onCancel={() => setPublishReviewDraftId(null)} onConfirm={() => { if (publishReviewDraftId) void confirmPublishDraftNow(publishReviewDraftId); }} />

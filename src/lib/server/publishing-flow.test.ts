@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createSocialContent } from './content';
+import { loadContentReferences } from './content-references';
+import type { ContentAgentParams } from './content-agent';
+import { changeWorkspacePhotoState, listWorkspacePhotos, persistWorkspacePhoto, previewWorkspacePhoto } from './brand-assets';
 import { publishSocialContent } from './publishing';
 import { ApiError } from './http';
 import { MetaRequestError } from './meta-graph';
@@ -37,6 +40,7 @@ class Database {
 class Collection {
   constructor(public database: Database, public path: string) {}
   doc(id: string) { return new Doc(this.database, `${this.path}/${id}`); }
+  limit(count: number) { return { get: async () => ({ docs: (await this.get()).docs.slice(0,count) }) }; }
   async get() {
     const docs = [...this.database.values.keys()].filter(key => key.startsWith(this.path + '/') && !key.slice(this.path.length + 1).includes('/')).map(key => new Doc(this.database, key));
     return { docs: await Promise.all(docs.map(ref => ref.get())) };
@@ -71,10 +75,12 @@ function fixture() {
     format?: 'single_post' | 'carousel';
     topic?: string;
     sourceAssetId?: string;
+    referenceAssetIds?: string[];
+    referenceInstruction?: string;
     onProgress?: (event: { stage: string }) => void;
-    generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
+    generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -92,8 +98,119 @@ function fixture() {
   const request = (draftId: string) => new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, draftId }) });
   const count = () => [...database.values.entries()].find(([key]) => key.includes('/publish_usage/'))?.[1].count || 0;
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
-  return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
+  return { database, ref, blobs, create, dependencies, request, count, generationCount, authorize, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+const photoId = '123e4567-e89b-42d3-a456-426614174000';
+async function seedPhoto(f: ReturnType<typeof fixture>) {
+ const storagePath=`workspaces/${f.ref.id}/vault/${photoId}.jpg`;
+ const asset={id:photoId,workspaceId:f.ref.id,title:'Foto produk',description:'',drawer:'real_asset',mediaType:'photo',previewUrl:'https://example.test/original.jpg',aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
+ f.database.values.set(`${f.ref.path}/server_assets/${photoId}`,{asset,storagePath});
+ f.blobs.set(storagePath,await sharp({create:{width:800,height:600,channels:3,background:'#e0e0e0'}}).jpeg().toBuffer());
+ return {asset,storagePath};
+}
+function photoRequest(f: ReturnType<typeof fixture>, action: 'trash'|'restore', assetId=photoId) { return new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,assetId,action})}); }
+test('vault uploads create private objects, expose only authenticated preview paths, and clean failed metadata writes',async()=>{
+ const f=fixture();const bytes=Buffer.from('private fixture');const writes:any[]=[];const deleted:string[]=[];
+ const storage={name:'private-fixture',file:(path:string)=>({save:async(data:Buffer,options:any)=>{writes.push({path,data,options});},delete:async()=>{deleted.push(path);}})};
+ const asset=await persistWorkspacePhoto(f.ref as never,f.ref.id,'customer-a',bytes,'Private photo',storage as never);
+ assert.match(asset.previewUrl,/^\/api\/veloxa\/media\/preview\//);assert.equal(asset.previewUrl.includes('alt=media'),false);assert.equal(writes[0].options.metadata.metadata,undefined);assert.match(writes[0].options.metadata.cacheControl,/private/);assert.equal(deleted.length,0);
+ const failingRef={collection:()=>({doc:()=>({create:async()=>{throw Object.assign(new Error('PRIVATE_DATABASE_ERROR'),{code:7});},get:async()=>({exists:false,data:()=>undefined})})})};
+ await assert.rejects(persistWorkspacePhoto(failingRef as never,f.ref.id,'customer-a',bytes,'Failed photo',storage as never),error=>error instanceof ApiError&&error.status===503&&!error.message.includes('PRIVATE_DATABASE_ERROR'));
+ assert.equal(deleted.length,1);assert.equal(deleted[0],writes[1].path);assert.notEqual(deleted[0],writes[0].path);
+});
+test('ambiguous photo metadata failures preserve bytes and recover confirmed commits',async()=>{
+ const f=fixture();let deleted=0;const storage={file:()=>({save:async()=>{},delete:async()=>{deleted++;}})};
+ let record:any;
+ const committedRef={collection:()=>({doc:()=>({create:async(value:any)=>{record=value;throw Object.assign(new Error('late response'),{code:4});},get:async()=>({exists:true,data:()=>record})})})};
+ const result=await persistWorkspacePhoto(committedRef as never,f.ref.id,'customer-a',Buffer.from('fixture'),'Recovered',storage as never);assert.equal(result.id,record.asset.id);assert.equal(deleted,0);
+ for(const unreadable of [false,true]){
+  const uncertainRef={collection:()=>({doc:()=>({create:async()=>{throw Object.assign(new Error('timeout'),{code:4});},get:async()=>{if(unreadable)throw new Error('network');return{exists:false,data:()=>undefined};}})})};
+  await assert.rejects(persistWorkspacePhoto(uncertainRef as never,f.ref.id,'customer-a',Buffer.from('fixture'),'Uncertain',storage as never),error=>error instanceof ApiError&&error.code==='photo_save_uncertain');
+  assert.equal(deleted,0);
+ }
+});
+
+test('protected photo preview enforces workspace authorization and never returns download-token links',async()=>{
+ const f=fixture();const original=await seedPhoto(f);const response=await previewWorkspacePhoto(f.request('none'),f.ref.id,photoId,f.dependencies);
+ assert.equal(response.headers.get('Content-Type'),'image/jpeg');assert.equal(response.headers.get('Cache-Control'),'private, no-store');assert.deepEqual(Buffer.from(await response.arrayBuffer()),f.blobs.get(original.storagePath));
+ const listed=await listWorkspacePhotos(f.request('none'),f.ref.id,true,f.dependencies);assert.match(listed[0].previewUrl,/^\/api\/veloxa\/media\/preview\//);assert.equal(listed[0].previewUrl.includes('example.test'),false);
+ await assert.rejects(previewWorkspacePhoto(f.request('none'),'foreign-workspace',photoId,f.dependencies));
+ let reads=0;
+ const unauthorized=async()=>{throw new ApiError(401,'Unauthenticated');};
+ const noReadStorage={file:()=>({download:async()=>{reads++;return[Buffer.alloc(0)];}})};
+ await assert.rejects(previewWorkspacePhoto(f.request('none'),f.ref.id,photoId,{authorize:unauthorized,storage:noReadStorage} as never));assert.equal(reads,0);
+});
+test('gallery returns every authorized record beyond100 including authoritative trash entries',async()=>{
+ const f=fixture();const original=await seedPhoto(f);f.database.values.delete(`${f.ref.path}/server_assets/${photoId}`);
+ for(let index=0;index<135;index++){const id='123e4567-e89b-42d3-a456-'+String(index).padStart(12,'0');f.database.values.set(`${f.ref.path}/server_assets/${id}`,{asset:{...original.asset,id},storagePath:`workspaces/${f.ref.id}/vault/${id}.jpg`,...(index===134?{trashedAt:Date.now()}:{})});}
+ assert.equal((await listWorkspacePhotos(f.request('none'),f.ref.id,true,f.dependencies)).length,135);
+ assert.equal((await listWorkspacePhotos(f.request('none'),f.ref.id,false,f.dependencies)).length,134);
+});
+
+test('photo trash/restore is recoverable, idempotent, server-authoritative and retains original bytes',async()=>{
+ const f=fixture();const original=await seedPhoto(f);const before=f.blobs.get(original.storagePath);
+ const moved=await changeWorkspacePhotoState(photoRequest(f,'trash'),f.dependencies);assert.ok(moved.trashedAt);
+ const repeated=await changeWorkspacePhotoState(photoRequest(f,'trash'),f.dependencies);assert.equal(repeated.trashedAt,moved.trashedAt);
+ assert.equal((await listWorkspacePhotos(f.request('none'),f.ref.id,false,f.dependencies)).length,0);
+ const all=await listWorkspacePhotos(f.request('none'),f.ref.id,true,f.dependencies);assert.equal(all.length,1);assert.equal(all[0].trashedAt,moved.trashedAt);
+ // A stale snapshot/nested field cannot untrash a server asset.
+ const key=`${f.ref.path}/server_assets/${photoId}`;const record=f.database.values.get(key)!;record.asset.trashedAt=undefined;
+ const workspace=(await f.ref.get()).data()!;const snapshot=JSON.parse(workspace.snapshotJson);snapshot.vaultAssets=[original.asset];f.database.write(f.ref,{snapshotJson:JSON.stringify(snapshot)});
+ await assert.rejects(f.create({sourceAssetId:photoId}),/pulihkan dari Sampah/);assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);
+ const restored=await changeWorkspacePhotoState(photoRequest(f,'restore'),f.dependencies);assert.equal(restored.trashedAt,undefined);
+ assert.equal((await listWorkspacePhotos(f.request('none'),f.ref.id,false,f.dependencies)).length,1);assert.deepEqual(f.blobs.get(original.storagePath),before);
+ const {draft}=await f.create({sourceAssetId:photoId});assert.deepEqual(draft.usedRealAssetIds,[photoId]);assert.equal(f.generationCount(),1);
+});
+test('trashing a source photo leaves saved draft renders and publishing intact',async()=>{
+ const f=fixture();await seedPhoto(f);const{draft}=await f.create({sourceAssetId:photoId});const bytesBefore=[...f.blobs.keys()];
+ await changeWorkspacePhotoState(photoRequest(f,'trash'),f.dependencies);
+ assert.deepEqual([...f.blobs.keys()],bytesBefore);
+ const sent:string[]=[];const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async input=>{sent.push(input.channel);return{externalPostId:`post-${input.channel}`};}});
+ assert.equal(result.draft.status,'published');assert.equal(sent.length,2);
+});
+test('photo operations reject foreign records/paths, missing ids and revoked workspace access without writes',async()=>{
+ for(const mode of ['asset-workspace','storage-workspace','traversal','missing','revoked']){
+  const f=fixture();await seedPhoto(f);const key=`${f.ref.path}/server_assets/${photoId}`;const record=f.database.values.get(key)!;
+  if(mode==='asset-workspace')record.asset.workspaceId='foreign';if(mode==='storage-workspace')record.storagePath=`workspaces/foreign/vault/${photoId}.jpg`;if(mode==='traversal')record.storagePath=`workspaces/${f.ref.id}/vault/../renders/${photoId}.jpg`;if(mode==='missing')f.database.values.delete(key);
+  const authorize=async(request:Request,id:unknown)=>{const result=await f.authorize(request,id);if(mode==='revoked')f.database.values.get(f.ref.path)!.ownerUid='different-user';return result;};
+  await assert.rejects(changeWorkspacePhotoState(photoRequest(f,'trash'),{authorize:authorize as never}));assert.equal(record.trashedAt,undefined);assert.equal(f.generationCount(),0);
+ }
+ const f=fixture();await seedPhoto(f);await assert.rejects(changeWorkspacePhotoState(photoRequest(f,'trash','../foreign'),f.dependencies));
+});
+
+async function seedReferences(f: ReturnType<typeof fixture>,count=3) {
+ const original=await seedPhoto(f);const ids=Array.from({length:count},(_,i)=>photoId.slice(0,-1)+i);
+ for(const [index,id]of ids.entries()){
+  const storagePath=`workspaces/${f.ref.id}/vault/${id}.jpg`;
+  f.database.values.set(`${f.ref.path}/server_assets/${id}`,{asset:{...original.asset,id,title:`Reference ${index+1}`},storagePath});f.blobs.set(storagePath,f.blobs.get(original.storagePath)!);
+ }
+ return ids;
+}
+test('all chosen reference bytes and direction reach single/carousel visuals and saved source ids',async()=>{
+ for(const format of ['single_post','carousel'] as const)for(const count of [3,4,5,6]){
+  const f=fixture();const ids=await seedReferences(f,count);const seen:any[]=[];let brief:any;
+  const instruction='Orang mempresentasikan ERP di ruang meeting.';
+  const {draft}=await f.create({format,referenceAssetIds:ids,referenceInstruction:instruction,generate:async input=>{brief=input.referenceBrief;const draft=generateBrandContentDraft(input);if(format==='carousel')draft.slides=Array.from({length:5},(_,i)=>({slideNumber:i+1,headline:'Slide '+i,body:'Penjelasan',visualDirection:'Ruang rapat',badgeText:''}));return{draft,engineMode:'deterministic_local'};},renderImage:async input=>{seen.push(input);return sharp({create:{width:1080,height:1350,channels:3,background:'#fff'}}).jpeg().toBuffer();}});
+  assert.equal(seen.length,format==='carousel'?5:1);for(const input of seen){assert.equal(input.referenceImages.length,count);assert.equal(input.referenceInstruction,instruction);assert.deepEqual(input.referenceImages,ids.map(id=>f.blobs.get(`workspaces/${f.ref.id}/vault/${id}.jpg`)));}
+  assert.deepEqual(brief,{titles:ids.map((_,index)=>`Reference ${index+1}`),instruction});assert.deepEqual(draft.usedRealAssetIds,ids);assert.equal(draft.referenceInstruction,instruction);assert.equal(f.generationCount(),1);
+ }
+});
+test('reference loading uses a bounded Storage range and rejects oversize before buffering full objects',async()=>{
+ const f=fixture();const ids=await seedReferences(f,1);const seen:any[]=[];const length=5*1024*1024;
+ const storage={file:()=>({download:async(options:{start:number;end:number})=>{seen.push(options);return[Buffer.alloc(Math.min(length,options.end-options.start+1))];}})};
+ await assert.rejects(loadContentReferences(f.ref as never,f.ref.id,ids,storage as never),error=>error instanceof ApiError&&error.status===413);
+ assert.deepEqual(seen,[{start:0,end:4*1024*1024}]);assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);
+});
+
+test('invalid, foreign, trashed, oversized or unavailable references fail before quota and AI',async()=>{
+ for(const mode of ['duplicate','too-many','foreign','trashed','corrupt','storage','total-size','url','mixed-legacy']){
+  const f=fixture();const ids=await seedReferences(f,mode==='too-many'?7:mode==='total-size'?4:3);const key=`${f.ref.path}/server_assets/${ids[0]}`;const record=f.database.values.get(key)!;
+  if(mode==='duplicate')ids.push(ids[0]);if(mode==='foreign')record.storagePath=`workspaces/foreign/vault/${ids[0]}.jpg`;if(mode==='trashed')record.trashedAt=Date.now();if(mode==='corrupt')f.blobs.set(record.storagePath,Buffer.from('not an image'));if(mode==='storage')f.blobs.delete(record.storagePath);if(mode==='url')ids[0]='https://untrusted.example.test/photo.jpg';
+  if(mode==='total-size')for(const id of ids){const path=`workspaces/${f.ref.id}/vault/${id}.jpg`;const bytes=f.blobs.get(path)!;f.blobs.set(path,Buffer.concat([bytes,Buffer.alloc(4*1024*1024-bytes.length)]));}
+  await assert.rejects(f.create({referenceAssetIds:ids,...(mode==='mixed-legacy'?{sourceAssetId:photoId}:{})}));assert.equal(f.generationCount(),0,mode);assert.equal(f.generateCalls(),0,mode);assert.equal(f.renderCalls(),0,mode);
+ }
+});
 
 test('content progress reflects completed boundaries and classifies script/image failures safely', async () => {
   for (const format of ['single_post', 'carousel'] as const) {
