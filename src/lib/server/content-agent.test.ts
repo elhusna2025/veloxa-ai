@@ -88,7 +88,8 @@ test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt
     input: JSON.stringify({
       businessName: 'Studio Nusa',
       category: 'custom',
-      city: 'Bandung',
+      categoryLabel: 'Lainnya / umum',
+      serviceArea: 'Bandung',
       targetAudience: 'Pemilik usaha lokal',
       brandTone: 'Hangat dan jelas',
       defaultCta: 'Hubungi kami',
@@ -96,6 +97,7 @@ test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt
       offerings: [],
       format: 'single_post',
       customTopic: 'USER_PROMPT_SENTINEL instruksi yang tidak boleh tampil sebagai judul',
+      extraInstructions: 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan.',
     }),
     stream: true,
   });
@@ -124,6 +126,16 @@ const carouselSlides = [
 test('composition brief reaches the saved Luna agent without sending arbitrary reference URLs',async()=>{
  const params=makeParams();params.referenceBrief={titles:['Orang','Aplikasi','Ruang rapat'],instruction:'Gabungkan ketiga referensi dalam presentasi.'};
  const{client,calls}=mockClient(generatedCopy);await createContentAgentGenerator(client as never,agentId)(params);const brief=JSON.parse(String(calls.request!.input));assert.deepEqual(brief.referenceBrief,params.referenceBrief);assert.match(brief.extraInstructions,/referenceBrief/);
+});
+
+test('software provider, customer audience and optional service coverage remain distinct in agent brief', async () => {
+ for(const area of ['', 'Seluruh Indonesia (online)', 'Bandung, Jakarta, Surabaya']) {
+  const params=makeParams();params.brand.category='software_saas';params.brand.city=area;params.brand.targetAudience='Pemilik restoran';
+  const {client,calls}=mockClient(generatedCopy);await createContentAgentGenerator(client as never,agentId)(params);
+  const brief=JSON.parse(String(calls.request!.input));
+  assert.equal(brief.categoryLabel,'Software & SaaS');assert.equal(brief.targetAudience,'Pemilik restoran');assert.equal(brief.serviceArea,area);assert.equal(brief.city,undefined);
+  assert.match(brief.extraInstructions,/jika kosong jangan mengarang lokasi/);
+ }
 });
 
 test('deskripsi bisnis tersimpan dikirim sebagai konteks ke agen konten', async () => {

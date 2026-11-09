@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { businessCategoryLabel } from '../business-categories';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { adminBucket } from './firebase';
@@ -74,7 +75,7 @@ export async function createSocialContent(request: Request, dependencies: {
   try { brandPalette=savedBrandPalette(brand); } catch { throw new ApiError(409,'Periksa palet warna di Profil & aset, lalu simpan ulang.'); }
   const paletteParams=brandPalette.length?{brandPalette}:{};
   const businessContext={
-    description:[brand.businessDescription,...(Array.isArray(brand.offerings)?brand.offerings.slice(0,4).flatMap(item=>[item.title,item.highlight]):[])].filter((value):value is string=>typeof value==='string'&&!!value.trim()).join(' · ').slice(0,2500),
+    description:[`Bidang bisnis penyedia: ${businessCategoryLabel(brand.category)} (bukan bidang pelanggan).`,brand.businessDescription,...(Array.isArray(brand.offerings)?brand.offerings.slice(0,4).flatMap(item=>[item.title,item.highlight]):[])].filter((value):value is string=>typeof value==='string'&&!!value.trim()).join(' · ').slice(0,2500),
     audience:typeof brand.targetAudience==='string'?brand.targetAudience.slice(0,500):'',
     topic:input.topic,
   };

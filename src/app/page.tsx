@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
-import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
+import { defaultContentTopic, normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
 import { ContentGenerationError, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
@@ -602,7 +602,7 @@ export default function VeloxaAiPlatformPage() {
       if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || defaultContentTopic(brand), format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic('');
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });

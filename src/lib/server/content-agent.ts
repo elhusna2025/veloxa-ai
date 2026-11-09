@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { businessCategoryLabel } from '../business-categories';
 import { z } from 'zod';
 import { ApiError } from './http';
 import { generateBrandContentDraft, runAutonomousQualityRepairLoop } from '../veloxa-engine';
@@ -78,7 +79,8 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         businessDescription: params.brand.businessDescription,
         referenceBrief: params.referenceBrief,
         category: params.brand.category,
-        city: params.brand.city,
+        categoryLabel: businessCategoryLabel(params.brand.category),
+        serviceArea: params.brand.city.trim(),
         targetAudience: params.brand.targetAudience,
         brandTone: params.brand.brandTone,
         defaultCta: params.brand.defaultCta,
@@ -92,6 +94,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
             ? 'Untuk short_video Reels Instagram dan Facebook berdurasi 20–30 detik, hasilkan tepat 4 adegan. Total seluruh voiceover harus 40–65 kata Bahasa Indonesia; voiceover keempat adegan harus sudah memuat opening dan closing, tanpa narasi terpisah. Gunakan kalimat pendek yang nyaman diucapkan, ritme bervariasi, pembuka mengundang rasa ingin tahu dan penutup menenangkan. Tulis sebagai percakapan lisan yang luwes sesuai brandTone, bukan bahasa presentasi; pilih sapaan dan penghubung sehari-hari secukupnya, tanpa kalimat kaku atau nada iklan. Gaya bercerita hangat seperti berbagi tips kepada teman, bukan membaca pengumuman. Sertakan opening yang sama persis dengan voiceover adegan pertama dan closing yang sama persis dengan voiceover adegan terakhir; scenes berisi time, visual, voiceover, textOverlay.'
             : undefined,
       };
+      brief.extraInstructions = [brief.extraInstructions, 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan.'].filter(Boolean).join(' ');
       if(params.format!=='single_post') brief.extraInstructions=[brief.extraInstructions,'Setiap visualDirection (carousel) atau visual (Reels) harus menggambarkan pesan spesifik headline/body atau narasi pada slide/adegan tersebut, dengan subjek dan aktivitas yang relevan. Bedakan adegan sesuai pesan: jangan ulang satu latar abstrak atau adegan bisnis umum untuk semua slide. Pilih satu arahan seni dan nuansa visual yang konsisten sebagai satu seri; jaga variasi komposisi per slide. Gunakan konteks deskripsi dan produk bisnis yang benar, tanpa mengarang antarmuka produk, angka, harga atau testimoni.'].filter(Boolean).join(' ');
       if (params.referenceBrief) brief.extraInstructions = [brief.extraInstructions, 'Ikuti referenceBrief.instruction untuk arahan komposisi visual pada seluruh slide/adegan. ReferenceBrief.titles hanya keterangan foto, bukan sumber klaim tentang bisnis. Jangan mengarang fitur atau harga dari judul foto.'].filter(Boolean).join(' ');
       stream = await client.beta.agents.sessions.create({

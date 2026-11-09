@@ -577,7 +577,7 @@ export function generateBrandContentDraft(input: {
   };
 }
 
-const META_INTEREST_CATALOG: Record<BusinessCategory, MetaInterestTarget[]> = {
+const META_INTEREST_CATALOG: Partial<Record<BusinessCategory, MetaInterestTarget[]>> & Record<'custom', MetaInterestTarget[]> = {
   running_event: [
     {
       id: '6003392552125',
