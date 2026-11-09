@@ -71,10 +71,11 @@ function fixture() {
     format?: 'single_post' | 'carousel';
     topic?: string;
     sourceAssetId?: string;
+    onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}) }) }), {
-    authorize: authorize as never, storage: storage as never,
+    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -93,6 +94,23 @@ function fixture() {
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+test('content progress reflects completed boundaries and classifies script/image failures safely', async () => {
+  for (const format of ['single_post', 'carousel'] as const) {
+    const f = fixture(); const stages: string[] = [];
+    await f.create({ format, onProgress: event => stages.push(event.stage) });
+    assert.deepEqual(stages, ['validation', 'script', 'images', 'saving']);
+    assert.equal(f.generationCount(), 1);
+  }
+  for (const stage of ['script', 'images']) {
+    const f = fixture(); const stages: string[] = [];
+    const fail = async () => { throw new Error('PRIVATE_PROVIDER_OUTPUT'); };
+    await assert.rejects(f.create({ onProgress: event => stages.push(event.stage), ...(stage === 'script' ? { generate: fail } : { renderImage: fail }) }), (error: any) => error.stage === stage && !error.message.includes('PRIVATE_PROVIDER_OUTPUT'));
+    assert.equal(stages.at(-1), stage);
+    assert.equal(f.generationCount(), 1);
+    assert.equal([...f.database.values.keys()].some(key => key.includes('/social_drafts/')), false);
+  }
+});
 
 test('create real JPEG -> save authoritative draft -> publish both channels -> retry without duplicates', async () => {
   const f = fixture(); const { draft } = await f.create();

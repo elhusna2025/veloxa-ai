@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { adminBucket } from './firebase';
 import { requireUser, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
+import { GenerationStageError } from './content-generation-stream';
+import type { GenerationProgress, GenerationStage } from '../content-generation';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { generateContentWithSavedAgent } from './content-agent';
 import { generateSocialPostImage } from './content-image';
@@ -54,7 +56,12 @@ export async function createSocialContent(request: Request, dependencies: {
   renderImage?: typeof generateSocialPostImage;
   generateVoice?: typeof generateReelsVoiceover;
   renderVideo?: typeof renderReelsVideo;
+  onProgress?: (progress: GenerationProgress) => void;
 } = {}) {
+  let stage: GenerationStage = 'validation';
+  const progress = (next: GenerationStage) => { stage = next; dependencies.onProgress?.({ stage }); };
+  try {
+  progress('validation');
   const input = contentInput.parse(await readJson(request));
   if (input.format !== 'single_post' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk carousel dan Reels.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
@@ -72,6 +79,7 @@ export async function createSocialContent(request: Request, dependencies: {
     if (!Number.isSafeInteger(used) || used < 0 || used >= SUBSCRIPTION_PLANS[planId].maxPostsPerDay * 3) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.');
     tx.set(dailyUsage, { count: used + 1 });
   });
+  progress('script');
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
@@ -81,13 +89,17 @@ export async function createSocialContent(request: Request, dependencies: {
   if (input.format === 'short_video') {
     if (!draft.videoScenes || draft.videoScenes.length !== 4) throw new ApiError(502, 'Naskah Reels belum lengkap.', 'invalid_content_agent_response');
     const renderImage = dependencies.renderImage || generateSocialPostImage;
+    progress('media');
     const results = await Promise.allSettled([
       Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
       (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes.map(scene => scene.voiceover).join(' ')),
     ] as const);
-    if (results[0].status !== 'fulfilled' || results[1].status !== 'fulfilled') throw new ApiError(502, 'Gambar atau voiceover Reels belum dapat diselesaikan. Silakan coba lagi.', 'reels_media_unavailable');
+    if (results[0].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Visual Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'images');
+    if (results[1].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Voiceover Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'voiceover');
     const voice = results[1].value;
+    progress('rendering');
     const video = await (dependencies.renderVideo || renderReelsVideo)({ images: results[0].value, pcm: voice.pcm, sampleRate: voice.sampleRate, sceneWeights: draft.videoScenes.map(scene => scene.voiceover.trim().split(/\s+/).length) });
+    progress('saving');
     media = await savePublicJpeg(workspaceId, 'renders', video.poster, dependencies.storage);
     const storedVideo = await savePublicMp4(workspaceId, video.mp4, dependencies.storage);
     videoStoragePath = storedVideo.storagePath;
@@ -99,6 +111,7 @@ export async function createSocialContent(request: Request, dependencies: {
   } else if (input.format === 'carousel') {
     if (!draft.slides || draft.slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
     const renderImage = dependencies.renderImage || generateSocialPostImage;
+    progress('images');
     const results = await Promise.allSettled(draft.slides.map(async (slide, index) => renderImage({
       businessName: brand.businessName,
       title: slide.headline,
@@ -108,12 +121,14 @@ export async function createSocialContent(request: Request, dependencies: {
     if (results.some(result => result.status === 'rejected')) throw new ApiError(502, 'Gambar carousel belum dapat dibuat. Silakan coba lagi.', 'carousel_image_unavailable');
     const slideBytes = results.map(result => result.status === 'fulfilled' ? result.value : Buffer.alloc(0));
     const slideMedia: Awaited<ReturnType<typeof savePublicJpeg>>[] = [];
+    progress('saving');
     for (const bytes of slideBytes) slideMedia.push(await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage));
     storagePaths = slideMedia.map(item => item.storagePath);
     draft.renderedSlides = slideMedia.map(item => ({ url: item.url, mimeType: 'image/jpeg', width: 1080, height: 1350 }));
     media = slideMedia[0];
     draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   } else {
+    progress('images');
     let bytes: Buffer;
     if (input.sourceAssetId) {
     const base = sharp(Buffer.from(buildRenderedVisualSvg({ brand, draft })), { limitInputPixels: 5_000_000 });
@@ -132,6 +147,7 @@ export async function createSocialContent(request: Request, dependencies: {
         cta: brand.defaultCta || 'Selengkapnya',
       });
     }
+    progress('saving');
     media = await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage);
     draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   }
@@ -139,6 +155,12 @@ export async function createSocialContent(request: Request, dependencies: {
   const targetProviders = Object.fromEntries(selected.docs.map(doc => doc.data() as StoredMetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => [connection.channel, getMetaLoginProvider(connection.loginProvider)]));
   await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
   return { draft, engineMode: generated.engineMode };
+  } catch (error) {
+    if (error instanceof GenerationStageError) throw error;
+    // Preserve input-validation HTTP semantics; all provider/storage failures are stage-scoped.
+    if (stage === 'validation') throw error;
+    throw new GenerationStageError(error, stage);
+  }
 }
 
 export async function listSocialContent(request: Request, workspaceId: unknown) {

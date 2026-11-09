@@ -74,10 +74,11 @@ function fixture() {
     renderVideo?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderVideo'];
     topic?: string;
     sourceAssetId?: string;
+    onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string }) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}) }) }), {
-    authorize: authorize as never, storage: storage as never,
+    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -103,6 +104,19 @@ function fixture() {
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+test('Reels reports actual media/render/save stages and distinguishes failed voice from failed images', async () => {
+  const f = fixture(); const stages: string[] = [];
+  await f.create({ onProgress: event => stages.push(event.stage) });
+  assert.deepEqual(stages, ['validation', 'script', 'media', 'rendering', 'saving']);
+  for (const stage of ['voiceover', 'images', 'rendering']) {
+    const failed = fixture();
+    const fail = async () => { throw new Error('PRIVATE_REELS_DETAILS'); };
+    await assert.rejects(failed.create(stage === 'voiceover' ? { generateVoice: fail } : stage === 'images' ? { renderImage: fail } : { renderVideo: fail }), (error: any) => error.stage === stage && !error.message.includes('PRIVATE_REELS_DETAILS'));
+    assert.equal(failed.generationCount(), 1);
+    assert.equal([...failed.database.values.keys()].some(key => key.includes('/social_drafts/')), false);
+  }
+});
 
 test('switching Instagram login provider forces a new draft before publication quota or dispatch', async () => {
   const f = fixture(); const { draft } = await f.create();

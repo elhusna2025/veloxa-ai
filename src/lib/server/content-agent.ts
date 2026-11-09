@@ -12,11 +12,17 @@ const contentOutput = z.object({
   hook: z.string().trim().optional(),
   caption: z.string().trim().min(1),
   hashtags: z.array(z.string().trim().min(1)),
+});
+
+const carouselOutput = z.object({
   slides: z.array(z.object({
     headline: z.string().trim().min(1).max(200),
     body: z.string().trim().min(1).max(400),
     visualDirection: z.string().trim().min(1).max(1000),
-  })).optional(),
+  })),
+});
+
+const reelsOutput = z.object({
   videoScript: z.object({
     opening: z.string().trim().min(1),
     scenes: z.array(z.object({
@@ -26,7 +32,7 @@ const contentOutput = z.object({
       textOverlay: z.string().trim().min(1).max(120),
     })),
     closing: z.string().trim().min(1),
-  }).optional(),
+  }),
 });
 
 interface AgentStream {
@@ -102,7 +108,12 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
       } catch {
         throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
       }
-      const ai = contentOutput.parse(parsed);
+      // The saved agent returns all schema fields. Ignore unused format fields,
+      // which legitimately contain empty strings/arrays for posts and carousels.
+      const ai = { ...contentOutput.parse(parsed),
+        slides: params.format === 'carousel' ? carouselOutput.parse(parsed).slides : undefined,
+        videoScript: params.format === 'short_video' ? reelsOutput.parse(parsed).videoScript : undefined,
+      };
       if (params.format === 'carousel') {
         if (!ai.slides || ai.slides.length !== 5) {
           throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');

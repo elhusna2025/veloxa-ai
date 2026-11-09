@@ -121,6 +121,24 @@ const carouselSlides = [
   { headline: 'Judul slide lima', body: 'Isi slide lima', visualDirection: 'Arahan visual lima' },
 ];
 
+test('post tunggal dan carousel menerima bagian video kosong dari schema agen tersimpan', async () => {
+  for (const format of ['single_post', 'carousel'] as const) {
+    const params = makeParams(); params.format = format;
+    const { client, calls } = mockClient({ ...generatedCopy, slides: format === 'carousel' ? carouselSlides : [], videoScript: { opening: '', scenes: [], closing: '' }, visualPrompt: 'Arahan visual' });
+    const result = await createContentAgentGenerator(client as never, agentId)(params);
+    assert.equal(result.engineMode, 'openai_live');
+    assert.equal(result.draft.title, generatedCopy.title);
+    if (format === 'carousel') assert.equal(result.draft.slides?.length, 5);
+    assert.equal(calls.aborted, true);
+  }
+});
+
+test('Reels tetap menolak naskah video kosong meskipun bagian lain valid', async () => {
+  const params = makeParams(); params.format = 'short_video';
+  const { client } = mockClient({ ...generatedCopy, slides: [], videoScript: { opening: '', scenes: [], closing: '' } });
+  await assert.rejects(createContentAgentGenerator(client as never, agentId)(params), /respons yang tidak valid/i);
+});
+
 test('carousel memakai tepat lima slide AI sesuai urutan keluaran', async () => {
   const params = makeParams();
   params.format = 'carousel';
