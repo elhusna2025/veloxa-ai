@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { CanonicalAppOrigin } from '../components/CanonicalAppOrigin';
 
 export const metadata: Metadata = {
   title: 'Veloxa AI — Autonomous Social Content Studio & AI Meta Ads Agent',
@@ -22,6 +23,7 @@ export default function RootLayout({
   return (
     <html lang="id">
       <body className="min-h-dvh bg-white text-neutral-900 antialiased selection:bg-pink-100 selection:text-neutral-900">
+        <CanonicalAppOrigin />
         {children}
       </body>
     </html>
