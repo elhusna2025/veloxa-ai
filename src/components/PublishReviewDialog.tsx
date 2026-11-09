@@ -68,10 +68,14 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
         <section className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-bold text-neutral-900">Visual final</h3>
-            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-700">{draft.format === 'carousel' ? '5 slide' : '1 gambar'}</span>
+            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-700">{draft.format === 'short_video' ? `1 video · ${Math.round(draft.renderedVideo?.durationSeconds || 0)} detik` : draft.format === 'carousel' ? '5 slide' : '1 gambar'}</span>
           </div>
-          {previewImages.length ? (
-            <div className={draft.format === 'carousel' ? 'grid grid-cols-3 gap-2 sm:grid-cols-5' : 'flex justify-center'}>
+          {draft.format === 'short_video' && draft.renderedVideo ? (
+            <div className="space-y-2">
+              <video controls playsInline preload="metadata" poster={draft.renderedMedia?.url} src={draft.renderedVideo.url} aria-label={`Tinjau Reels ${draft.title}`} className="mx-auto aspect-[9/16] max-h-96 w-auto rounded-xl border border-neutral-200 bg-neutral-950" />
+              <p className="text-center text-xs text-neutral-600">{draft.renderedVideo.voiceDisclosure} Dengarkan narasinya sebelum menerbitkan.</p>
+            </div>
+          ) : previewImages.length && draft.format !== 'short_video' ? (     <div className={draft.format === 'carousel' ? 'grid grid-cols-3 gap-2 sm:grid-cols-5' : 'flex justify-center'}>
               {previewImages.map((image, index) => (
                 <img
                   key={`${draft.id}-review-${index + 1}`}
@@ -91,7 +95,7 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
           <p className="whitespace-pre-wrap break-words rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm leading-relaxed text-neutral-700">{captionWithHashtags}</p>
         </section>
 
-        <p className="rounded-xl border border-pink-100 bg-pink-50/70 p-3 text-xs leading-relaxed text-neutral-700">Satu publikasi ini menggunakan satu kuota post, termasuk untuk carousel lima slide.</p>
+        <p className="rounded-xl border border-pink-100 bg-pink-50/70 p-3 text-xs leading-relaxed text-neutral-700">Satu publikasi ini menggunakan satu kuota post, termasuk untuk carousel lima slide atau satu Reels.</p>
 
         <footer className="flex flex-col-reverse gap-3 border-t border-neutral-100 pt-4 sm:flex-row sm:justify-end">
           <button
@@ -104,7 +108,7 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
           </button>
           <button
             type="button"
-            disabled={!draft.qualityReview.passed || previewImages.length !== (draft.format === 'carousel' ? 5 : 1)}
+            disabled={!draft.qualityReview.passed || (draft.format === 'short_video' ? !draft.renderedVideo : previewImages.length !== (draft.format === 'carousel' ? 5 : 1))}
             onClick={onConfirm}
             className="rounded-xl bg-[#D85A88] px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#C44B78] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[#D85A88]"
           >

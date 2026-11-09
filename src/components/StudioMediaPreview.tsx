@@ -11,6 +11,16 @@ interface StudioMediaPreviewProps {
 export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPreviewProps) {
   const [selectedSlide, setSelectedSlide] = useState(0);
 
+  if (draft.format === 'short_video') {
+    return draft.renderedVideo ? (
+      <div className="space-y-3">
+        <video controls playsInline preload="metadata" poster={draft.renderedMedia?.url} src={draft.renderedVideo.url} aria-label={`Pratinjau Reels ${draft.title}`} data-testid={`rendered-reel-${draft.id}`} className="mx-auto aspect-[9/16] max-h-96 w-auto rounded-xl border border-neutral-200 bg-neutral-950" />
+        <p className="text-center text-xs font-semibold text-neutral-600">{Math.round(draft.renderedVideo.durationSeconds)} detik · 9:16 · Suara AI</p>
+        <p className="text-center text-xs text-neutral-500">Putar video untuk meninjau gambar, intonasi, dan jeda narasi sebelum terbit.</p>
+      </div>
+    ) : <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Video Reels final belum tersedia. Buat ulang draf sebelum menerbitkan.</p>;
+  }
+
   if (draft.format !== 'carousel') {
     const imageUrl = draft.renderedMedia?.url || fallbackUrl;
     return (

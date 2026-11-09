@@ -7,17 +7,23 @@ import { ApiError, readJson } from './http';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { generateContentWithSavedAgent } from './content-agent';
 import { generateSocialPostImage } from './content-image';
+import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
+import { renderReelsVideo } from './reels-renderer';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
 import { publicConnection } from './meta-oauth';
 import { wibDay, wibMonth } from './clock';
 import type { MetaConnection } from './meta-graph';
 import type { BrandProfile, ContentDraft, SubscriptionPlanId } from '../veloxa-types';
 
-export async function savePublicJpeg(workspaceId: string, section: 'renders' | 'vault', bytes: Buffer, bucket = adminBucket()) {
-  const path = `workspaces/${workspaceId}/${section}/${randomUUID()}.jpg`;
+export async function savePublicJpeg(workspaceId: string, section: 'renders' | 'vault', bytes: Buffer, bucket = adminBucket(), mimeType: 'image/jpeg' | 'video/mp4' = 'image/jpeg') {
+  const path = `workspaces/${workspaceId}/${section}/${randomUUID()}.${mimeType === 'video/mp4' ? 'mp4' : 'jpg'}`;
   const token = randomUUID();
-  await bucket.file(path).save(bytes, { resumable: false, metadata: { contentType: 'image/jpeg', cacheControl: 'private, max-age=3600', metadata: { firebaseStorageDownloadTokens: token } } });
+  await bucket.file(path).save(bytes, { resumable: false, metadata: { contentType: mimeType, cacheControl: 'private, max-age=3600', metadata: { firebaseStorageDownloadTokens: token } } });
   return { storagePath: path, url: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(path)}?alt=media&token=${token}` };
+}
+
+async function savePublicMp4(workspaceId: string, bytes: Buffer, bucket = adminBucket()) {
+  return savePublicJpeg(workspaceId, 'renders', bytes, bucket, 'video/mp4');
 }
 
 export async function uploadBrandPhoto(request: Request) {
@@ -38,16 +44,18 @@ export async function uploadBrandPhoto(request: Request) {
   return asset;
 }
 
-const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().min(1).max(1000), format: z.enum(['single_post', 'carousel']).default('single_post'), sourceAssetId: z.string().uuid().optional() });
+const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().min(1).max(1000), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
   storage?: ReturnType<typeof adminBucket>;
   generate?: typeof generateContentWithSavedAgent;
   renderImage?: typeof generateSocialPostImage;
+  generateVoice?: typeof generateReelsVoiceover;
+  renderVideo?: typeof renderReelsVideo;
 } = {}) {
   const input = contentInput.parse(await readJson(request));
-  if (input.format === 'carousel' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk draf carousel.');
+  if (input.format !== 'single_post' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk carousel dan Reels.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
   const snapshot = typeof workspace.snapshotJson === 'string' ? JSON.parse(workspace.snapshotJson) : null;
   const brand = snapshot?.brand as BrandProfile | undefined;
@@ -68,7 +76,26 @@ export async function createSocialContent(request: Request, dependencies: {
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
   let media: Awaited<ReturnType<typeof savePublicJpeg>>;
   let storagePaths: string[] | undefined;
-  if (input.format === 'carousel') {
+  let videoStoragePath: string | undefined;
+  if (input.format === 'short_video') {
+    if (!draft.videoScenes || draft.videoScenes.length !== 4) throw new ApiError(502, 'Naskah Reels belum lengkap.', 'invalid_content_agent_response');
+    const renderImage = dependencies.renderImage || generateSocialPostImage;
+    const results = await Promise.allSettled([
+      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
+      (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes.map(scene => scene.voiceover).join(' ')),
+    ] as const);
+    if (results[0].status !== 'fulfilled' || results[1].status !== 'fulfilled') throw new ApiError(502, 'Gambar atau voiceover Reels belum dapat diselesaikan. Silakan coba lagi.', 'reels_media_unavailable');
+    const voice = results[1].value;
+    const video = await (dependencies.renderVideo || renderReelsVideo)({ images: results[0].value, pcm: voice.pcm, sampleRate: voice.sampleRate, sceneWeights: draft.videoScenes.map(scene => scene.voiceover.trim().split(/\s+/).length) });
+    media = await savePublicJpeg(workspaceId, 'renders', video.poster, dependencies.storage);
+    const storedVideo = await savePublicMp4(workspaceId, video.mp4, dependencies.storage);
+    videoStoragePath = storedVideo.storagePath;
+    draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: video.width, height: video.height };
+    draft.renderedVideo = { url: storedVideo.url, mimeType: 'video/mp4', width: video.width, height: video.height, durationSeconds: video.durationSeconds, voiceDisclosure: REELS_VOICE_DISCLOSURE };
+    draft.videoDurationSeconds = video.durationSeconds;
+    draft.voiceoverModel = voice.model;
+    draft.caption = `${draft.caption}\n\n${REELS_VOICE_DISCLOSURE}`;
+  } else if (input.format === 'carousel') {
     if (!draft.slides || draft.slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
     const renderImage = dependencies.renderImage || generateSocialPostImage;
     const results = await Promise.allSettled(draft.slides.map(async (slide, index) => renderImage({
@@ -108,7 +135,7 @@ export async function createSocialContent(request: Request, dependencies: {
     draft.renderedMedia = { url: media.url, mimeType: 'image/jpeg', width: 1080, height: 1350 };
   }
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
-  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
+  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
   return { draft, engineMode: generated.engineMode };
 }
 

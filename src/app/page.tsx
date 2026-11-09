@@ -530,7 +530,7 @@ export default function VeloxaAiPlatformPage() {
       setPlayingVoiceoverDraftId(null);
     });
     setStatusBanner(
-      `Memutar Voiceover AI Bahasa Indonesia: "${res.scriptText.slice(0, 85)}..."`,
+      `Memutar pembacaan teks Bahasa Indonesia: "${res.scriptText.slice(0, 85)}..."`,
     );
   };
 
@@ -553,13 +553,13 @@ export default function VeloxaAiPlatformPage() {
   const handleGenerateStudioDraft = async (_source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
     if (isCreatingContent) return;
     if (scheduledSlotWib) { setStatusBanner('Penjadwalan belum diaktifkan. Buat dan tinjau post tunggal di Studio dahulu.'); return; }
-    setIsCreatingContent(true); setStatusBanner('Menyusun caption dan menyiapkan gambar post…');
+    setIsCreatingContent(true); setStatusBanner(studioFormat === 'short_video' ? 'Menyusun cerita, membuat empat visual dan voiceover, lalu menyiapkan video Reels…' : 'Menyusun caption dan menyiapkan gambar post…');
     try {
       const saved = await syncWorkspaceSnapshotToStore({ brand, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
       if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
       const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || `Perkenalkan ${brand.businessName} di ${brand.city}`, format: studioFormat, ...(studioFormat === 'single_post' && selectedSourceAssetId ? { sourceAssetId: selectedSourceAssetId } : {}) }) });
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic('');
-      setStatusBanner(`Draf dan gambar siap ditinjau. ${result.engineMode === 'openai_live' ? 'Caption disusun dengan AI.' : 'Caption memakai template lokal; AI belum tersedia.'} Belum ada konten diterbitkan.`);
+      setStatusBanner(`Draf dan media final siap ditinjau. ${result.engineMode === 'openai_live' ? 'Caption disusun dengan AI.' : 'Caption memakai template lokal; AI belum tersedia.'} Belum ada konten diterbitkan.`);
     } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Konten belum dapat dibuat.'); }
     finally { setIsCreatingContent(false); }
   };
@@ -2007,11 +2007,11 @@ export default function VeloxaAiPlatformPage() {
                         <label className="text-xs font-bold text-neutral-700">Format Konten</label>
                         <select
                           value={studioFormat}
-                          onChange={(e) => { setStudioFormat(e.target.value as ContentFormat); if (e.target.value === 'carousel') setSelectedSourceAssetId(''); }}
+                          onChange={(e) => { setStudioFormat(e.target.value as ContentFormat); if (e.target.value !== 'single_post') setSelectedSourceAssetId(''); }}
                           className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-xs font-bold text-neutral-900"
                         >
-                          <option value="short_video" disabled>
-                            Video Pendek 9:16 (IG Reels + FB Reels + TikTok + YT Shorts)
+                          <option value="short_video">
+                            Reels 9:16 dengan Voiceover (Instagram + Facebook)
                           </option>
                           <option value="carousel">
                             Carousel 5 Slide 4:5 (Instagram + Facebook)
@@ -2046,14 +2046,15 @@ export default function VeloxaAiPlatformPage() {
                         </div>
                       </div>
                     </div>
+                    {studioFormat === 'short_video' && <p className="mt-3 text-xs text-neutral-600">Reels 20–30 detik dengan empat adegan dan narasi bergaya bercerita. Pembuatan video dapat memerlukan beberapa menit. Dengarkan suara AI sebelum terbit.</p>}
                     {studioFormat === 'carousel' && <p className="mt-3 text-xs text-neutral-600">Lima gambar AI akan dibuat. Tinjau seluruh slide sebelum terbit. Satu carousel memakai satu kuota publikasi. Foto Brand Vault tersedia untuk post tunggal.</p>}
                     <label className="mt-4 block text-xs font-bold text-neutral-700">Foto Brand Vault (opsional)
-                      <select disabled={studioFormat === 'carousel'} value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
+                      <select disabled={studioFormat !== 'single_post'} value={selectedSourceAssetId} onChange={event => setSelectedSourceAssetId(event.target.value)} className="mt-1 block w-full rounded-xl border p-3">
                         <option value="">Buat gambar AI dengan Sunburst</option>
                         {vaultAssets.filter(asset => /^[a-f0-9-]{36}$/.test(asset.id) && asset.mediaType === 'photo').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}
                       </select>
                     </label>
-                    <p className="mt-3 text-xs text-neutral-500">Post tunggal dan carousel 5 slide tersedia untuk Instagram/Facebook. Reels dan jadwal otomatis belum diaktifkan.</p>
+                    <p className="mt-3 text-xs text-neutral-500">Post tunggal, carousel 5 slide, dan Reels tersedia untuk Instagram/Facebook. Tinjau media final sebelum menerbitkan.</p>
                   </section>
 
                   {/* Generated Drafts List */}
@@ -2089,7 +2090,7 @@ export default function VeloxaAiPlatformPage() {
                             {draft.status !== 'published' && (
                               <button
                                 type="button"
-                                disabled={!!publishingDraftId || !draft.qualityReview.passed || ['needs_attention', 'publishing'].includes(draft.status) || (draft.format === 'carousel' ? draft.renderedSlides?.length !== 5 : !draft.renderedMedia)}
+                                disabled={!!publishingDraftId || !draft.qualityReview.passed || ['needs_attention', 'publishing'].includes(draft.status) || (draft.format === 'short_video' ? !draft.renderedVideo : draft.format === 'carousel' ? draft.renderedSlides?.length !== 5 : !draft.renderedMedia)}
                                 onClick={() => handlePublishDraftNow(draft.id)}
                                 className="rounded-xl bg-[#EC749B] px-4 py-2 text-xs font-black text-white shadow-2xs hover:bg-[#DF608A]"
                               >
@@ -2101,7 +2102,10 @@ export default function VeloxaAiPlatformPage() {
                               type="button"
                               data-testid={`download-poster-btn-${draft.id}`}
                               onClick={() => {
-                                if (draft.renderedMedia) {
+                                if (draft.format === 'short_video' && draft.renderedVideo) {
+                                  window.open(draft.renderedVideo.url, '_blank', 'noopener,noreferrer');
+                                  setStatusBanner('Video MP4 final dibuka. Gunakan kontrol video untuk memutar atau menyimpan.');
+                                } else if (draft.renderedMedia) {
                                   window.open(draft.renderedMedia.url, '_blank', 'noopener,noreferrer');
                                   setStatusBanner('Gambar JPEG final dibuka. Gunakan menu simpan gambar pada perangkat Anda.');
                                 } else {
@@ -2112,8 +2116,9 @@ export default function VeloxaAiPlatformPage() {
                               className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-bold text-neutral-700 hover:border-pink-200 hover:text-[#D85A88]"
                             >
                               <Download className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
-                              Unduh Visual Poster
+                              {draft.format === 'short_video' ? 'Buka Video MP4' : 'Unduh Visual Poster'}
                             </button>
+                            {draft.format !== 'short_video' && (
                             <button
                               type="button"
                               data-testid={`play-voiceover-btn-${draft.id}`}
@@ -2122,9 +2127,10 @@ export default function VeloxaAiPlatformPage() {
                             >
                               <Volume2 className="mr-1.5 inline h-3.5 w-3.5 text-[#EC749B]" />
                               {playingVoiceoverDraftId === draft.id
-                                ? 'Hentikan Voiceover AI'
-                                : 'Putar Voiceover AI (ID)'}
+                                ? 'Hentikan pembacaan teks'
+                                : 'Dengarkan teks (suara perangkat)'}
                             </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleDesignMetaAdsWithAi(draft)}

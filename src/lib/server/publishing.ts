@@ -7,6 +7,8 @@ import { wibMonth } from './clock';
 import { decryptMetaToken } from './meta-crypto';
 import { MetaRequestError, publishMetaImage, type MetaConnection, type MetaChannel } from './meta-graph';
 import { publishMetaCarousel } from './meta-carousel';
+import { publishMetaReel } from './meta-reels';
+import { REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import type { ContentDraft, SubscriptionPlanId } from '../veloxa-types';
 
@@ -33,6 +35,7 @@ export async function publishSocialContent(request: Request, dependencies: {
   storage?: ReturnType<typeof adminBucket>;
   publisher?: typeof publishMetaImage;
   carouselPublisher?: typeof publishMetaCarousel;
+  reelPublisher?: typeof publishMetaReel;
   decrypt?: typeof decryptMetaToken;
 } = {}) {
   const input = publishInput.parse(await readJson(request));
@@ -46,14 +49,20 @@ export async function publishSocialContent(request: Request, dependencies: {
   const draft = stored?.draft as ContentDraft | undefined;
   const validMedia = draft?.format === 'single_post'
     ? !!draft.renderedMedia && typeof stored?.storagePath === 'string' && stored.storagePath.startsWith(`workspaces/${ref.id}/renders/`)
-    : draft?.format === 'carousel' && Array.isArray(draft.renderedSlides) && draft.renderedSlides.length === 5
+    : draft?.format === 'short_video'
+      ? !!draft.renderedVideo && draft.renderedVideo.mimeType === 'video/mp4' && draft.renderedVideo.width === 720 && draft.renderedVideo.height === 1280
+        && Number.isFinite(draft.renderedVideo.durationSeconds) && draft.renderedVideo.durationSeconds >= 19.85 && draft.renderedVideo.durationSeconds <= 30.15
+        && draft.renderedVideo.voiceDisclosure === REELS_VOICE_DISCLOSURE && draft.caption.includes(REELS_VOICE_DISCLOSURE)
+        && typeof stored?.videoStoragePath === 'string' && stored.videoStoragePath.startsWith(`workspaces/${ref.id}/renders/`) && stored.videoStoragePath.endsWith('.mp4')
+        && (() => { try { return new URL(draft.renderedVideo.url).protocol === 'https:'; } catch { return false; } })()
+      : draft?.format === 'carousel' && Array.isArray(draft.renderedSlides) && draft.renderedSlides.length === 5
       && Array.isArray(stored?.storagePaths) && stored.storagePaths.length === 5
       && stored.storagePaths.every((path: unknown) => typeof path === 'string' && path.startsWith(`workspaces/${ref.id}/renders/`))
       && draft.renderedSlides.every(slide => {
         if (!slide || slide.mimeType !== 'image/jpeg' || slide.width !== 1080 || slide.height !== 1350 || typeof slide.url !== 'string') return false;
         try { return new URL(slide.url).protocol === 'https:'; } catch { return false; }
       });
-  if (!stored || !draft || draft.workspaceId !== ref.id || !validMedia) throw new ApiError(409, 'Buat gambar post tunggal atau carousel di Studio Veloxa sebelum menerbitkan.');
+  if (!stored || !draft || draft.workspaceId !== ref.id || !validMedia) throw new ApiError(409, 'Buat media final post tunggal, carousel, atau Reels di Studio Veloxa sebelum menerbitkan.');
   if (!draft.qualityReview.passed) throw new ApiError(409, 'Konten belum lolos pemeriksaan teks. Perbaiki draf terlebih dahulu.');
   const caption = [draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n');
   if ([...caption].length > 2200) throw new ApiError(400, 'Caption dan hashtag melebihi 2.200 karakter.');
@@ -107,10 +116,12 @@ export async function publishSocialContent(request: Request, dependencies: {
       const storage = dependencies.storage || adminBucket();
       const mediaBytes = draft.format === 'carousel'
         ? await Promise.all(stored.storagePaths.map(async (path: string) => (await storage.file(path).download())[0]))
-        : [(await storage.file(stored.storagePath).download())[0]];
+        : [(await storage.file(draft.format === 'short_video' ? stored.videoStoragePath : stored.storagePath).download())[0]];
       const token = (dependencies.decrypt || decryptMetaToken)(connection.encryptedToken, ref.id);
       dispatched = true;
-      const result = draft.format === 'carousel'
+      const result = draft.format === 'short_video'
+        ? await (dependencies.reelPublisher || publishMetaReel)({ channel, accountId: connection.accountId, token, videoUrl: draft.renderedVideo!.url, videoBytes: mediaBytes[0], caption })
+        : draft.format === 'carousel'
         ? await (dependencies.carouselPublisher || publishMetaCarousel)({ channel, accountId: connection.accountId, token, images: draft.renderedSlides!.map((slide, index) => ({ imageUrl: slide.url, imageBytes: mediaBytes[index] })), caption })
         : await (dependencies.publisher || publishMetaImage)({ channel, accountId: connection.accountId, token, imageUrl: draft.renderedMedia!.url, imageBytes: mediaBytes[0], caption });
       receipt = { channel, status: 'published', ...result, publishedAt: new Date().toISOString() };

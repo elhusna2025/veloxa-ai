@@ -17,6 +17,16 @@ const contentOutput = z.object({
     body: z.string().trim().min(1).max(400),
     visualDirection: z.string().trim().min(1).max(1000),
   })).optional(),
+  videoScript: z.object({
+    opening: z.string().trim().min(1),
+    scenes: z.array(z.object({
+      time: z.string().trim().min(1),
+      visual: z.string().trim().min(1).max(1000),
+      voiceover: z.string().trim().min(1).max(180),
+      textOverlay: z.string().trim().min(1).max(120),
+    })),
+    closing: z.string().trim().min(1),
+  }).optional(),
 });
 
 interface AgentStream {
@@ -70,7 +80,9 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         customTopic: params.customTopic,
         extraInstructions: params.format === 'carousel'
           ? 'Untuk format carousel, hasilkan tepat 5 slide dengan headline, body, dan visualDirection masing-masing.'
-          : undefined,
+          : params.format === 'short_video'
+            ? 'Untuk short_video Reels Instagram dan Facebook berdurasi 20–30 detik, hasilkan tepat 4 adegan. Total seluruh voiceover harus 40–65 kata Bahasa Indonesia; voiceover keempat adegan harus sudah memuat opening dan closing, tanpa narasi terpisah. Gunakan kalimat pendek yang nyaman diucapkan, ritme bervariasi, pembuka mengundang rasa ingin tahu dan penutup menenangkan. Tulis sebagai percakapan lisan yang luwes sesuai brandTone, bukan bahasa presentasi; pilih sapaan dan penghubung sehari-hari secukupnya, tanpa kalimat kaku atau nada iklan. Gaya bercerita hangat seperti berbagi tips kepada teman, bukan membaca pengumuman. Sertakan opening yang sama persis dengan voiceover adegan pertama dan closing yang sama persis dengan voiceover adegan terakhir; scenes berisi time, visual, voiceover, textOverlay.'
+            : undefined,
       };
       stream = await client.beta.agents.sessions.create({
         agent_id: agentId,
@@ -102,6 +114,25 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
           throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
         }
       }
+      if (params.format === 'short_video') {
+        const script = ai.videoScript;
+        if (!script || script.scenes.length !== 4) {
+          throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
+        }
+        if (script.opening !== script.scenes[0].voiceover || script.closing !== script.scenes[3].voiceover) {
+          throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
+        }
+        const spokenWordCount = script.scenes.map(scene => scene.voiceover).join(' ').trim().split(/\s+/).filter((token) => /[\p{L}\p{N}]/u.test(token)).length;
+        if (spokenWordCount < 40 || spokenWordCount > 65) {
+          throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
+        }
+        const forbiddenWords = params.brand.forbiddenWords.map((word) => word.trim().toLowerCase()).filter(Boolean);
+        if (script.scenes.some((scene) => forbiddenWords.some((word) =>
+          scene.voiceover.toLowerCase().includes(word) || scene.textOverlay.toLowerCase().includes(word),
+        ))) {
+          throw new ApiError(502, 'Agen konten menghasilkan respons yang tidak valid.', 'invalid_content_agent_response');
+        }
+      }
       const repaired = runAutonomousQualityRepairLoop({
         title: ai.title,
         hook: ai.hook || ai.caption,
@@ -125,6 +156,20 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
           visualDirection: slide.visualDirection,
           badgeText: `${index + 1}/5`,
         }));
+      }
+
+      if (params.format === 'short_video' && ai.videoScript) {
+        draft.videoScenes = ai.videoScript.scenes.map((scene, index) => ({
+          sceneNumber: index + 1,
+          timeRange: scene.time,
+          visualDirection: scene.visual,
+          voiceover: scene.voiceover,
+          textOverlay: scene.textOverlay,
+        }));
+        draft.videoDurationSeconds = 30;
+        draft.voiceoverModel = 'gpt-realtime-2.1-mini';
+        draft.targetChannels = draft.targetChannels.filter((channel) => channel === 'instagram' || channel === 'facebook');
+        draft.channelStatuses = draft.channelStatuses.filter((status) => status.channel === 'instagram' || status.channel === 'facebook');
       }
 
       if (params.format === 'single_post' && draft.slides?.length) {

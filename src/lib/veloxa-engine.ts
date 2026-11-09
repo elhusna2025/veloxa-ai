@@ -236,21 +236,16 @@ export function extractStyleDnaFromReference(input: {
 }
 
 export function resolveTargetChannelsForFormat(
-  format: ContentFormat,
+  _format: ContentFormat,
   connections: ChannelConnectionState[],
   planId: SubscriptionPlanId,
 ): SocialChannelId[] {
   const plan = SUBSCRIPTION_PLANS[planId];
-  const connectedAllowed = connections
-    .filter((c) => c.connected && plan.allowedChannels.includes(c.channel))
+  // Only the verified Instagram and Facebook publishing adapters are active.
+  return connections
+    .filter((c) => c.connected && plan.allowedChannels.includes(c.channel)
+      && (c.channel === 'instagram' || c.channel === 'facebook'))
     .map((c) => c.channel);
-
-  if (format === 'short_video') {
-    // Video 9:16 can publish simultaneously to IG Reels, FB Reels, TikTok, and YouTube Shorts!
-    return connectedAllowed;
-  }
-  // Carousel & Single Post publish to IG, FB Page, and TikTok Photo Mode (YouTube Shorts requires video)
-  return connectedAllowed.filter((ch) => ch !== 'youtube_shorts');
 }
 
 export function computeEventCampaignPhase(eventDateIso: string, nowIso: string = new Date().toISOString()): {

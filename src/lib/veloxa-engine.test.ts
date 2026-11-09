@@ -76,12 +76,13 @@ const ALL_CONNECTED_CHANNELS: ChannelConnectionState[] = [
   },
 ];
 
-test('resolveTargetChannelsForFormat routes short_video to all 4 platforms on Pro plan and excludes YouTube Shorts for carousel', () => {
+test('resolveTargetChannelsForFormat limits published formats to Instagram and Facebook even on Pro', () => {
   const videoTargets = resolveTargetChannelsForFormat('short_video', ALL_CONNECTED_CHANNELS, 'pro_1500k');
-  assert.deepEqual(videoTargets, ['instagram', 'facebook', 'tiktok', 'youtube_shorts']);
+  assert.deepEqual(videoTargets, ['instagram', 'facebook']);
 
   const carouselTargets = resolveTargetChannelsForFormat('carousel', ALL_CONNECTED_CHANNELS, 'pro_1500k');
-  assert.deepEqual(carouselTargets, ['instagram', 'facebook', 'tiktok']);
+  assert.deepEqual(carouselTargets, ['instagram', 'facebook']);
+  assert.deepEqual(resolveTargetChannelsForFormat('single_post', ALL_CONNECTED_CHANNELS, 'pro_1500k'), ['instagram', 'facebook']);
 
   const starterTargets = resolveTargetChannelsForFormat('short_video', ALL_CONNECTED_CHANNELS, 'starter_500k');
   assert.deepEqual(starterTargets, ['instagram', 'facebook']);
@@ -285,7 +286,7 @@ test('agent definitions and local drafts do not fabricate publishing receipts', 
     planId: 'pro_1500k',
   });
   assert.equal(creatorRes.draft.qualityReview.passed, true);
-  assert.equal(creatorRes.draft.targetChannels.length, 4);
+  assert.equal(creatorRes.draft.targetChannels.length, 2);
 
   await assert.rejects(publishDraftToConnectedChannels({ draft: creatorRes.draft }), /endpoint server/);
   assert.ok(creatorRes.draft.channelStatuses.every(channel => channel.status === 'pending' && !channel.permalink));

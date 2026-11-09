@@ -65,6 +65,17 @@ const generatedCopy = {
   hashtags: ['#UsahaLokal'],
 };
 
+const videoScript = {
+  opening: 'Pagi ini, mulai langkah kecil untuk menjaga energi dan semangat sepanjang hari.',
+  scenes: [
+    { time: '00:00–00:06', visual: 'Cahaya pagi di meja sederhana.', voiceover: 'Pagi ini, mulai langkah kecil untuk menjaga energi dan semangat sepanjang hari.', textOverlay: 'Mulai dari langkah kecil' },
+    { time: '00:06–00:12', visual: 'Menu disiapkan dengan teliti.', voiceover: 'Pilih menu yang dibuat segar, nikmati rasa seimbang, dan luangkan waktu untuk diri sendiri.', textOverlay: 'Segar dan seimbang' },
+    { time: '00:12–00:18', visual: 'Suasana hangat di Studio Nusa.', voiceover: 'Di Studio Nusa, setiap pilihan diracik dengan perhatian agar momen sederhana terasa lebih istimewa.', textOverlay: 'Diracik dengan perhatian' },
+    { time: '00:18–00:30', visual: 'Sajian dinikmati bersama teman.', voiceover: 'Datang hari ini, temukan favoritmu, lalu bagikan pengalaman menyenangkan bersama orang terdekat.', textOverlay: 'Temukan favoritmu hari ini' },
+  ],
+  closing: 'Datang hari ini, temukan favoritmu, lalu bagikan pengalaman menyenangkan bersama orang terdekat.',
+};
+
 test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt pengguna', async () => {
   const { client, calls } = mockClient(generatedCopy);
   const generate = createContentAgentGenerator(client as never, agentId);
@@ -179,6 +190,79 @@ test('kegagalan provider menjadi error aman dan tidak menghasilkan draf buatan',
     assert.equal((error as Error).message.includes('secret-token'), false);
     return true;
   });
+});
+
+test('short_video memetakan empat adegan dari skrip AI tanpa placeholder dan meminta format Reels IG/FB', async () => {
+  const params = makeParams();
+  params.format = 'short_video';
+  const { client, calls } = mockClient({ ...generatedCopy, videoScript });
+  const result = await createContentAgentGenerator(client as never, agentId)(params);
+  const brief = JSON.parse(String(calls.request?.input));
+
+  assert.match(brief.extraInstructions, /Instagram dan Facebook/);
+  assert.match(brief.extraInstructions, /20–30 detik/);
+  assert.match(brief.extraInstructions, /tepat 4 adegan/);
+  assert.match(brief.extraInstructions, /40–65 kata Bahasa Indonesia/);
+  assert.deepEqual(result.draft.videoScenes, videoScript.scenes.map((scene, index) => ({
+    sceneNumber: index + 1,
+    timeRange: scene.time,
+    visualDirection: scene.visual,
+    voiceover: scene.voiceover,
+    textOverlay: scene.textOverlay,
+  })));
+  assert.equal(result.draft.videoScenes?.length, 4);
+  assert.equal(result.draft.videoDurationSeconds, 30);
+  assert.equal(result.draft.voiceoverModel, 'gpt-realtime-2.1-mini');
+  assert.equal(result.draft.renderedVideo, undefined);
+  assert.ok(result.draft.targetChannels.every((channel) => channel === 'instagram' || channel === 'facebook'));
+  assert.ok(result.draft.channelStatuses.every((status) => status.channel === 'instagram' || status.channel === 'facebook'));
+});
+
+test('short_video menolak skrip malformed dengan error aman dan tanpa fallback placeholder', async () => {
+  const malformedOutputs: Array<{ label: string; output: unknown }> = [
+    { label: 'skrip hilang', output: generatedCopy },
+    { label: 'opening terpisah', output: { ...generatedCopy, videoScript: { ...videoScript, opening: 'Pembuka yang tidak dinarasikan.' } } },
+    { label: 'closing terpisah', output: { ...generatedCopy, videoScript: { ...videoScript, closing: 'Penutup yang tidak dinarasikan.' } } },
+    { label: 'voiceover tanpa kata lisan', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene) => ({ ...scene, voiceover: '- - -' })) } } },
+    { label: 'jumlah adegan kurang', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.slice(0, 3) } } },
+    { label: 'jumlah adegan berlebih', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: [...videoScript.scenes, videoScript.scenes[0]] } } },
+    { label: 'voiceover melampaui batas karakter', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, voiceover: 'x'.repeat(181) } : scene) } } },
+    { label: 'overlay kosong', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, textOverlay: ' ' } : scene) } } },
+    { label: 'visual melampaui batas karakter', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, visual: 'x'.repeat(1001) } : scene) } } },
+    { label: 'jumlah kata di bawah batas', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene) => ({ ...scene, voiceover: 'Satu' })) } } },
+  ];
+
+  for (const { label, output } of malformedOutputs) {
+    const params = makeParams();
+    params.format = 'short_video';
+    const { client } = mockClient(output);
+    await assert.rejects(createContentAgentGenerator(client as never, agentId)(params), (error: unknown) => {
+      assert.equal((error as { status?: number }).status, 502, label);
+      assert.equal((error as { code?: string }).code, 'invalid_content_agent_response', label);
+      return true;
+    }, label);
+  }
+});
+
+test('short_video menolak kata terlarang pada voiceover maupun text overlay', async () => {
+  for (const field of ['voiceover', 'textOverlay'] as const) {
+    const params = makeParams();
+    params.format = 'short_video';
+    params.brand.forbiddenWords = ['rahasia'];
+    const invalidScript = {
+      ...videoScript,
+      scenes: videoScript.scenes.map((scene, index) => index === 2
+        ? { ...scene, [field]: field === 'voiceover' ? 'Informasi rahasia tidak boleh disampaikan kepada pelanggan.' : 'Ini rahasia untuk pelanggan.' }
+        : scene),
+    };
+    const { client } = mockClient({ ...generatedCopy, videoScript: invalidScript });
+
+    await assert.rejects(createContentAgentGenerator(client as never, agentId)(params), (error: unknown) => {
+      assert.equal((error as { status?: number }).status, 502);
+      assert.equal((error as { code?: string }).code, 'invalid_content_agent_response');
+      return true;
+    }, field);
+  }
 });
 
 test('menolak agen yang modelnya tidak sesuai atau memiliki tools', async () => {
