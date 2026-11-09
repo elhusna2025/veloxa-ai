@@ -6,7 +6,7 @@ import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
 import { defaultContentTopic, normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
-import { ContentGenerationError, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
+import { ContentGenerationError, type GenerationQuota, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
 import { useRouter } from 'next/navigation';
 import {
@@ -187,6 +187,7 @@ export default function VeloxaAiPlatformPage() {
   // Studio form state
   const [studioFormat, setStudioFormat] = useState<ContentFormat>('single_post');
   const [isCreatingContent, setIsCreatingContent] = useState(false);
+  const [generationQuota, setGenerationQuota] = useState<GenerationQuota | null>(null);
   const [generationFeedback, setGenerationFeedback] = useState<GenerationFeedback | null>(null);
   const generationAttempt = useRef<object | null>(null);
   const hydrationEpoch = useRef(0);
@@ -243,7 +244,7 @@ export default function VeloxaAiPlatformPage() {
   // Stage 5A & 5B: Production Authentication, Role Separation & Global i18n State
   const [locale, setLocale] = useState<VeloxaLocale>('id');
   const [authUser, setAuthUser] = useState<VeloxaAuthenticatedUser | null>(null);
-  useEffect(() => { generationAttempt.current = null; setIsCreatingContent(false); setGenerationFeedback(null); }, [authUser?.uid, brand.workspaceId]);
+  useEffect(() => { generationAttempt.current = null; setIsCreatingContent(false); setGenerationFeedback(null); setGenerationQuota(null); }, [authUser?.uid, brand.workspaceId]);
 
   const [authEmailInput, setAuthEmailInput] = useState<string>('');
   const [authPasswordInput, setAuthPasswordInput] = useState<string>('');
@@ -344,7 +345,7 @@ export default function VeloxaAiPlatformPage() {
 
       const [metaResult, contentResult, mediaResult] = await Promise.allSettled([
         veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
-        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
+        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number; generationQuota?: GenerationQuota }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
         veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}&includeTrash=1`),
       ]);
       if (epoch !== hydrationEpoch.current) return;
@@ -361,7 +362,7 @@ export default function VeloxaAiPlatformPage() {
       if (contentResult.status === 'fulfilled') {
         const content = contentResult.value;
         setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
-        setPostsUsedThisMonth(content.quotaUsed);
+        setPostsUsedThisMonth(content.quotaUsed); setGenerationQuota(content.generationQuota || null);
       } else resourceIssues.push('Koleksi konten belum dapat diperbarui.');
       if (mediaResult.status === 'fulfilled') setVaultAssets(mediaResult.value.assets);
       else {
@@ -602,9 +603,9 @@ export default function VeloxaAiPlatformPage() {
       if (!saved.syncedToFirestore) throw new Error('Perubahan workspace belum tersimpan ke cloud. Periksa koneksi lalu coba lagi.');
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || defaultContentTopic(brand), format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim() || defaultContentTopic(brand), format: studioFormat, referenceAssetIds: selectedReferenceIds, ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
-      setDrafts(previous => [result.draft, ...previous]); setStudioTopic('');
+      setDrafts(previous => [result.draft, ...previous]); setStudioTopic(''); setGenerationQuota(result.generationQuota || null);
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });
       setStatusBanner(`Draf dan media final siap ditinjau. ${result.engineMode === 'openai_live' ? 'Caption disusun dengan AI.' : 'Caption memakai template lokal; AI belum tersedia.'} Belum ada konten diterbitkan.`);
     } catch (error) {
@@ -1182,7 +1183,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <VeloxaStudioComposer brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
+                  <VeloxaStudioComposer brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
 
                   <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{drafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
                   {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{drafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{drafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}

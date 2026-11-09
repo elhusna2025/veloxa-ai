@@ -111,6 +111,29 @@ async function seedPhoto(f: ReturnType<typeof fixture>) {
  return {asset,storagePath};
 }
 function photoRequest(f: ReturnType<typeof fixture>, action: 'trash'|'restore', assetId=photoId) { return new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,assetId,action})}); }
+test('admin development policy permits concurrent attempts beyond six and keeps exact usage; disabling restores normal cap',async()=>{
+ const f=fixture();const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+ f.database.values.set(`${f.ref.path}/generation_usage/${day}`,{count:6});
+ f.database.values.set(`platform_configs/generation_${f.ref.id}`,{workspaceId:f.ref.id,mode:'development',enabled:true});
+ const tiny=await sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();
+ const results=await Promise.all(Array.from({length:4},(_,index)=>f.create({format:index%2?'carousel':'single_post',renderImage:async()=>tiny})));
+ assert.equal(f.generationCount(),10);assert.equal(f.generateCalls(),4);for(const result of results){assert.equal(result.generationQuota.mode,'development');assert.equal(result.generationQuota.dailyLimit,null);}
+ assert.deepEqual(results.map(x=>x.generationQuota.used).sort((a,b)=>a-b),[7,8,9,10]);assert.equal(f.count(),0);
+ f.database.values.set(`platform_configs/generation_${f.ref.id}`,{workspaceId:f.ref.id,mode:'development',enabled:false});
+ await assert.rejects(f.create(),error=>error instanceof ApiError&&error.status===429);assert.equal(f.generationCount(),10);assert.equal(f.generateCalls(),4);
+});
+
+test('absent, malformed, other-workspace and client-spoofed flags cannot bypass standard generation cap',async()=>{
+ for(const policy of [undefined,{}, {workspaceId:'other-tenant',mode:'development',enabled:true},{workspaceId:'workspace-a',mode:'production',enabled:true},{workspaceId:'workspace-a',mode:'development',enabled:'true'}]){
+  const f=fixture();const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  f.database.values.set(`${f.ref.path}/generation_usage/${day}`,{count:6});if(policy)f.database.values.set(`platform_configs/generation_${f.ref.id}`,policy);
+  const record=f.database.values.get(f.ref.path)!;record.developmentUnlimited=true;const snapshot=JSON.parse(record.snapshotJson);snapshot.generationPolicy={mode:'development',enabled:true};record.snapshotJson=JSON.stringify(snapshot);
+  const request=new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,topic:'Uji',format:'single_post',developmentUnlimited:true,generationPolicy:{mode:'development',enabled:true}})});
+  await assert.rejects(createSocialContent(request,{authorize:f.authorize as never,generate:async()=>{throw Error('Provider must not be called');}}),error=>error instanceof ApiError&&error.status===429);
+  assert.equal(f.generationCount(),6);assert.equal(f.generateCalls(),0);
+ }
+});
+
 test('each no-reference carousel image receives its own exact slide copy and distinct semantic scene',async()=>{
  const f=fixture();const scenes=['Pemilik usaha merencanakan operasional','Kasir mencatat transaksi penjualan','Petugas gudang menghitung persediaan','Tim keuangan meninjau catatan','Tim bisnis berkoordinasi di meja rapat'];let rendered=0;
  await f.create({format:'carousel',generate:async input=>{const draft=generateBrandContentDraft(input);draft.slides=scenes.map((visualDirection,index)=>({slideNumber:index+1,headline:`Pesan ${index+1}`,body:`Penjelasan ${index+1}`,visualDirection,badgeText:`${index+1}/5`}));return{draft,engineMode:'deterministic_local'};},renderImage:async params=>{const index=rendered++;assert.equal(params.title,`Pesan ${index+1}`);assert.equal(params.hook,`Penjelasan ${index+1}`);assert.equal(params.visualDirection,scenes[index]);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(rendered,5);assert.equal(f.generationCount(),1);

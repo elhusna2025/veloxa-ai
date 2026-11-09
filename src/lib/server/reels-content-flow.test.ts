@@ -107,6 +107,13 @@ function fixture() {
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
 
+test('development policy permits Reels after six daily attempts without changing publish usage',async()=>{
+ const f=fixture();const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+ f.database.values.set(`${f.ref.path}/generation_usage/${day}`,{count:6});f.database.values.set(`platform_configs/generation_${f.ref.id}`,{workspaceId:f.ref.id,mode:'development',enabled:true});
+ const bytes=await sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();const result=await f.create({renderImage:async()=>bytes});
+ assert.equal(result.draft.videoScenes?.length,4);assert.equal(result.generationQuota.mode,'development');assert.equal(result.generationQuota.dailyLimit,null);assert.equal(f.generationCount(),7);assert.equal(f.count(),0);assert.equal(f.generateCalls(),1);
+});
+
 test('Reels sends selected references into all four scene image calls and retains source ids',async()=>{
  for(const count of [2,4,5,6]){
  const f=fixture();const ids=Array.from({length:count},(_,index)=>'123e4567-e89b-42d3-a456-42661417400'+index);const bytes=await sharp({create:{width:80,height:80,channels:3,background:'#abcdef'}}).jpeg().toBuffer();

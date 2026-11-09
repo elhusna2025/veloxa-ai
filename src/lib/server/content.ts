@@ -19,7 +19,8 @@ import { renderReelsVideo } from './reels-renderer';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
 import { publicConnection } from './meta-oauth';
 import { getMetaLoginProvider, type MetaConnection as StoredMetaConnection } from './meta-graph';
-import { wibDay, wibMonth } from './clock';
+import { reserveGenerationAttempt, generationQuotaStatus } from './generation-policy';
+import { wibMonth } from './clock';
 import type { MetaConnection } from './meta-graph';
 import type { BrandProfile, ContentDraft, SubscriptionPlanId } from '../veloxa-types';
 
@@ -92,13 +93,8 @@ export async function createSocialContent(request: Request, dependencies: {
   const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage);
   const referenceImageParams = references.length ? { referenceImages: references.map(item => item.bytes), referenceInstruction: input.referenceInstruction || input.topic } : {};
   if (references.length) progress('validation');
-  // A separate server counter bounds generation costs, including failed attempts.
-  const dailyUsage = ref.collection('generation_usage').doc(wibDay());
-  await ref.firestore.runTransaction(async tx => {
-    const used = Number((await tx.get(dailyUsage)).data()?.count || 0);
-    if (!Number.isSafeInteger(used) || used < 0 || used >= SUBSCRIPTION_PLANS[planId].maxPostsPerDay * 3) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.');
-    tx.set(dailyUsage, { count: used + 1 });
-  });
+  // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
+  const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: input.topic, vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || input.topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
@@ -182,7 +178,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
   const targetProviders = Object.fromEntries(selected.docs.map(doc => doc.data() as StoredMetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => [connection.channel, getMetaLoginProvider(connection.loginProvider)]));
   await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode })));
-  return { draft, engineMode: generated.engineMode };
+  return { draft, engineMode: generated.engineMode, generationQuota };
   } catch (error) {
     if (error instanceof GenerationStageError) throw error;
     // Preserve input-validation HTTP semantics; all provider/storage failures are stage-scoped.
@@ -192,10 +188,12 @@ export async function createSocialContent(request: Request, dependencies: {
 }
 
 export async function listSocialContent(request: Request, workspaceId: unknown) {
-  const { ref } = await requireWorkspace(request, workspaceId);
+  const { ref, workspace, workspaceId: authorizedWorkspaceId } = await requireWorkspace(request, workspaceId);
   const docs = await ref.collection('social_drafts').orderBy('createdAt', 'desc').limit(50).get();
   const usage = await ref.collection('publish_usage').doc(wibMonth()).get();
-  return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), quotaUsed: Number(usage.data()?.count || 0) };
+  const planId: SubscriptionPlanId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
+  const generationQuota = await generationQuotaStatus(ref, authorizedWorkspaceId, planId);
+  return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), quotaUsed: Number(usage.data()?.count || 0), generationQuota };
 }
 
 export async function listBrandPhotos(request: Request, workspaceId: unknown, includeTrash = false) {

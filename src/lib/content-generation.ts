@@ -1,6 +1,7 @@
 /** Shared, credential-free generation feedback protocol. No estimated percentages. */
 export const GENERATION_STAGES = ['sync', 'validation', 'references', 'script', 'images', 'media', 'voiceover', 'rendering', 'saving'] as const;
 export type GenerationStage = typeof GENERATION_STAGES[number];
+export interface GenerationQuota { mode: 'standard' | 'development'; dailyLimit: number | null; used: number; day: string }
 export interface GenerationProgress { stage: GenerationStage }
 export interface GenerationFeedback { status: 'running' | 'success' | 'error'; stage: GenerationStage; message?: string; requestId?: string; uncertain?: boolean }
 export const GENERATION_LABELS: Record<GenerationStage, string> = {
