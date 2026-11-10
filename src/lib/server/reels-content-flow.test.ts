@@ -119,7 +119,7 @@ test('all visual copy is preflighted before any paid image or voice request, inc
    if(format==='carousel')draft.slides=Array.from({length:5},(_,index)=>({slideNumber:index+1,headline:`Slide ${index+1}`,body:index===4?overflow:'Informasi bisnis.',visualDirection:'Adegan bisnis',badgeText:`${index+1}/5`}));
    if(format==='short_video')draft.videoScenes=Array.from({length:4},(_,index)=>({sceneNumber:index+1,timeRange:'00:00–00:05',visualDirection:'Adegan bisnis',voiceover:'Informasi bisnis yang jelas.',textOverlay:index===3?overflow:`Langkah ${index+1}`}));
    return {draft,engineMode:'deterministic_local'};
-  },renderImage:async()=>{images++;throw new Error('paid image must not start');},generateVoice:async()=>{voices++;throw new Error('paid voice must not start');}}),(error:any)=>error.stage==='compositing'&&error.message.includes('Ringkas judul'));
+  },renderImage:async()=>{images++;throw new Error('paid image must not start');},generateVoice:async()=>{voices++;throw new Error('paid voice must not start');}}),(error:any)=>error.stage==='compositing'&&error.code==='visual_composition_invalid');
   assert.equal(images,0);assert.equal(voices,0);assert.equal([...f.database.values.keys()].filter(key=>key.includes('/social_drafts/')).length,0);
  }
 });

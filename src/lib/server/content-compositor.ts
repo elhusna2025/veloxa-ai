@@ -13,7 +13,7 @@ export interface VisualCompositionParams {
 interface Rect { left: number; top: number; width: number; height: number }
 export function compositionLayout(vertical: boolean, screenshot: boolean) {
  const width=1080, height=vertical?1920:1350;
- return {width,height,brand:{left:48,top:vertical?224:48,width:984,height:96},title:{left:48,top:vertical?360:184,width:640,height:vertical?340:252},subtitle:{left:48,top:470,width:640,height:228},hero:{left:0,top:0,width,height},screen:{left:48,top:vertical?1040:780,width:640,height:vertical?336:320},footer:{left:48,top:vertical?1448:1148,width:760,height:152}};
+ return {width,height,brand:{left:48,top:vertical?224:48,width:984,height:96},title:{left:48,top:vertical?360:184,width:vertical?640:680,height:vertical?340:252},subtitle:{left:48,top:470,width:680,height:228},hero:{left:0,top:0,width,height},screen:{left:48,top:vertical?1040:780,width:640,height:vertical?336:320},footer:{left:48,top:vertical?1448:1148,width:760,height:152}};
 }
 function escapeMarkup(value: string) { return value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;'); }
 function invalid(): never {throw new ApiError(422,'Teks atau aset visual belum dapat ditata dengan jelas. Ringkas judul atau penjelasan, lalu coba lagi.','visual_composition_invalid');}
@@ -23,12 +23,12 @@ export async function fitCompositionText(text: string, width: number, height: nu
   const rendered=await sharp({text:{text:`<span foreground="${color}">${escapeMarkup(text)}</span>`,font:`Noto Sans ${bold?'bold ':''}${size}`,fontfile:visualFontFile,width,rgba:true,wrap:'word-char',spacing:Math.round(size*CONTENT_TYPOGRAPHY.lineGapRatio)}}).png().toBuffer({resolveWithObject:true});
   if(rendered.info.height<=height&&rendered.info.width<=width)return {data:rendered.data,fontSize:size,width:rendered.info.width,height:rendered.info.height};
  }
- return invalid();
+ throw new ApiError(422,'Teks yang dibuat AI belum muat dengan ukuran yang nyaman dibaca. Coba buat ulang dengan pesan yang lebih singkat.','visual_composition_invalid');
 }
 export function shortVisualCta(cta: string): string {return cta.trim().length<=36?cta.trim():'Pelajari selengkapnya';}
 export function visualWebsite(url?: string): string {if(!url)return '';try{const parsed=new URL(url);return ['https:','http:'].includes(parsed.protocol)&&!parsed.username&&!parsed.password?parsed.host:'';}catch{return '';}}
 /** The compositor and the paid-generation preflight use identical copy and font bounds. */
-async function renderCompositionText(params: VisualCompositionParams) {
+export async function renderCompositionText(params: VisualCompositionParams) {
  for(const [key,max] of [['businessName',300],['title',300],['hook',500],['cta',300]] as const)if(typeof params[key]!=='string'||!params[key].trim()||params[key].length>max)return invalid();
  const vertical=params.aspectRatio==='9:16',layout=compositionLayout(vertical,false),type=CONTENT_TYPOGRAPHY;
  const titleType=vertical?type.reelsTitle:type.feedTitle;
@@ -36,11 +36,19 @@ async function renderCompositionText(params: VisualCompositionParams) {
  const luminance=[1,3,5].map(start=>parseInt(primary.slice(start,start+2),16)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
  const foreground=luminance>.179?'#000000':'#FFFFFF';
  const headerBrand=await fitCompositionText(params.businessName,params.originalAssets?.some(asset=>asset.role==='logo')?760:984,72,type.brand.max,type.brand.min,'#FFFFFF',true);
- const headline=await fitCompositionText(params.title,layout.title.width,layout.title.height,titleType.max,titleType.min,'#FFFFFF',true);
- const supporting=await fitCompositionText(vertical?'':params.hook,layout.subtitle.width,layout.subtitle.height,type.body.max,type.body.min,'#FFFFFF');
+ // Reserve the full screenshot frame even without an original, so the feed
+ // text layout is consistent regardless of the reference roles.
+ const copyBottom=layout.screen.top-32;
+ const copyGap=24;
+ const bodyFloor=vertical?null:await fitCompositionText(params.hook,layout.subtitle.width,copyBottom-layout.title.top,type.body.min,type.body.min,'#FFFFFF');
+ const titleHeight=vertical?layout.title.height:copyBottom-layout.title.top-copyGap-(bodyFloor?.height||0);
+ const headline=await fitCompositionText(params.title,layout.title.width,titleHeight,titleType.max,titleType.min,'#FFFFFF',true);
+ const bodyMinTop=layout.title.top+(headline?.height||0)+copyGap;
+ const supporting=vertical?null:await fitCompositionText(params.hook,layout.subtitle.width,copyBottom-bodyMinTop,type.body.max,type.body.min,'#FFFFFF');
+ const supportingTop=supporting?Math.max(bodyMinTop,Math.min(layout.subtitle.top,copyBottom-supporting.height)):layout.subtitle.top;
  const cta=await fitCompositionText(shortVisualCta(params.cta),layout.footer.width-64,64,type.cta.max,type.cta.min,foreground,true);
  const site=await fitCompositionText(visualWebsite(params.websiteUrl),layout.footer.width-64,52,type.website.max,type.website.min,foreground);
- return {headerBrand,headline,supporting,cta,site};
+ return {headerBrand,headline,supporting,supportingTop,cta,site};
 }
 export async function preflightSocialVisualText(params: VisualCompositionParams): Promise<void> { await renderCompositionText(params); }
 /** Original artwork is resized proportionally and layered after AI. Nothing is redrawn by AI. */
@@ -57,10 +65,10 @@ export async function composeSocialVisual(scene: Buffer, params: VisualCompositi
  const hero=await sharp(scene,{limitInputPixels:30_000_000}).rotate().resize(layout.hero.width,layout.hero.height,{fit:'cover',position:'north'}).png().toBuffer();layers.push({input:hero,left:0,top:0});
  // The scene stays edge-to-edge. Shade the copy area instead of adding opaque blank panels.
  const shade=Buffer.from(`<svg width="${layout.width}" height="${layout.height}"><defs><linearGradient id="left"><stop offset="0" stop-color="#061827" stop-opacity=".70"/><stop offset=".68" stop-color="#061827" stop-opacity=".70"/><stop offset="1" stop-color="#061827" stop-opacity="0"/></linearGradient><linearGradient id="top" x2="0" y2="1"><stop offset="0" stop-color="#061827" stop-opacity=".25"/><stop offset=".55" stop-color="#061827" stop-opacity="0"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#left)"/><rect width="100%" height="100%" fill="url(#top)"/></svg>`);layers.push({input:shade,left:0,top:0});
- const {headerBrand,headline,supporting}=text;
+ const {headerBrand,headline,supporting,supportingTop}=text;
  if(headerBrand)layers.push({input:headerBrand.data,left:logo?250:48,top:layout.brand.top+30});
  if(headline)layers.push({input:headline.data,left:layout.title.left,top:layout.title.top});
- if(supporting)layers.push({input:supporting.data,left:layout.subtitle.left,top:layout.subtitle.top});
+ if(supporting)layers.push({input:supporting.data,left:layout.subtitle.left,top:supportingTop});
  async function original(asset: OriginalVisualAsset, box: Rect) {
   const fitted=await sharp(asset.bytes,{limitInputPixels:30_000_000}).rotate().resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});
   layers.push({input:fitted.data,left:box.left+Math.floor((box.width-fitted.info.width)/2),top:box.top+Math.floor((box.height-fitted.info.height)/2)});
