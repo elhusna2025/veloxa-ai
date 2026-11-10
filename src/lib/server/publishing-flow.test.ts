@@ -33,6 +33,7 @@ class Database {
     await previous;
     const operations: (() => void)[] = [];
     const tx = { get: (ref: Doc) => ref.get(), getAll: (...refs: Doc[]) => Promise.all(refs.map(ref => ref.get())),
+      create: (ref: Doc, data: any) => operations.push(() => {assert.equal(this.values.has(ref.path),false);this.write(ref,data,false);}),
       set: (ref: Doc, data: any, options?: { merge?: boolean }) => operations.push(() => this.write(ref, data, options?.merge)),
       update: (ref: Doc, data: any) => operations.push(() => this.write(ref, data)) };
     try { const result = await action(tx); operations.forEach(operation => operation()); return result; }
@@ -77,6 +78,7 @@ function fixture() {
     format?: 'single_post' | 'carousel';
     topic?: string;
     selectedConnectionIds?:string[];
+    businessId?:string;
     sourceAssetId?: string;
     referenceAssetIds?: string[];
     referenceInstruction?: string;
@@ -84,7 +86,7 @@ function fixture() {
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -573,4 +575,94 @@ test('disconnecting a queued destination does not block other accounts or resend
  const{draft}=await f.create({selectedConnectionIds:ids});const sent:string[]=[];const publisher=async(params:{accountId:string})=>{sent.push(params.accountId);return{externalPostId:'remote-'+params.accountId};};
  const first=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(first.hasMore,true);f.database.values.delete(`${f.ref.path}/private_meta_connections/instagram_9003`);
  const last=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(last.draft.status,'partially_published');assert.deepEqual(sent,['9000','9001','9002','9004']);assert.equal(last.receipts.find(item=>item.connectionId==='instagram_9003')?.status,'failed');assert.equal(f.count(),1);
+});
+
+const secondaryBusinessId='b_123e4567-e89b-42d3-a456-426614174999';
+async function seedBusinessContexts(f:ReturnType<typeof fixture>){
+ const {blankBusinessProfile}=await import('../business-context');
+ f.database.values.set(`${f.ref.path}/business_contexts/primary`,{revision:1,connectionIds:['facebook_100']});
+ const brand=blankBusinessProfile(f.ref.id,secondaryBusinessId,'Cendekia AI');brand.businessDescription='Platform pembelajaran.';
+ f.database.values.set(`${f.ref.path}/business_contexts/${secondaryBusinessId}`,{revision:1,brand,connectionIds:['instagram_200']});return brand;
+}
+test('business generation resolves selected saved profile and rejects cross-business account before quota',async()=>{
+ const f=fixture();const brand=await seedBusinessContexts(f);
+ await assert.rejects(f.create({businessId:'primary',selectedConnectionIds:['instagram_200']}),(error:any)=>error.code==='business_target_mismatch');assert.equal(f.generationCount(),0);
+ const {draft}=await f.create({businessId:secondaryBusinessId,selectedConnectionIds:['instagram_200'],generate:async input=>{assert.equal(input.brand.businessName,'Cendekia AI');assert.equal(input.brand.businessId,secondaryBusinessId);return{draft:generateBrandContentDraft(input),engineMode:'deterministic_local'};}});
+ assert.equal(draft.businessId,secondaryBusinessId);assert.equal(draft.publishTargets?.[0].accountId,'200');assert.equal(f.generationCount(),1);assert.equal(draft.profileContext?.fingerprint,await profileFingerprint(brand));
+});
+test('unknown business and foreign photo fail before generation quota',async()=>{
+ const f=fixture();await seedBusinessContexts(f);await seedPhoto(f);
+ await assert.rejects(f.create({businessId:'b_00000000-0000-0000-0000-000000000000',selectedConnectionIds:['instagram_200']}),(error:any)=>error.code==='business_context_invalid');
+ await assert.rejects(f.create({businessId:secondaryBusinessId,selectedConnectionIds:['instagram_200'],referenceAssetIds:[photoId]}),(error:any)=>error.status===404);assert.equal(f.generationCount(),0);
+});
+test('reassigned business destination blocks publication and quota reservation',async()=>{
+ const f=fixture();await seedBusinessContexts(f);const {draft}=await f.create({businessId:secondaryBusinessId,selectedConnectionIds:['instagram_200']});
+ f.database.values.set(`${f.ref.path}/business_contexts/primary`,{revision:2,connectionIds:['facebook_100','instagram_200']});const secondary=f.database.values.get(`${f.ref.path}/business_contexts/${secondaryBusinessId}`)!;secondary.connectionIds=[];secondary.revision=2;
+ let calls=0;await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async()=>{calls++;return{externalPostId:'forbidden'};}}),(error:any)=>error.code==='business_target_mismatch');assert.equal(calls,0);assert.equal(f.count(),0);
+});
+test('publication checks correct business rules rather than workspace primary words',async()=>{
+ const f=fixture();await seedBusinessContexts(f);const {draft}=await f.create({businessId:secondaryBusinessId,selectedConnectionIds:['instagram_200']});
+ const workspace=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(workspace.snapshotJson);snapshot.brand.forbiddenWords=[draft.caption.split(' ')[0]];workspace.snapshotJson=JSON.stringify(snapshot);
+ let calls=0;const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async()=>{calls++;return{externalPostId:'correct-business'};}});assert.equal(calls,1);assert.equal(result.draft.status,'published');
+});
+test('business reassignment during media read is caught before dispatch and releases definitive failure quota',async()=>{
+ const f=fixture();await seedBusinessContexts(f);const {draft}=await f.create({businessId:secondaryBusinessId,selectedConnectionIds:['instagram_200']});let calls=0;
+ const storage={file:(key:string)=>({download:async()=>{const primary=f.database.values.get(`${f.ref.path}/business_contexts/primary`)!;primary.connectionIds.push('instagram_200');f.database.values.get(`${f.ref.path}/business_contexts/${secondaryBusinessId}`)!.connectionIds=[];return (f.dependencies.storage as any).file(key).download();}})};
+ const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,storage:storage as never,publisher:async()=>{calls++;return{externalPostId:'forbidden'};}});assert.equal(calls,0);assert.equal(result.draft.status,'publish_failed');assert.equal(f.count(),0);assert.match(result.receipts[0].error||'',/bisnis/);
+});
+
+test('business profile API keeps primary intact, enforces revision and prevents duplicate account assignment',async()=>{
+ const {createBusiness,updateBusiness}=await import('./business-contexts');const f=fixture();const original=f.database.values.get(f.ref.path)!.snapshotJson;
+ const req=(value:object)=>new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,...value})});
+ const created=await createBusiness(req({name:'Cendekia AI'}),{authorize:f.authorize as never});const id=created.businessId;
+ assert.equal(created.businesses.length,2);assert.equal(created.businesses[1].brand.logoAssetId,undefined);assert.deepEqual(created.businesses[1].brand.offerings,[]);assert.equal(f.database.values.get(f.ref.path)!.snapshotJson,original);
+ await updateBusiness(req({businessId:id,expectedRevision:1,connectionIds:['instagram_200']}),{authorize:f.authorize as never});
+ await assert.rejects(updateBusiness(req({businessId:id,expectedRevision:1,connectionIds:[]}),{authorize:f.authorize as never}),(error:any)=>error.code==='business_conflict');
+ await assert.rejects(updateBusiness(req({businessId:'primary',expectedRevision:0,connectionIds:['instagram_200']}),{authorize:f.authorize as never}),(error:any)=>error.code==='business_assignment_conflict');
+ await assert.rejects(updateBusiness(req({businessId:id,expectedRevision:2,schedule:{connectionIds:['facebook_100'],timesWib:['08:00'],days:['Sen']}}),{authorize:f.authorize as never}),(error:any)=>error.status===400);
+ const result=await updateBusiness(req({businessId:id,expectedRevision:2,profile:{...created.businesses[1].brand,businessDescription:'Materi belajar',primaryColorHex:'#008844'},schedule:{connectionIds:['instagram_200'],timesWib:['09:00'],days:['Sen']}}),{authorize:f.authorize as never});assert.equal(result.businesses[1].brand.primaryColorHex,'#008844');assert.deepEqual(result.businesses[1].schedule.connectionIds,['instagram_200']);assert.equal(f.database.values.get(f.ref.path)!.snapshotJson,original);
+});
+test('business create rechecks workspace owner inside transaction',async()=>{
+ const {createBusiness}=await import('./business-contexts');const f=fixture();const authorize=async(request:Request,id:unknown)=>{const value=await f.authorize(request,id);f.database.values.get(f.ref.path)!.ownerUid='new-owner';return value;};
+ await assert.rejects(createBusiness(new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,name:'New business'})}),{authorize:authorize as never}),(error:any)=>error.status===403);assert.equal([...f.database.values.keys()].filter(key=>key.includes('/business_contexts/')).length,0);
+});
+test('business photo list, palette and recoverable delete reject other business media',async()=>{
+ const f=fixture();await seedPhoto(f);await seedBusinessContexts(f);
+ assert.equal((await listWorkspacePhotos(new Request('http://localhost'),f.ref.id,true,{authorize:f.authorize as never},secondaryBusinessId)).length,0);
+ await assert.rejects(changeWorkspacePhotoState(new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,businessId:secondaryBusinessId,assetId:photoId,action:'trash'})}),{authorize:f.authorize as never}),(error:any)=>error.status===404);
+ await assert.rejects(analyzeBrandLogo(new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,businessId:secondaryBusinessId,assetId:photoId})}),{authorize:f.authorize as never,storage:f.dependencies.storage as never}),(error:any)=>error.status===404);
+ assert.equal(f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.trashedAt,undefined);
+});
+test('queued multi-account publication fails only a destination moved to another business',async()=>{
+ const f=fixture();await seedBusinessContexts(f);const ids=['instagram_200','instagram_201','instagram_202','instagram_203','instagram_204'];
+ for(let index=201;index<=204;index++)f.database.values.set(`${f.ref.path}/private_meta_connections/instagram_${index}`,{channel:'instagram',accountId:String(index),pageId:'',accountName:'Brand',handle:'@'+index,loginProvider:'instagram_unified',encryptedToken:'test-ciphertext',expiresAt:Date.now()+60000});
+ const secondary=f.database.values.get(`${f.ref.path}/business_contexts/${secondaryBusinessId}`)!;secondary.connectionIds=ids;
+ const{draft}=await f.create({businessId:secondaryBusinessId,selectedConnectionIds:ids});const calls:string[]=[];const dependencies={...f.dependencies,publisher:async(input:any)=>{calls.push(input.accountId);return{externalPostId:'post-'+input.accountId};}};
+ const first=await publishSocialContent(f.request(draft.id),dependencies);assert.equal(first.hasMore,true);assert.equal(calls.length,3);
+ secondary.connectionIds=ids.filter(id=>id!=='instagram_203');f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds.push('instagram_203');
+ const final=await publishSocialContent(f.request(draft.id),dependencies);assert.equal(final.draft.status,'partially_published');assert.deepEqual(calls,['200','201','202','204']);assert.equal(f.count(),1);assert.match(final.receipts.find(item=>item.accountId==='203')?.error||'',/bisnis/);
+});
+
+test('explicit primary unassignment blocks a legacy draft rather than silently reclaiming its account',async()=>{
+ const f=fixture();const {draft}=await f.create({selectedConnectionIds:['instagram_200']});assert.equal(draft.businessId,undefined);
+ f.database.values.set(`${f.ref.path}/business_contexts/primary`,{revision:1,connectionIds:[]});
+ await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async()=>{throw new Error('must not send');}}),(error:any)=>error.code==='business_target_mismatch');assert.equal(f.count(),0);
+});
+
+test('profile API rejects foreign, trashed and wrong-workspace logos, accepts only own business asset',async()=>{
+ const {updateBusiness}=await import('./business-contexts');const f=fixture();const brand=await seedBusinessContexts(f);await seedPhoto(f);
+ const req=(logoAssetId:string)=>new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,businessId:secondaryBusinessId,expectedRevision:1,profile:{...brand,logoAssetId}})});
+ await assert.rejects(updateBusiness(req(photoId),{authorize:f.authorize as never}),(error:any)=>error.code==='business_logo_mismatch');
+ const id='123e4567-e89b-42d3-a456-426614174001';const asset=structuredClone(f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!);asset.asset={...asset.asset,id,businessId:secondaryBusinessId};asset.storagePath=`workspaces/${f.ref.id}/vault/${id}.jpg`;asset.trashedAt=Date.now();f.database.values.set(`${f.ref.path}/server_assets/${id}`,asset);
+ await assert.rejects(updateBusiness(req(id),{authorize:f.authorize as never}),(error:any)=>error.code==='business_logo_mismatch');delete asset.trashedAt;asset.asset.workspaceId='foreign-workspace';
+ await assert.rejects(updateBusiness(req(id),{authorize:f.authorize as never}),(error:any)=>error.code==='business_logo_mismatch');asset.asset.workspaceId=f.ref.id;
+ const result=await updateBusiness(req(id),{authorize:f.authorize as never});assert.equal(result.businesses.find(item=>item.id===secondaryBusinessId)!.brand.logoAssetId,id);assert.equal(f.database.values.get(`${f.ref.path}/business_contexts/${secondaryBusinessId}`)!.revision,2);
+});
+test('primary profile server save preserves snapshot and quota, returns CAS revision, rejects stale fingerprint and foreign logo',async()=>{
+ const {updateBusiness}=await import('./business-contexts');const f=fixture();await seedPhoto(f);const workspace=f.database.values.get(f.ref.path)!;workspace.snapshotRevision=7;const snapshot=JSON.parse(workspace.snapshotJson);snapshot.existingData={keep:true};snapshot.drafts=[{id:'keep-this-draft'}];workspace.snapshotJson=JSON.stringify(snapshot);const fingerprint=await profileFingerprint(snapshot.brand);
+ const req=(profile:object,expectedRevision=0,expectedProfileFingerprint=fingerprint)=>new Request('http://localhost/api',{method:'PATCH',body:JSON.stringify({workspaceId:f.ref.id,businessId:'primary',expectedRevision,expectedProfileFingerprint,profile})});
+ const result=await updateBusiness(req({...snapshot.brand,businessName:'Berez Updated',logoAssetId:photoId}),{authorize:f.authorize as never});assert.equal(result.workspaceSnapshotRevision,8);const saved=f.database.values.get(f.ref.path)!;assert.equal(saved.ownerUid,'customer-a');assert.equal(saved.quotaUsed,0);assert.equal(saved.snapshotRevision,8);const fresh=JSON.parse(saved.snapshotJson);assert.deepEqual(fresh.existingData,{keep:true});assert.deepEqual(fresh.drafts,snapshot.drafts);assert.equal(fresh.brand.businessName,'Berez Updated');assert.equal(fresh.brand.businessId,undefined);assert.equal('brand' in f.database.values.get(`${f.ref.path}/business_contexts/primary`)!,false);
+ await assert.rejects(updateBusiness(req({...snapshot.brand,businessName:'stale'},1),{authorize:f.authorize as never}),(error:any)=>error.code==='profile_conflict');assert.equal(f.database.values.get(f.ref.path)!.snapshotRevision,8);
+ const foreignId='123e4567-e89b-42d3-a456-426614174002';const foreign=structuredClone(f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!);foreign.asset={...foreign.asset,id:foreignId,businessId:secondaryBusinessId};foreign.storagePath=`workspaces/${f.ref.id}/vault/${foreignId}.jpg`;f.database.values.set(`${f.ref.path}/server_assets/${foreignId}`,foreign);
+ await assert.rejects(updateBusiness(req({...fresh.brand,logoAssetId:foreignId},1,await profileFingerprint(fresh.brand)),{authorize:f.authorize as never}),(error:any)=>error.code==='business_logo_mismatch');assert.equal(f.database.values.get(f.ref.path)!.snapshotRevision,8);
 });

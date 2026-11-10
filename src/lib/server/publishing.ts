@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { forbiddenContentMatches } from '../content-policy';
+import { assertBusinessTargets, draftBusiness } from '../business-context';
+import { resolveBusinessContext } from './business-contexts';
 import { adminBucket, adminDb } from './firebase';
 import { hasWorkspaceAccess, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
@@ -89,8 +91,8 @@ export async function publishSocialContent(request: Request, dependencies: {
       return {...receipt,connectionId:matches[0].connectionId,accountId:matches[0].accountId,accountName:matches[0].accountName,handle:matches[0].handle};
     });
     if (job?.state === 'published') return { alreadyPublished: true, receipts };
-    let currentWords:unknown;
-    try{currentWords=JSON.parse(workspace.snapshotJson).brand.forbiddenWords;}catch{throw new ApiError(409,'Profil bisnis belum dapat diverifikasi. Muat ulang profil sebelum menerbitkan.');}
+    const {contexts,context}=await resolveBusinessContext(ref,workspace,draftBusiness(draft),tx);
+    const currentWords:unknown=context.brand.forbiddenWords;
     const generatedWords=stored.forbiddenWordsAtGeneration??[];
     if(!Array.isArray(currentWords)||!Array.isArray(generatedWords)||[...currentWords,...generatedWords].some(word=>typeof word!=='string'))throw new ApiError(409,'Daftar kata yang dihindari belum valid. Periksa profil bisnis.');
     if(forbiddenContentMatches(draft,[...currentWords,...generatedWords]).length)throw new ApiError(409,'Konten memuat kata yang dihindari dalam profil bisnis. Perbaiki atau buat draf baru sebelum menerbitkan.','content_policy_violation');
@@ -102,6 +104,7 @@ export async function publishSocialContent(request: Request, dependencies: {
       if(job?.state==='queued')continue;
       if(receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='published'))continue;
       assertTargetBinding(accounts.find(account=>account.connectionId===target.connectionId),target);
+      try{assertBusinessTargets(contexts,context.id,[target.connectionId],!draft.businessId&&contexts.length===1&&context.revision===0);}catch(error){throw new ApiError(409,error instanceof Error?error.message:'Akun tidak sesuai bisnis.','business_target_mismatch');}
     }
     const planId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
     const plan = SUBSCRIPTION_PLANS[planId];
@@ -147,6 +150,11 @@ export async function publishSocialContent(request: Request, dependencies: {
       // Media loading may take time: honor a disconnect/provider change immediately before dispatch.
       connection=readSocialAccounts((await ref.collection('private_meta_connections').get()).docs).find(account=>account.connectionId===target.connectionId);
       assertTargetBinding(connection,target);
+      const latestWorkspace=(await ref.get()).data();
+      if(!latestWorkspace||!hasWorkspaceAccess(user.uid,latestWorkspace,isVerifiedAdmin(user)))throw new ApiError(403,'Akses workspace telah berubah.');
+      const business=await resolveBusinessContext(ref,latestWorkspace,draftBusiness(draft));
+      try{assertBusinessTargets(business.contexts,business.context.id,[target.connectionId],!draft.businessId&&business.contexts.length===1&&business.context.revision===0);}catch(error){throw new ApiError(409,error instanceof Error?error.message:'Akun telah dipindahkan ke bisnis lain.','business_target_mismatch');}
+      if(forbiddenContentMatches(draft,[...business.context.brand.forbiddenWords,...(stored.forbiddenWordsAtGeneration||[])]).length)throw new ApiError(409,'Konten tidak sesuai panduan bisnis terbaru.','content_policy_violation');
       const token = (dependencies.decrypt || decryptMetaToken)(connection!.encryptedToken, ref.id);
       dispatched = true;
       const result = draft.format === 'short_video'

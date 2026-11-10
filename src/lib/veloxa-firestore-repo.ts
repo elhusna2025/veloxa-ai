@@ -626,6 +626,9 @@ export async function saveChannelConnectionToFirestore(
   }
 }
 
+/* Only adopt a revision returned by an authenticated server profile save. Pending older snapshots retain their captured CAS baseline. */
+export function acceptServerWorkspaceRevision(workspaceId:string,revision:number){if(!Number.isSafeInteger(revision)||revision<1)throw new Error('Revisi server tidak valid.');verifiedSnapshotRevisions.set(workspaceId,revision);}
+
 /** Transaction reads and revision comparison are inseparable; a retry never adopts a newer baseline. */
 export async function commitWorkspaceSnapshot(db: Firestore, workspaceId: string, snapshot: PersistedWorkspaceSnapshot, currentUid: string, expectedRevision: number | undefined): Promise<number> {
  const wsRef=doc(db,'workspaces',workspaceId);

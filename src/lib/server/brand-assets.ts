@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assetBusiness, businessId, PRIMARY_BUSINESS } from '../business-context';
 import { randomUUID } from 'node:crypto';
 import { adminBucket } from './firebase';
 import { requireWorkspace, hasWorkspaceAccess } from './auth';
@@ -15,16 +16,17 @@ export function publicBrandPhoto(record: AssetRecord & { asset: BrandVaultAsset 
   const { trashedAt: _untrustedSnapshot, ...asset } = record.asset;
   return { ...asset, previewUrl:photoPreviewPath(asset.workspaceId,asset.id), ...(typeof record.trashedAt === 'number' && record.trashedAt > 0 ? { trashedAt: new Date(record.trashedAt).toISOString() } : {}) };
 }
-export async function listWorkspacePhotos(request: Request, workspaceId: unknown, includeTrash = false, dependencies: { authorize?: typeof requireWorkspace } = {}) {
+export async function listWorkspacePhotos(request: Request, workspaceId: unknown, includeTrash = false, dependencies: { authorize?: typeof requireWorkspace } = {}, rawBusinessId:unknown=PRIMARY_BUSINESS) {
+  const selectedBusiness=businessId(rawBusinessId);
   const { ref, workspaceId: id } = await (dependencies.authorize || requireWorkspace)(request, workspaceId);
   const docs = await ref.collection('server_assets').get();
-  return docs.docs.map(doc => doc.data() as AssetRecord).filter(record => isWorkspacePhoto(record, id) && (includeTrash || !record.trashedAt)).map(record => publicBrandPhoto(record as AssetRecord & { asset: BrandVaultAsset }));
+  return docs.docs.map(doc => doc.data() as AssetRecord).filter(record => isWorkspacePhoto(record, id) && assetBusiness(record.asset)===selectedBusiness && (includeTrash || !record.trashedAt)).map(record => publicBrandPhoto(record as AssetRecord & { asset: BrandVaultAsset }));
 }
 
-export async function persistWorkspacePhoto(ref: Awaited<ReturnType<typeof requireWorkspace>>['ref'], workspaceId:string, uid:string, bytes:Buffer, title:string, storage?:ReturnType<typeof adminBucket>) {
+export async function persistWorkspacePhoto(ref: Awaited<ReturnType<typeof requireWorkspace>>['ref'], workspaceId:string, uid:string, bytes:Buffer, title:string, storage?:ReturnType<typeof adminBucket>,selectedBusiness=PRIMARY_BUSINESS) {
   const id=randomUUID();const storagePath=`workspaces/${workspaceId}/vault/${id}.jpg`;const bucket=storage||adminBucket();const file=bucket.file(storagePath);
   await file.save(bytes,{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:'image/jpeg',cacheControl:'private, no-store'}});
-  const asset:BrandVaultAsset={id,workspaceId,title,description:'',drawer:'real_asset',mediaType:'photo',previewUrl:photoPreviewPath(workspaceId,id),aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
+  const asset:BrandVaultAsset={id,workspaceId,...(selectedBusiness!==PRIMARY_BUSINESS?{businessId:selectedBusiness}:{}),title,description:'',drawer:'real_asset',mediaType:'photo',previewUrl:photoPreviewPath(workspaceId,id),aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
   const assetRef=ref.collection('server_assets').doc(id);
   try {await assetRef.create({asset,storagePath,createdBy:uid});}
   catch(error) {
@@ -48,16 +50,17 @@ export async function previewWorkspacePhoto(request:Request, workspaceId:unknown
   return new Response(new Uint8Array(bytes),{headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 }
 
-const stateInput = z.object({ workspaceId: z.string(), assetId: z.string().uuid(), action: z.enum(['trash', 'restore']) }).strict();
+const stateInput = z.object({ workspaceId: z.string(), businessId:z.string().optional(), assetId: z.string().uuid(), action: z.enum(['trash', 'restore']) }).strict();
 export async function changeWorkspacePhotoState(request: Request, dependencies: { authorize?: typeof requireWorkspace } = {}) {
   const input = stateInput.parse(await readJson(request));
   const { ref, workspaceId, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
+  const selectedBusiness=businessId(input.businessId);
   const assetRef = ref.collection('server_assets').doc(input.assetId);
   return ref.firestore.runTransaction(async tx => {
     const [workspace, assetDoc] = await Promise.all([tx.get(ref), tx.get(assetRef)]);
     if (!hasWorkspaceAccess(user.uid, workspace.data() || {}, isVerifiedAdmin(user))) throw new ApiError(403, 'Anda tidak memiliki izin untuk workspace ini.');
     const record = assetDoc.data() as AssetRecord | undefined;
-    if (!isWorkspacePhoto(record, workspaceId) || record.asset.id !== input.assetId) throw new ApiError(404, 'Foto tidak ditemukan di workspace ini.');
+    if (!isWorkspacePhoto(record, workspaceId) || record.asset.id !== input.assetId || assetBusiness(record.asset)!==selectedBusiness) throw new ApiError(404, 'Foto tidak ditemukan pada bisnis ini.');
     const trashedAt = input.action === 'trash' ? record.trashedAt || Date.now() : null;
     tx.update(assetRef, { trashedAt, updatedAt: Date.now(), updatedBy: user.uid });
     // Keep original media intact. Saved drafts use their own rendered copies.

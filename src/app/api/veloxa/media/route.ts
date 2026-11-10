@@ -11,6 +11,6 @@ export async function PATCH(request: Request) {
   catch (error) { return errorResponse(error); }
 }
 export async function GET(request: Request) {
-  try { return noStoreJson({ ok: true, assets: await listBrandPhotos(request, new URL(request.url).searchParams.get('workspaceId'), new URL(request.url).searchParams.get('includeTrash') === '1') }); }
+  try { return noStoreJson({ ok: true, assets: await listBrandPhotos(request, new URL(request.url).searchParams.get('workspaceId'), new URL(request.url).searchParams.get('includeTrash') === '1',new URL(request.url).searchParams.get('businessId')) }); }
   catch (error) { return errorResponse(error); }
 }

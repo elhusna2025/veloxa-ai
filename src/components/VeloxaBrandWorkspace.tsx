@@ -13,6 +13,8 @@ interface Props {
   onUpload: (file: File, title: string) => Promise<void>;
   onAssetState: (assetId: string, action: 'trash' | 'restore') => Promise<void>;
   onReload: () => Promise<void>;
+  onDirtyChange?:(dirty:boolean)=>void;
+  onBusyChange?:(busy:boolean)=>void;
 }
 const tabs = [{id:'identity',label:'Identitas bisnis',icon:Building2},{id:'content',label:'Panduan konten',icon:SlidersHorizontal},{id:'dna',label:'DNA visual',icon:SlidersHorizontal},{id:'photos',label:'Foto & referensi',icon:Images}] as const;
 const inputClass = 'mt-2 w-full rounded-lg border border-neutral-200 bg-white px-3.5 py-3 text-base text-neutral-900 placeholder:text-neutral-400 focus:border-[#bd416e] focus:outline-none focus:ring-2 focus:ring-[#bd416e]/10 disabled:bg-neutral-50';
@@ -27,6 +29,8 @@ export function VeloxaBrandWorkspace(props: Props) {
   const initialReload = useRef(props.onReload); const fileInput = useRef<HTMLInputElement>(null);
   const [preview,setPreview]=useState<BrandVaultAsset|null>(null);const previewDialog=useRef<HTMLDialogElement>(null);
   useEffect(() => setForm(initial),[initial]);
+  useEffect(()=>{props.onDirtyChange?.(JSON.stringify(form)!==JSON.stringify(initial));},[form,initial,props.onDirtyChange]);
+  useEffect(()=>{props.onBusyChange?.(Boolean(busy)||libraryLoading);return()=>props.onBusyChange?.(false);},[busy,libraryLoading,props.onBusyChange]);
   useEffect(() => { let active=true; void initialReload.current().catch(() => { if(active)setLibraryError('Foto belum dapat dimuat. Coba muat ulang sebelum mengubah galeri.'); }).finally(() => { if(active)setLibraryLoading(false); }); return () => {active=false;}; },[]);
   const dirty = JSON.stringify(form)!==JSON.stringify(initial);
   const activePhotos = props.assets.filter(asset=>!asset.trashedAt); const trashedPhotos=props.assets.filter(asset=>asset.trashedAt);
@@ -39,7 +43,7 @@ export function VeloxaBrandWorkspace(props: Props) {
   }
   function analyzeLogo(assetId:string) {
     void run('palette',async()=>{
-      const result=await veloxaApi<{colors:string[]}>('/api/veloxa/brand/palette',{method:'POST',body:JSON.stringify({workspaceId:form.workspaceId,assetId})});
+      const result=await veloxaApi<{colors:string[]}>('/api/veloxa/brand/palette',{method:'POST',body:JSON.stringify({workspaceId:form.workspaceId,businessId:form.businessId||'primary',assetId})});
       if(!Array.isArray(result.colors)||!result.colors.length||result.colors.length>6||result.colors.some(color=>!/^#[0-9a-f]{6}$/i.test(color)))throw new Error('Saran warna logo tidak valid. Silakan pilih warna manual.');
       setForm(previous=>({...previous,logoAssetId:assetId,useBrandPalette:true,primaryColorHex:result.colors[0],accentColorHex:result.colors[1]||result.colors[0],additionalColorHexes:result.colors.slice(2)}));
     },'Warna logo sudah diambil. Tinjau palet lalu Simpan profil untuk menerapkannya.');

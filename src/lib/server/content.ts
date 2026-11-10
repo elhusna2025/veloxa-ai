@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { assetBusiness, assertBusinessTargets } from '../business-context';
+import { resolveBusinessContext } from './business-contexts';
 import { buildVisualBusinessContext } from '../content-business-context';
 import { profileFingerprint } from '../profile-fingerprint';
 import { defaultContentTopic } from '../veloxa-brand-profile';
@@ -48,17 +50,18 @@ export async function uploadBrandPhoto(request: Request) {
   const size = Number(request.headers.get('content-length'));
   if (!Number.isSafeInteger(size) || size < 1 || size > 9 * 1024 * 1024) throw new ApiError(413, 'Ukuran unggahan tidak valid atau melebihi 8 MB.');
   const body = await request.formData();
-  const { ref, workspaceId, user } = await requireWorkspace(request, body.get('workspaceId'));
+  const { ref, workspaceId, user, workspace } = await requireWorkspace(request, body.get('workspaceId'));
+  const {context}=await resolveBusinessContext(ref,workspace,body.get('businessId'));
   const file = body.get('file');
   if (!(file instanceof File) || file.size < 1 || file.size > 8 * 1024 * 1024 || !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new ApiError(400, 'Pilih gambar JPEG, PNG, atau WebP maksimal 8 MB.');
   let bytes: Buffer;
   try { bytes = await sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 30_000_000 }).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer(); }
   catch { throw new ApiError(400, 'Gambar tidak dapat dibaca. Gunakan file gambar yang valid.'); }
   const requestedTitle = z.string().trim().max(160).parse(body.get('title') || '');
-  return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160));
+  return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160),undefined,context.id);
 }
 
-const contentInput = z.object({ workspaceId: z.string(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
+const contentInput = z.object({ workspaceId: z.string(), businessId:z.string().optional(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -78,8 +81,8 @@ export async function createSocialContent(request: Request, dependencies: {
   if (input.sourceAssetId && input.referenceAssetIds?.length) throw new ApiError(400, 'Pilih salah satu jenis sumber visual.');
   if (input.format !== 'single_post' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk carousel dan Reels.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
-  const snapshot = typeof workspace.snapshotJson === 'string' ? JSON.parse(workspace.snapshotJson) : null;
-  const brand = snapshot?.brand as BrandProfile | undefined;
+  const {contexts,context}=await resolveBusinessContext(ref,workspace,input.businessId);
+  const brand=context.brand;
   if (!brand || brand.workspaceId !== workspaceId || !brand.businessName) throw new ApiError(409, 'Lengkapi Brand Brain workspace sebelum membuat konten.');
   const fingerprint=await profileFingerprint(brand);
   if(input.expectedProfileFingerprint!==fingerprint)throw new ApiError(409,'Profil bisnis telah berubah di tab atau perangkat lain. Isian topik tetap ada. Muat ulang profil sebelum membuat draf.','profile_conflict');
@@ -93,13 +96,14 @@ export async function createSocialContent(request: Request, dependencies: {
   const selected = await ref.collection('private_meta_connections').get();
   const planId: SubscriptionPlanId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
   const selectedAccounts=selectDraftAccounts(readSocialAccounts(selected.docs),input.selectedConnectionIds,planId);
+  try{assertBusinessTargets(contexts,context.id,selectedAccounts.map(account=>account.connectionId),input.businessId===undefined&&contexts.length===1&&context.revision===0);}catch(error){throw new ApiError(409,error instanceof Error?error.message:'Akun tidak sesuai bisnis.','business_target_mismatch');}
   const connections=selectedAccounts.map(publicConnection);
   if (input.sourceAssetId) {
     const record = (await ref.collection('server_assets').doc(input.sourceAssetId).get()).data();
-    if (!isWorkspacePhoto(record, workspaceId) || record.trashedAt) throw new ApiError(404, 'Foto tidak tersedia. Pilih foto lain atau pulihkan dari Sampah.');
+    if (!isWorkspacePhoto(record, workspaceId) || assetBusiness(record.asset)!==context.id || record.trashedAt) throw new ApiError(404, 'Foto tidak tersedia. Pilih foto lain atau pulihkan dari Sampah.');
   }
   if (input.referenceAssetIds?.length) progress('references');
-  const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage);
+  const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage,context.id);
   const visualReferences=references.filter(item=>referenceRoles[item.id]==='visual');
   const originalAssets=references.filter(item=>referenceRoles[item.id]!=='visual').map(item=>({id:item.id,role:referenceRoles[item.id] as 'logo'|'screenshot',bytes:item.bytes}));
   const referenceImageParams = references.length ? { ...(visualReferences.length?{referenceImages:visualReferences.map(item=>item.bytes),sceneReferenceLabels:visualReferences.map(item=>`Ref ${references.indexOf(item)+1}: ${item.title}`)}:{}), referenceInstruction: input.referenceInstruction || topic } : {};
@@ -110,6 +114,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: topic, vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.referenceRoles=referenceRoles;
+  if(input.businessId!==undefined||contexts.length>1||context.revision>0)draft.businessId=context.id;
   draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
   if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }
   const targetBindings=selectedAccounts.map(toAccountTarget);
@@ -227,6 +232,6 @@ export async function listSocialContent(request: Request, workspaceId: unknown) 
   return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), quotaUsed: Number(usage.data()?.count || 0), generationQuota };
 }
 
-export async function listBrandPhotos(request: Request, workspaceId: unknown, includeTrash = false) {
-  return listWorkspacePhotos(request, workspaceId, includeTrash);
+export async function listBrandPhotos(request: Request, workspaceId: unknown, includeTrash = false,selectedBusiness:unknown='primary') {
+  return listWorkspacePhotos(request, workspaceId, includeTrash,{},selectedBusiness);
 }

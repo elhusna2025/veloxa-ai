@@ -59,6 +59,7 @@ export interface BrandOfferingItem {
 }
 
 export interface BrandProfile {
+  businessId?: string;
   workspaceId: string;
   businessName: string;
   businessDescription?: string;
@@ -91,6 +92,7 @@ export interface ExtractedStyleDna {
 }
 
 export interface BrandVaultAsset {
+  businessId?: string;
   id: string;
   workspaceId: string;
   drawer: VaultDrawerType;
@@ -190,6 +192,7 @@ export interface OrganicPerformanceMetrics {
 }
 
 export interface ContentDraft {
+  businessId?: string;
   referenceRoles?: import('./content-reference-roles').ContentReferenceRoles;
   visualText?: string[];
   id: string;
@@ -250,6 +253,8 @@ export type EventCampaignPhase =
   | 'post_event_recap';
 
 export interface EventCampaign {
+  businessId?:string;
+  connectionIds?:string[];
   id: string;
   workspaceId: string;
   name: string;
@@ -322,6 +327,8 @@ export interface MetaOptimizationAction {
 }
 
 export interface MetaAdCampaignPlan {
+  businessId?: string;
+  destinationAccounts?: {connectionId:string;accountName:string;handle:string;channel:SocialChannelId}[];
   id: string;
   workspaceId: string;
   campaignName: string;

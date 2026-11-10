@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { assetBusiness, PRIMARY_BUSINESS } from '../business-context';
 import { adminBucket } from './firebase';
 import type { requireWorkspace } from './auth';
 import { isWorkspacePhoto } from './brand-assets';
@@ -6,13 +7,13 @@ import { ApiError } from './http';
 import { MAX_CONTENT_REFERENCES, MAX_REFERENCE_IMAGE_BYTES, MAX_REFERENCE_TOTAL_BYTES } from '../content-reference-options';
 export interface ContentReference { id:string; title:string; bytes:Buffer }
 /** Only server-owned Storage paths are sources. Never download a client/provider URL. */
-export async function loadContentReferences(ref: Awaited<ReturnType<typeof requireWorkspace>>['ref'], workspaceId:string, ids:string[], storage?:ReturnType<typeof adminBucket>):Promise<ContentReference[]> {
+export async function loadContentReferences(ref: Awaited<ReturnType<typeof requireWorkspace>>['ref'], workspaceId:string, ids:string[], storage?:ReturnType<typeof adminBucket>,selectedBusiness=PRIMARY_BUSINESS):Promise<ContentReference[]> {
   if(ids.length>MAX_CONTENT_REFERENCES||new Set(ids).size!==ids.length)throw new ApiError(400, 'Pilihan referensi tidak valid.');
   if(!ids.length)return [];
   const result:ContentReference[]=[];let total=0;
   for(const id of ids){
     const record=(await ref.collection('server_assets').doc(id).get()).data();
-    if(!isWorkspacePhoto(record,workspaceId)||record.asset.id!==id||record.trashedAt||record.asset.mediaType!=='photo')throw new ApiError(404,'Salah satu foto referensi tidak tersedia. Periksa pilihan atau pulihkan dari Sampah.');
+    if(!isWorkspacePhoto(record,workspaceId)||record.asset.id!==id||assetBusiness(record.asset)!==selectedBusiness||record.trashedAt||record.asset.mediaType!=='photo')throw new ApiError(404,'Salah satu foto referensi tidak tersedia. Periksa pilihan atau pulihkan dari Sampah.');
     const remaining=Math.min(MAX_REFERENCE_IMAGE_BYTES,MAX_REFERENCE_TOTAL_BYTES-total);
     if(remaining<=0)throw new ApiError(413,'Ukuran referensi terlalu besar. Pilih lebih sedikit foto.');
     let bytes:Buffer;

@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { businessId } from '../business-context';
 import { z } from 'zod';
 import { requireWorkspace } from './auth';
 import { loadContentReferences } from './content-references';
@@ -24,10 +25,10 @@ export async function extractLogoPalette(bytes: Buffer): Promise<string[]> {
   if(!chosen.length)throw new ApiError(400,'Warna logo belum dapat dibaca. Pilih warna secara manual.');
   return chosen.map(rgb=>'#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase());
 }
-const input=z.object({workspaceId:z.string().min(1),assetId:z.string().uuid()});
+const input=z.object({workspaceId:z.string().min(1),businessId:z.string().optional(),assetId:z.string().uuid()});
 export async function analyzeBrandLogo(request:Request, dependencies: { authorize?:typeof requireWorkspace; storage?:Parameters<typeof loadContentReferences>[3] }={}) {
   const body=input.parse(await readJson(request));
   const {ref,workspaceId}=await(dependencies.authorize||requireWorkspace)(request,body.workspaceId);
-  const [photo]=await loadContentReferences(ref,workspaceId,[body.assetId],dependencies.storage);
+  const [photo]=await loadContentReferences(ref,workspaceId,[body.assetId],dependencies.storage,businessId(body.businessId));
   return {colors:await extractLogoPalette(photo.bytes)};
 }

@@ -4,6 +4,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
+import { VeloxaBusinessSwitcher } from '@/components/VeloxaBusinessSwitcher';
+import { VeloxaBusinessSchedule } from '@/components/VeloxaBusinessSchedule';
+import { VeloxaBusinessAds } from '@/components/VeloxaBusinessAds';
+import { acceptServerWorkspaceRevision } from '@/lib/veloxa-firestore-repo';
+import { PRIMARY_BUSINESS, BUSINESS_DAYS, assetBusiness, draftBusiness, businessAccounts, type BusinessContext, type BusinessSchedule } from '@/lib/business-context';
 import type { ContentReferenceRoles } from '@/lib/content-reference-roles';
 import { profileFingerprint } from '@/lib/profile-fingerprint';
 import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
@@ -175,16 +180,28 @@ export default function VeloxaAiPlatformPage() {
   const [selectedPresetKey, setSelectedPresetKey] = useState<'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom'>('running_event');
 
   // Multi-tenant workspace state
-  const [brand, setBrand] = useState<BrandProfile>(BRAND_PRESETS.running_event);
+  const [workspaceBrand, setWorkspaceBrand] = useState<BrandProfile>(BRAND_PRESETS.running_event);
+  const [businesses,setBusinesses]=useState<BusinessContext[]>([]);
+  const [activeBusinessId,setActiveBusinessId]=useState(PRIMARY_BUSINESS);
+  const [businessesReady,setBusinessesReady]=useState(false);
+  const [businessError,setBusinessError]=useState('');
+  const [businessSaving,setBusinessSaving]=useState(false);
+  const [profileDirty,setProfileDirty]=useState(false);
+  const [profileBusy,setProfileBusy]=useState(false);
+  const [adsSourceDraft,setAdsSourceDraft]=useState<ContentDraft|undefined>();
+  const activeBusiness:BusinessContext=businesses.find(item=>item.id===activeBusinessId)||{id:PRIMARY_BUSINESS,revision:0,brand:workspaceBrand,connectionIds:[],schedule:{connectionIds:[],timesWib:['08:00','19:00'],days:[...BUSINESS_DAYS]}};
+  const brand=activeBusiness.id===PRIMARY_BUSINESS?workspaceBrand:activeBusiness.brand;
   const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>('free_trial');
   const [postsUsedThisMonth, setPostsUsedThisMonth] = useState<number>(0);
   const [connections, setConnections] = useState<ChannelConnectionState[]>(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
   const [connectionsVerified, setConnectionsVerified] = useState(false);
   const [selectedConnectionIds,setSelectedConnectionIds]=useState<string[]>([]);
-  useEffect(()=>{setSelectedConnectionIds([]);},[brand.workspaceId]);
-  useEffect(()=>{if(connectionsVerified)setSelectedConnectionIds(previous=>previous.filter(id=>connections.some(account=>account.connectionId===id&&account.connected)));},[connections,connectionsVerified]);
+  useEffect(()=>{setSelectedConnectionIds([]);},[brand.workspaceId,activeBusinessId]);
+  useEffect(()=>{if(connectionsVerified)setSelectedConnectionIds(previous=>previous.filter(id=>activeBusiness.connectionIds.includes(id)&&connections.some(account=>account.connectionId===id&&account.connected)));},[connections,connectionsVerified,activeBusinessId,activeBusiness.connectionIds.join(',')]);
   const [metaAccount, setMetaAccount] = useState<MetaAdsAccountConnection>(INITIAL_META_ADS_ACCOUNT);
-  const [vaultAssets, setVaultAssets] = useState<BrandVaultAsset[]>([]);
+  const [workspaceAssets, setWorkspaceAssets] = useState<BrandVaultAsset[]>([]);
+  const vaultAssets=workspaceAssets.filter(asset=>assetBusiness(asset)===activeBusinessId);
+  const activeConnections=businessAccounts(activeBusiness,connections);
   const [autonomyConfig, setAutonomyConfig] = useState<AutonomyConfig>(INITIAL_AUTONOMY_CONFIG);
   const [eventCampaigns, setEventCampaigns] = useState<EventCampaign[]>([]);
   const [drafts, setDrafts] = useState<ContentDraft[]>([]);
@@ -204,7 +221,7 @@ export default function VeloxaAiPlatformPage() {
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [referenceInstruction, setReferenceInstruction] = useState('');
   const [referenceRoles, setReferenceRoles] = useState<ContentReferenceRoles>({});
-  useEffect(() => { setSelectedReferenceIds([]); setReferenceRoles({}); setReferenceInstruction(''); }, [brand.workspaceId]);
+  useEffect(() => { setSelectedReferenceIds([]); setReferenceRoles({}); setReferenceInstruction('');setStudioTopic('');setProfileDirty(false);setProfileBusy(false);setAdsSourceDraft(undefined);setPublishReviewDraftId(null);setGenerationFeedback(null); }, [brand.workspaceId,activeBusinessId]);
   const [studioTopic, setStudioTopic] = useState<string>('');
   const [studioFilter, setStudioFilter] = useState<'all' | 'draft' | 'published' | 'attention'>('all');
 
@@ -295,12 +312,12 @@ export default function VeloxaAiPlatformPage() {
     setFirebaseCfg(savedCfg);
 
     const applySnapshotToState = (snap: NonNullable<Awaited<ReturnType<typeof loadWorkspaceSnapshotFromStore>>['snapshot']>) => {
-      setBrand(snap.brand);
+      setWorkspaceBrand(snap.brand);setActiveBusinessId(PRIMARY_BUSINESS);setBusinessesReady(false);setBusinesses([]);
       setActivePlanId(snap.activePlanId);
       setPostsUsedThisMonth(snap.postsUsedThisMonth);
       setConnections(snap.connections);
       setMetaAccount({ ...snap.metaAccount, connected: false });
-      setVaultAssets(snap.vaultAssets);
+      setWorkspaceAssets(snap.vaultAssets);
       setAutonomyConfig({ ...snap.autonomyConfig, enabled: false });
       setEventCampaigns(snap.eventCampaigns);
       setDrafts(snap.drafts);
@@ -350,10 +367,11 @@ export default function VeloxaAiPlatformPage() {
         void syncWorkspaceSnapshotToStore(builtSnap, savedCfg, { forceCloudPush: true });
       }
 
-      const [metaResult, contentResult, mediaResult] = await Promise.allSettled([
+      const [metaResult, contentResult, mediaResult,businessResult] = await Promise.allSettled([
         veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
         veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number; generationQuota?: GenerationQuota }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
         veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}&includeTrash=1`),
+        veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(targetWsId)}`),
       ]);
       if (epoch !== hydrationEpoch.current) return;
       const resourceIssues: string[] = [];
@@ -371,9 +389,10 @@ export default function VeloxaAiPlatformPage() {
         setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
         setPostsUsedThisMonth(content.quotaUsed); setGenerationQuota(content.generationQuota || null);
       } else resourceIssues.push('Koleksi konten belum dapat diperbarui.');
-      if (mediaResult.status === 'fulfilled') setVaultAssets(mediaResult.value.assets);
+      if (businessResult.status==='fulfilled'){setBusinesses(businessResult.value.businesses);try{const saved=sessionStorage.getItem(`veloxa:business:${user.uid}:${targetWsId}`);if(saved&&businessResult.value.businesses.some(item=>item.id===saved))setActiveBusinessId(saved);}catch{ /* Storage is optional. */ }setBusinessesReady(true);setBusinessError('');}else{setBusinessesReady(false);setBusinessError('Daftar bisnis belum dapat dimuat.');resourceIssues.push('Muat ulang daftar bisnis sebelum membuat konten.');}
+      if (mediaResult.status === 'fulfilled') setWorkspaceAssets(previous=>[...previous.filter(asset=>assetBusiness(asset)!==PRIMARY_BUSINESS),...mediaResult.value.assets]);
       else {
-        setVaultAssets([]); setSelectedReferenceIds([]);
+        setWorkspaceAssets([]); setSelectedReferenceIds([]);
         resourceIssues.push('Galeri foto belum dapat dimuat. Coba Muat ulang di Profil & aset.');
       }
       if (resourceIssues.length) setStatusBanner(resourceIssues.join(' '));
@@ -408,7 +427,7 @@ export default function VeloxaAiPlatformPage() {
       if (!active) return;
       const epoch = ++hydrationEpoch.current;
       setIsWorkspaceLoading(!!fbUser);
-      setAuthUser(fbUser);
+      setAuthUser(fbUser);setBusinessesReady(false);setBusinesses([]);setActiveBusinessId(PRIMARY_BUSINESS);setProfileDirty(false);setProfileBusy(false);
       setActiveRole(fbUser?.isSuperAdmin ? 'admin' : 'user');
       if (fbUser) void hydrateForAuthenticatedUser(fbUser, epoch).catch(error => {
         if (active && epoch === hydrationEpoch.current) setStatusBanner(error instanceof Error ? error.message : 'Workspace belum dapat dimuat.');
@@ -425,12 +444,12 @@ export default function VeloxaAiPlatformPage() {
     }
     void syncWorkspaceSnapshotToStore(
       {
-        brand,
+        brand:workspaceBrand,
         activePlanId,
         postsUsedThisMonth,
         connections,
         metaAccount,
-        vaultAssets,
+        vaultAssets:workspaceAssets,
         autonomyConfig,
         eventCampaigns,
         drafts,
@@ -446,12 +465,12 @@ export default function VeloxaAiPlatformPage() {
     });
   }, [
     authUser,
-    brand,
+    workspaceBrand,
     activePlanId,
     postsUsedThisMonth,
     connections,
     metaAccount,
-    vaultAssets,
+    workspaceAssets,
     autonomyConfig,
     eventCampaigns,
     drafts,
@@ -470,12 +489,12 @@ export default function VeloxaAiPlatformPage() {
   const handleForceCloudSync = async () => {
     const res = await syncWorkspaceSnapshotToStore(
       {
-        brand,
+        brand:workspaceBrand,
         activePlanId,
         postsUsedThisMonth,
         connections,
         metaAccount,
-        vaultAssets,
+        vaultAssets:workspaceAssets,
         autonomyConfig,
         eventCampaigns,
         drafts,
@@ -500,35 +519,30 @@ export default function VeloxaAiPlatformPage() {
     router.push(authUser ? '/onboarding' : '/register');
   };
 
-  const handleSaveBrandProfile = async (value: BrandProfile) => {
-    if (value.workspaceId !== brand.workspaceId) throw new Error('Workspace berubah. Buka kembali profil yang ingin disimpan.');
-    const epoch = hydrationEpoch.current; const next = normalizeBrandProfile(value);
-    const result = await syncWorkspaceSnapshotToStore({ brand: next, activePlanId, postsUsedThisMonth, connections, metaAccount, vaultAssets, autonomyConfig, eventCampaigns, drafts, metaAdCampaigns, tenants, updatedAtIso: new Date().toISOString() }, firebaseCfg, { forceCloudPush: true });
-    if (!result.syncedToFirestore) throw new Error(result.error || 'Profil belum tersimpan ke cloud. Isian Anda tetap ada; periksa koneksi lalu simpan lagi.');
-    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Muat ulang untuk memeriksa profil tersimpan.');
-    setBrand(next); setLocalTelemetry(result.telemetry);
+  const navigateWorkspace=(tab:UserTabId)=>{if(profileDirty&&activeTab==='brand_vault'&&tab!=='brand_vault'){setStatusBanner('Simpan atau batalkan perubahan profil sebelum berpindah halaman.');return;}setActiveTab(tab);};
+  const businessLocked=isWorkspaceLoading||isCreatingContent||Boolean(publishingDraftId)||businessSaving||profileDirty||profileBusy;
+  const selectBusiness=(id:string)=>{if(businessLocked||!businessesReady||!businesses.some(item=>item.id===id))return;hydrationEpoch.current++;try{sessionStorage.setItem(`veloxa:business:${authUser?.uid}:${workspaceBrand.workspaceId}`,id);}catch{ /* Storage is optional. */ }setActiveBusinessId(id);setStatusBanner('');};
+  const reloadBusinesses=async()=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(workspaceBrand.workspaceId)}`);if(epoch!==hydrationEpoch.current)return;setBusinesses(result.businesses);setBusinessesReady(true);setBusinessError('');};
+  const saveBusinessChanges=async(patch:{connectionIds?:string[];profile?:BrandProfile;schedule?:BusinessSchedule;expectedProfileFingerprint?:string})=>{
+    if(!businessesReady)throw new Error('Muat ulang daftar bisnis terlebih dahulu.');const epoch=hydrationEpoch.current;setBusinessSaving(true);
+    try{const result=await veloxaApi<{businesses:BusinessContext[];workspaceSnapshotRevision?:number}>('/api/veloxa/businesses',{method:'PATCH',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,expectedRevision:activeBusiness.revision,...patch})});if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah. Muat ulang untuk memeriksa hasil.');if(patch.profile&&activeBusinessId===PRIMARY_BUSINESS){if(result.workspaceSnapshotRevision===undefined)throw new Error('Revisi profil utama belum dapat diverifikasi. Muat ulang halaman.');acceptServerWorkspaceRevision(workspaceBrand.workspaceId,result.workspaceSnapshotRevision);setWorkspaceBrand(result.businesses.find(item=>item.id===PRIMARY_BUSINESS)!.brand);}setBusinesses(result.businesses);}finally{setBusinessSaving(false);}
   };
+  const createNewBusiness=async(name:string)=>{const epoch=hydrationEpoch.current;setBusinessSaving(true);try{const result=await veloxaApi<{businesses:BusinessContext[];businessId:string}>('/api/veloxa/businesses',{method:'POST',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,name})});if(epoch!==hydrationEpoch.current)return;setBusinesses(result.businesses);hydrationEpoch.current++;try{sessionStorage.setItem(`veloxa:business:${authUser?.uid}:${workspaceBrand.workspaceId}`,result.businessId);}catch{ /* Storage is optional. */ }setActiveBusinessId(result.businessId);setActiveTab('brand_vault');setStatusBanner('Bisnis dibuat. Lengkapi profil dan tautkan akun sosial yang sesuai.');}finally{setBusinessSaving(false);}};
+  const handleSaveBrandProfile=async(value:BrandProfile)=>{if(!businessesReady||value.workspaceId!==workspaceBrand.workspaceId||(value.businessId||PRIMARY_BUSINESS)!==activeBusinessId)throw new Error('Bisnis berubah. Buka kembali profil yang ingin disimpan.');const epoch=hydrationEpoch.current;const expectedProfileFingerprint=activeBusinessId===PRIMARY_BUSINESS?await profileFingerprint(workspaceBrand):undefined;if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah.');await saveBusinessChanges({profile:normalizeBrandProfile(value),...(expectedProfileFingerprint?{expectedProfileFingerprint}:{})});};
   const handleReloadBrandPhotos = async () => {
-    const epoch = hydrationEpoch.current;
-    const result = await veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(brand.workspaceId)}&includeTrash=1`);
-    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Buka kembali galeri foto.');
-    setVaultAssets(result.assets);
-    setSelectedReferenceIds(previous => previous.filter(id => result.assets.some(asset => asset.id === id && !asset.trashedAt)));
+    const epoch=hydrationEpoch.current;const id=activeBusinessId;
+    const result=await veloxaApi<{assets:BrandVaultAsset[]}>(`/api/veloxa/media?workspaceId=${encodeURIComponent(workspaceBrand.workspaceId)}&businessId=${encodeURIComponent(id)}&includeTrash=1`);
+    if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri foto.');
+    setWorkspaceAssets(previous=>[...previous.filter(asset=>assetBusiness(asset)!==id),...result.assets]);setSelectedReferenceIds(previous=>previous.filter(key=>result.assets.some(asset=>asset.id===key&&!asset.trashedAt)));
   };
   const handleUploadBrandPhoto = async (file: File, title: string) => {
-    const epoch = hydrationEpoch.current;
-    const form = new FormData(); form.set('workspaceId', brand.workspaceId); form.set('file', file); form.set('title', title);
-    const result = await veloxaApi<{ asset: BrandVaultAsset }>('/api/veloxa/media', { method: 'POST', body: form });
-    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Buka kembali galeri foto.');
-    setVaultAssets(previous => [result.asset, ...previous.filter(asset => asset.id !== result.asset.id)]);
+    if(!businessesReady)throw new Error('Daftar bisnis belum tersedia.');const epoch=hydrationEpoch.current;
+    const form=new FormData();form.set('workspaceId',workspaceBrand.workspaceId);form.set('businessId',activeBusinessId);form.set('file',file);form.set('title',title);
+    const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media',{method:'POST',body:form});
+    if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri foto.');setWorkspaceAssets(previous=>[result.asset,...previous.filter(asset=>asset.id!==result.asset.id)]);
   };
-  const handleAssetState = async (assetId: string, action: 'trash' | 'restore') => {
-    const epoch = hydrationEpoch.current;
-    const result = await veloxaApi<{ asset: BrandVaultAsset }>('/api/veloxa/media', { method: 'PATCH', body: JSON.stringify({ workspaceId: brand.workspaceId, assetId, action }) });
-    if (epoch !== hydrationEpoch.current) throw new Error('Workspace berubah. Buka kembali galeri foto.');
-    setVaultAssets(previous => previous.map(asset => asset.id === assetId ? result.asset : asset));
-    if (action === 'trash') setSelectedReferenceIds(previous => previous.filter(id => id !== assetId));
-  };
+  const handleAssetState = async (assetId:string,action:'trash'|'restore')=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media',{method:'PATCH',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,assetId,action})});if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri.');setWorkspaceAssets(previous=>previous.map(asset=>asset.id===assetId?result.asset:asset));if(action==='trash')setSelectedReferenceIds(previous=>previous.filter(id=>id!==assetId));};
+  useEffect(()=>{let active=true;const epoch=hydrationEpoch.current;if(authUser&&businessesReady)void handleReloadBrandPhotos().catch(error=>{if(active&&epoch===hydrationEpoch.current)setStatusBanner(error instanceof Error?error.message:'Galeri belum dapat dimuat.');});return()=>{active=false;};},[authUser?.uid,activeBusinessId,businessesReady]);
 
   const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => setEditingChannel(channel);
   const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
@@ -589,7 +603,8 @@ export default function VeloxaAiPlatformPage() {
   const handleSelectBrandPreset = (key: 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom') => {
     setSelectedPresetKey(key);
     const nextBrand = BRAND_PRESETS[key];
-    setBrand(authUser ? { ...nextBrand, workspaceId: brand.workspaceId } : nextBrand);
+    if(activeBusinessId!==PRIMARY_BUSINESS){setStatusBanner('Preset inspeksi hanya tersedia untuk bisnis utama.');return;}
+    setWorkspaceBrand(authUser ? { ...nextBrand, workspaceId: workspaceBrand.workspaceId } : nextBrand);
     setAdCity(nextBrand.city);
     setAdPromoTitle(nextBrand.offerings[0]?.title || nextBrand.businessName);
     setStatusBanner(`Workspace beralih ke preset "${nextBrand.businessName}" (${nextBrand.city}).`);
@@ -599,6 +614,7 @@ export default function VeloxaAiPlatformPage() {
 
   const handleGenerateStudioDraft = async (_source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
     if (generationAttempt.current) return;
+    if(!businessesReady||!selectedConnectionIds.length||selectedConnectionIds.some(id=>!activeBusiness.connectionIds.includes(id))){setStatusBanner('Pilih bisnis dan tautkan akun tujuan yang sesuai sebelum membuat konten.');return;}
     if (scheduledSlotWib) { setStatusBanner('Penjadwalan belum diaktifkan. Buat dan tinjau post tunggal di Studio dahulu.'); return; }
     const attempt = {}; generationAttempt.current = attempt;
     const epoch = hydrationEpoch.current;
@@ -612,7 +628,7 @@ export default function VeloxaAiPlatformPage() {
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
       requestStarted=true;
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, selectedConnectionIds, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, referenceRoles:Object.fromEntries(selectedReferenceIds.map(id=>[id,referenceRoles[id]||'visual'])), ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, businessId:activeBusinessId, selectedConnectionIds, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, referenceRoles:Object.fromEntries(selectedReferenceIds.map(id=>[id,referenceRoles[id]||'visual'])), ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic(''); setGenerationQuota(result.generationQuota || null);
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });
@@ -644,53 +660,16 @@ export default function VeloxaAiPlatformPage() {
     finally { setPublishingDraftId(null); }
   };
 
-  const handleCreateEventCampaign = () => {
-    if (!newCampaignName.trim()) return;
-    const phaseInfo = computeEventCampaignPhase(newCampaignDate);
-    const created: EventCampaign = {
-      id: `camp_${Date.now()}`,
-      workspaceId: brand.workspaceId,
-      name: newCampaignName.trim(),
-      eventDateIso: newCampaignDate,
-      location: brand.city,
-      ticketOrPromoHighlight:
-        newCampaignHighlight.trim() || `Promo spesial ${newCampaignName.trim()} di ${brand.city}`,
-      targetRegistrationsOrSales: 500,
-      currentConversions: 0,
-      status: 'active',
-      currentPhase: phaseInfo.phase,
-      autoInjectIntoDailyAutonomy: true,
-    };
-    setEventCampaigns((prev) => [created, ...prev]);
-    setNewCampaignName('');
-    setNewCampaignHighlight('');
-    setStatusBanner(`Kampanye Event "${created.name}" (${phaseInfo.phaseLabel}) diaktifkan ke dalam kalender otonom!`);
+  const handleSaveBusinessEvent=async(name:string,date:string,highlight:string,connectionIds:string[])=>{
+    if(!businessesReady||!name.trim()||name.trim().length>120||highlight.length>500||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||!connectionIds.length||connectionIds.some(id=>!activeBusiness.connectionIds.includes(id)))throw new Error('Periksa nama, tanggal, dan akun rencana event.');
+    const epoch=hydrationEpoch.current;const created:EventCampaign={id:'camp_'+crypto.randomUUID(),workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,connectionIds:[...new Set(connectionIds)],name:name.trim(),eventDateIso:date,location:brand.city,ticketOrPromoHighlight:highlight.trim(),targetRegistrationsOrSales:0,currentConversions:0,status:'Scheduled',currentPhase:computeEventCampaignPhase(date).phase,autoInjectIntoDailyAutonomy:false};const next=[created,...eventCampaigns];setBusinessSaving(true);
+    try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns:next,drafts,metaAdCampaigns,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error(result.error||'Rencana event belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setEventCampaigns(next);}finally{setBusinessSaving(false);}
   };
 
-  const handleDesignMetaAdsWithAi = (fromOrganicDraft?: ContentDraft) => {
-    try {
-    const plan = buildMetaAdCampaignPlan({
-      brand,
-      metaAccount,
-      objective: adObjective,
-      promotedOfferingTitle: fromOrganicDraft ? fromOrganicDraft.title : adPromoTitle,
-      requestedDailyBudgetIdr: fromOrganicDraft?.organicMetrics?.recommendedAdDailyBudgetIdr || adDailyBudgetIdr,
-      durationDays: adDurationDays,
-      targetCity: adCity,
-      radiusKm: adRadiusKm,
-      ageMin: adAgeMin,
-      ageMax: adAgeMax,
-      customInterestKeyword: adCustomInterest,
-      originatedFromOrganicDraft: fromOrganicDraft,
-    });
-    setMetaAdCampaigns((prev) => [plan, ...prev]);
-    setActiveTab('meta_ads');
-    setStatusBanner(
-      plan.budget.hardCapClamped
-        ? `Rancangan AI Meta Ads selesai dibuat! Pagar Budget mengunci budget harian ke ${formatIdr(plan.budget.appliedDailyBudgetIdr)}/hari.`
-        : `Rancangan AI Meta Ads "${plan.campaignName}" selesai disusun lengkap dengan demografi, interest resmi Meta, & A/B creative!`,
-    );
-    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Rancangan budget belum valid.'); }
+  const handleDesignMetaAdsWithAi=(draft?:ContentDraft)=>{if(draft&&draftBusiness(draft)!==activeBusinessId){setStatusBanner('Pilih bisnis asal konten sebelum merancang iklan.');return;}setAdsSourceDraft(draft);setActiveTab('meta_ads');};
+  const handleSaveBusinessAdPlan=async(plan:MetaAdCampaignPlan)=>{
+    if(!businessesReady||plan.businessId!==activeBusinessId||!plan.destinationAccounts?.length||plan.destinationAccounts.some(target=>!activeBusiness.connectionIds.includes(target.connectionId)))throw new Error('Rancangan dan akun tujuan tidak sesuai bisnis aktif.');
+    const epoch=hydrationEpoch.current;const next=[plan,...metaAdCampaigns];setBusinessSaving(true);try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns,drafts,metaAdCampaigns:next,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error(result.error||'Rancangan belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setMetaAdCampaigns(next);setLocalTelemetry(result.telemetry);}finally{setBusinessSaving(false);}
   };
 
   const handleToggleMetaCampaignRun = async (_campaignId: string) => {
@@ -710,8 +689,10 @@ export default function VeloxaAiPlatformPage() {
     setStatusBanner('Konfigurasi produksi dikelola melalui environment dan Secret Manager backend. Kunci API tidak disimpan di browser.');
   };
 
-  const studioDrafts = drafts.filter(draft => studioFilter === 'all' || (studioFilter === 'published' ? draft.status === 'published' : studioFilter === 'attention' ? ['publish_failed', 'partially_published', 'needs_attention'].includes(draft.status) : !['published', 'publish_failed', 'partially_published', 'needs_attention'].includes(draft.status)));
-  const organicWinnerDraft = drafts.find((d) => d.organicMetrics?.isOrganicWinner);
+  const businessDrafts=drafts.filter(draft=>draftBusiness(draft)===activeBusinessId);
+  const businessAdPlans=metaAdCampaigns.filter(plan=>(plan.businessId||PRIMARY_BUSINESS)===activeBusinessId);
+  const studioDrafts = businessDrafts.filter(draft => studioFilter === 'all' || (studioFilter === 'published' ? draft.status === 'published' : studioFilter === 'attention' ? ['publish_failed', 'partially_published', 'needs_attention'].includes(draft.status) : !['published', 'publish_failed', 'partially_published', 'needs_attention'].includes(draft.status)));
+  const organicWinnerDraft = businessDrafts.find((d) => d.organicMetrics?.isOrganicWinner);
   const i18nCopy = VELOXA_I18N_COPY[locale];
 
   const isUserWorkspaceView = Boolean(
@@ -1149,7 +1130,7 @@ export default function VeloxaAiPlatformPage() {
               activeTab={activeTab} brandName={brand.businessName} planName={currentPlan.name}
               email={authUser.email} displayName={authUser.displayName || brand.businessName}
               used={postsUsedThisMonth} quota={currentPlan.monthlyPostQuota} locale={locale}
-              onNavigate={setActiveTab} onCreate={() => setActiveTab('studio')}
+              onNavigate={navigateWorkspace} onCreate={() => navigateWorkspace('studio')}
               onConnections={() => handleOpenOAuthConfigModal(connections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
               onBilling={() => { setSelectedCheckoutPlanId(activePlanId); billingDialogRef.current?.showModal(); }}
               onAccount={() => authDialogRef.current?.showModal()} onSignOut={handleRequestSignOutClick}
@@ -1158,6 +1139,7 @@ export default function VeloxaAiPlatformPage() {
               status={statusBanner || undefined}
               presetControls={authUser.isSuperAdmin ? <select aria-label="Pilih Inspeksi Brand" value={selectedPresetKey} onChange={event => handleSelectBrandPreset(event.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom')} className="mt-3 w-full rounded-lg border p-2 text-base"><option value="running_event">Nusantara Run</option><option value="cafe_fnb">Kopi Senja</option><option value="clinic_beauty">GlowDerm</option><option value="custom">Brand aktif</option></select> : undefined}
             >
+              <VeloxaBusinessSwitcher businesses={businesses} activeId={activeBusinessId} accounts={connections} locked={businessLocked} ready={businessesReady} error={businessError} onSelect={selectBusiness} onCreate={createNewBusiness} onAssign={connectionIds=>saveBusinessChanges({connectionIds})} onReload={reloadBusinesses}/>
               {/* ====================================================================
                  TAB 1: EXECUTIVE ANALYTICS OVERVIEW, CHARTS & 4-CHANNEL COMMAND HUB
                  ==================================================================== */}
@@ -1169,11 +1151,11 @@ export default function VeloxaAiPlatformPage() {
                   brand={brand}
                   currentPlan={currentPlan}
                   postsUsedThisMonth={postsUsedThisMonth}
-                  connections={connections}
+                  connections={activeConnections}
                   metaAccount={metaAccount}
                   autonomyConfig={autonomyConfig}
-                  drafts={drafts}
-                  metaAdCampaigns={metaAdCampaigns}
+                  drafts={businessDrafts}
+                  metaAdCampaigns={businessAdPlans}
                   organicWinnerDraft={organicWinnerDraft}
                   onNavigateTab={(tab) => setActiveTab(tab)}
                   onToggleChannel={handleToggleChannel}
@@ -1191,7 +1173,7 @@ export default function VeloxaAiPlatformPage() {
                  TAB 2: BRAND BRAIN & DUAL ASSET VAULT (REFERENSI GAYA vs FOTO ASLI)
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
-                <VeloxaBrandWorkspace key={brand.workspaceId} brand={brand} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
+                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
               )}
 
               {/* ====================================================================
@@ -1199,10 +1181,10 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <VeloxaStudioComposer accounts={connections} accountsVerified={connectionsVerified} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
+                  <VeloxaStudioComposer accounts={activeConnections} accountsVerified={connectionsVerified&&businessesReady} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
 
-                  <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{drafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
-                  {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{drafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{drafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
+                  <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{businessDrafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
+                  {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{businessDrafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{businessDrafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
 
                   {/* Generated Drafts List */}
                   <div className="space-y-4">
@@ -1379,622 +1361,12 @@ export default function VeloxaAiPlatformPage() {
               {/* ====================================================================
                  TAB 4: AGENT KONTEN OTONOM & KAMPANYE EVENT (USER BEBAS ATUR FREKUENSI)
                  ==================================================================== */}
-              {activeTab === 'autonomy' && (
-                <div className="space-y-6">
-                  <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-                    {/* User-Controlled Autonomous Schedule */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
-                      <div className="flex items-center justify-between">
-                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
-                          Rencana konten
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setStatusBanner('Penjadwalan otomatis belum diaktifkan. Gunakan Studio untuk meninjau dan menerbitkan post tunggal dahulu.')
-                          }
-                          className={`rounded-full px-3.5 py-1 text-sm font-semibold ${
-                            autonomyConfig.enabled
-                              ? 'bg-[#bd416e] text-white shadow-2xs'
-                              : 'border border-neutral-200 bg-neutral-100 text-neutral-600'
-                          }`}
-                        >
-                          {autonomyConfig.enabled ? '● Otonom Aktif' : '○ Dijeda'}
-                        </button>
-                      </div>
-
-                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
-                        Atur jadwal konten
-                      </h2>
-                      <p className="text-sm text-neutral-500">
-                        Penjadwalan otomatis belum tersedia. Anda tetap dapat membuat dan menerbitkan konten melalui Studio.
-                      </p>
-
-                      <div className="mt-4 space-y-4 text-sm">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div>
-                            <label htmlFor="veloxa-field-9" className="font-medium text-neutral-700">
-                              Frekuensi Posting per Hari
-                            </label>
-                            <select id="veloxa-field-9"
-                              aria-label="Frekuensi Posting per Hari"
-                              value={autonomyConfig.postsPerDay}
-                              onChange={(e) => {
-                                const count = Number(e.target.value) as 1 | 2 | 3 | 4;
-                                const presets: Record<number, string[]> = {
-                                  1: ['08:00'],
-                                  2: ['07:00', '19:00'],
-                                  3: ['07:00', '12:30', '19:30'],
-                                  4: ['07:00', '11:30', '16:00', '20:00'],
-                                };
-                                setAutonomyConfig({
-                                  ...autonomyConfig,
-                                  postsPerDay: count,
-                                  scheduleTimesWib: presets[count],
-                                });
-                              }}
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
-                            >
-                              <option value={1}>1x Sehari (30 konten/bulan)</option>
-                              <option value={2}>2x Sehari · Pagi & Malam (60 konten/bulan)</option>
-                              <option value={3}>3x Sehari · Pagi, Siang, Malam (90 konten/bulan)</option>
-                              <option value={4}>4x Sehari · Agresif Kampanye</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label htmlFor="veloxa-field-10" className="font-medium text-neutral-700">Mode Kepercayaan Otonom</label>
-                            <select id="veloxa-field-10"
-                              value={autonomyConfig.executionMode}
-                              onChange={(e) =>
-                                setAutonomyConfig({
-                                  ...autonomyConfig,
-                                  executionMode: e.target.value as AutonomyConfig['executionMode'],
-                                })
-                              }
-                              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
-                            >
-                              <option value="full_autonomous">
-                                Publikasi otomatis · belum tersedia
-                              </option>
-                              <option value="copilot_review">
-                                Tinjau sebelum terbit
-                              </option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p id="veloxa-field-11" className="font-medium text-neutral-700">
-                            Jam Tayang Otomatis (WIB): {autonomyConfig.scheduleTimesWib.join(' · ')} WIB
-                          </p>
-                          <div role="group" aria-labelledby="veloxa-field-11" className="mt-2 flex flex-wrap gap-2">
-                            {autonomyConfig.scheduleTimesWib.map((slot, idx) => (
-                              <input aria-label={`Jam tayang ${idx + 1} (WIB)`}
-                                key={idx}
-                                type="time"
-                                value={slot}
-                                onChange={(e) => {
-                                  const next = [...autonomyConfig.scheduleTimesWib];
-                                  next[idx] = e.target.value;
-                                  setAutonomyConfig({ ...autonomyConfig, scheduleTimesWib: next });
-                                }}
-                                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 font-medium text-neutral-900"
-                              />
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 p-4">
-                          <p className="font-medium text-neutral-800">
-                            Komposisi Pilar Konten Otomatis:
-                          </p>
-                          <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-                            <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
-                              <span className="text-lg font-semibold text-[#a92e5d]">
-                                {autonomyConfig.contentMixPct.educationTips}%
-                              </span>
-                              <p className="text-xs text-neutral-500">Edukasi & Tips</p>
-                            </div>
-                            <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
-                              <span className="text-lg font-semibold text-neutral-900">
-                                {autonomyConfig.contentMixPct.communityStory}%
-                              </span>
-                              <p className="text-xs text-neutral-500">Cerita & Testimoni</p>
-                            </div>
-                            <div className="rounded-xl border border-neutral-200 bg-white p-2.5">
-                              <span className="text-lg font-semibold text-neutral-900">
-                                {autonomyConfig.contentMixPct.productEventPromo}%
-                              </span>
-                              <p className="text-xs text-neutral-500">Promo Produk/Event</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleGenerateStudioDraft(
-                              'autonomous_agent',
-                              `Hari ini, ${autonomyConfig.scheduleTimesWib[0] || '07:00'} WIB`,
-                            )
-                          }
-                          className="w-full rounded-xl bg-[#bd416e] py-3 font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
-                        >
-                          <Bot className="mr-1.5 inline h-4 w-4 text-white" />
-                          Coba rencana jadwal
-                        </button>
-                      </div>
-                    </section>
-
-                    {/* Event Campaign Countdown Manager */}
-                    <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
-                      <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
-                        Kampanye event
-                      </span>
-                      <h2 className="mt-2 text-lg font-semibold text-neutral-900">
-                        Rencanakan konten event
-                      </h2>
-                      <p className="text-sm text-neutral-500">
-                        Sangat cocok untuk Event Lari, Launching Menu Baru Cafe, atau Promo Tanggal Kembar.
-                      </p>
-
-                      <div className="mt-4 space-y-3 text-sm">
-                        {eventCampaigns.map((camp) => {
-                          const phase = computeEventCampaignPhase(camp.eventDateIso);
-                          return (
-                            <div
-                              key={camp.id}
-                              className="rounded-xl border border-neutral-200 bg-white p-4"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="rounded-full bg-[#bd416e] px-2.5 py-0.5 text-xs font-medium text-white">
-                                  {phase.phaseLabel}
-                                </span>
-                                <span className="font-medium text-neutral-600">
-                                  Target: {camp.currentConversions}/{camp.targetRegistrationsOrSales} pendaftar/pembeli
-                                </span>
-                              </div>
-                              <h3 className="mt-2 text-base font-semibold text-neutral-900">{camp.name}</h3>
-                              <p className="mt-0.5 text-neutral-600">{camp.ticketOrPromoHighlight}</p>
-                              <p className="mt-1.5 text-xs font-semibold text-[#a92e5d]">
-                                Arahan AI Hari Ini: {phase.contentAngleDirective}
-                              </p>
-                            </div>
-                          );
-                        })}
-
-                        <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-3.5">
-                          <p className="font-medium text-neutral-900">+ Tambah Kampanye Event Baru</p>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                            <input
-                              type="text"
-                              placeholder="Nama Event (misal: Jakarta Night Run 10K)"
-                              value={newCampaignName}
-                              onChange={(e) => setNewCampaignName(e.target.value)}
-                              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                            />
-                            <input
-                              type="date"
-                              value={newCampaignDate}
-                              onChange={(e) => setNewCampaignDate(e.target.value)}
-                              className="rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                            />
-                          </div>
-                          <input
-                            type="text"
-                            placeholder="Info Tiket / Promo Utama (misal: Early Bird Rp199rb + Medali)"
-                            value={newCampaignHighlight}
-                            onChange={(e) => setNewCampaignHighlight(e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-neutral-900"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleCreateEventCampaign}
-                            className="mt-2 w-full rounded-xl bg-[#bd416e] py-2.5 font-medium text-white shadow-2xs hover:bg-[#a92e5d]"
-                          >
-                            Aktifkan Kampanye Event ke Agent Otonom
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-                  </div>
-                </div>
-              )}
+              {activeTab === 'autonomy' && <VeloxaBusinessSchedule key={activeBusinessId} events={eventCampaigns.filter(event=>(event.businessId||PRIMARY_BUSINESS)===activeBusinessId)} onCreateEvent={handleSaveBusinessEvent} business={{...activeBusiness,brand}} accounts={activeConnections} drafts={businessDrafts} ready={businessesReady&&connectionsVerified} onSave={schedule=>saveBusinessChanges({schedule})}/>}
 
               {/* ====================================================================
                  TAB 5: AI AGENT MARKETING · META ADS ARCHITECT & AUTO-OPTIMIZER
                  ==================================================================== */}
-              {activeTab === 'meta_ads' && (
-                <div className="space-y-6" data-testid="meta-ads-agent-panel">
-                  <p role="note" className="rounded-lg border border-neutral-200 bg-white px-5 py-4 text-base leading-relaxed text-neutral-600">Fitur ini membantu menyusun rencana dan materi iklan. Penayangan serta optimasi iklan otomatis belum diaktifkan.</p>
-                  {/* AI Meta Ads Campaign Designer */}
-                  <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <span className="rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
-                          Perencanaan iklan
-                        </span>
-                        <h2 className="mt-2 text-lg font-semibold text-neutral-900">
-                          Susun rencana iklan Anda
-                        </h2>
-                        <p className="text-sm text-neutral-500">
-                          Tentukan tujuan, audiens, materi, dan anggaran. Rencana ini belum menjalankan iklan.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                      <div>
-                        <label htmlFor="veloxa-field-12" className="font-medium text-neutral-700">Tujuan Kampanye (Objective)</label>
-                        <select id="veloxa-field-12"
-                          value={adObjective}
-                          onChange={(e) => setAdObjective(e.target.value as MetaAdObjective)}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
-                        >
-                          <option value="WHATSAPP_MESSAGES">
-                            Pesan Chat WhatsApp (CTWA)
-                          </option>
-                          <option value="WEBSITE_CONVERSIONS">
-                            Pendaftaran Event / Pembelian Web
-                          </option>
-                          <option value="INSTAGRAM_PROFILE_VISITS">
-                            Kunjungan & Followers Instagram
-                          </option>
-                          <option value="LEAD_GENERATION">
-                            Formulir Prospek (Meta Leads)
-                          </option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label htmlFor="veloxa-field-13" className="font-medium text-neutral-700">Produk / Event yang Diiklankan</label>
-                        <input id="veloxa-field-13"
-                          type="text"
-                          value={adPromoTitle}
-                          onChange={(e) => setAdPromoTitle(e.target.value)}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
-                        />
-                      </div>
-
-                      <div>
-                        <p id="veloxa-field-14" className="font-medium text-neutral-700">
-                          Kota Target & Radius (km)
-                        </p>
-                        <div role="group" aria-labelledby="veloxa-field-14" className="mt-1 flex gap-2">
-                          <input aria-label="Kota target"
-                            type="text"
-                            value={adCity}
-                            onChange={(e) => setAdCity(e.target.value)}
-                            className="w-2/3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
-                          />
-                          <input aria-label="Radius area (km)"
-                            type="number"
-                            value={adRadiusKm}
-                            min={3}
-                            max={80}
-                            onChange={(e) => setAdRadiusKm(Number(e.target.value))}
-                            className="w-1/3 rounded-xl border border-neutral-200 bg-white px-2.5 py-2.5 font-medium text-neutral-900"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <p id="veloxa-field-15" className="font-medium text-neutral-700">
-                          Rentang Usia Demografi ({adAgeMin} – {adAgeMax} thn)
-                        </p>
-                        <div role="group" aria-labelledby="veloxa-field-15" className="mt-1 flex gap-2">
-                          <input aria-label="Usia minimum"
-                            type="number"
-                            value={adAgeMin}
-                            min={18}
-                            max={55}
-                            onChange={(e) => setAdAgeMin(Number(e.target.value))}
-                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
-                          />
-                          <input aria-label="Usia maksimum"
-                            type="number"
-                            value={adAgeMax}
-                            min={20}
-                            max={65}
-                            onChange={(e) => setAdAgeMax(Number(e.target.value))}
-                            className="w-1/2 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label htmlFor="veloxa-field-16" className="font-medium text-neutral-700">
-                          Kata Kunci Interest Tambahan
-                        </label>
-                        <input id="veloxa-field-16"
-                          type="text"
-                          value={adCustomInterest}
-                          onChange={(e) => setAdCustomInterest(e.target.value)}
-                          placeholder="Misal: Strava, Kopi Gayo, Skincare"
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-neutral-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label htmlFor="veloxa-field-17" className="font-medium text-neutral-700">Budget Harian (IDR)</label>
-                        <input id="veloxa-field-17"
-                          type="number"
-                          step={25000}
-                          value={adDailyBudgetIdr}
-                          onChange={(e) => setAdDailyBudgetIdr(Number(e.target.value))}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label htmlFor="veloxa-field-18" className="font-medium text-neutral-700">Durasi Tayang (Hari)</label>
-                        <input id="veloxa-field-18"
-                          type="number"
-                          min={1}
-                          max={90}
-                          value={adDurationDays}
-                          onChange={(e) => setAdDurationDays(Number(e.target.value))}
-                          className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 font-medium text-neutral-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label htmlFor="veloxa-field-19" className="font-medium text-[#a92e5d]">
-                          Pagar Pengaman Budget Harian
-                        </label>
-                        <input id="veloxa-field-19"
-                          type="number"
-                          step={25000}
-                          value={metaAccount.dailyHardCapIdr}
-                          onChange={(e) =>
-                            setMetaAccount({
-                              ...metaAccount,
-                              dailyHardCapIdr: Number(e.target.value),
-                            })
-                          }
-                          className="mt-1 w-full rounded-xl border border-pink-200 bg-white px-3 py-2.5 font-semibold text-neutral-900"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 pt-2">
-                      <p className="text-sm text-neutral-500">
-                        Estimasi total anggaran: <strong className="text-neutral-900">{formatIdr(Math.min(adDailyBudgetIdr, metaAccount.dailyHardCapIdr) * adDurationDays)}</strong> ({adDurationDays} hari) · Belum ada anggaran yang dibelanjakan.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => handleDesignMetaAdsWithAi()}
-                        className="rounded-xl bg-[#bd416e] px-6 py-3 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
-                      >
-                        <Sparkles className="mr-1.5 inline h-4 w-4" />
-                        Buat rencana iklan
-                      </button>
-                    </div>
-                  </section>
-
-                  {/* Active & Draft AI Meta Ads Campaigns */}
-                  <div className="space-y-5">
-                    {metaAdCampaigns.map((camp) => (
-                      <article
-                        key={camp.id}
-                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
-                          <div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span
-                                className={`rounded-full border px-3 py-0.5 text-sm font-semibold ${
-                                  camp.status === 'active_running'
-                                    ? 'border-pink-200 bg-pink-50/70 text-[#a92e5d]'
-                                    : 'border-neutral-200 bg-neutral-50 text-neutral-600'
-                                }`}
-                              >
-                                {camp.status === 'active_running'
-                                  ? 'Rencana tersimpan'
-                                  : 'Rencana tersimpan · belum ditayangkan'}
-                              </span>
-                              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-sm font-medium text-neutral-600">
-                                Objective: {camp.objective.replace('_', ' ')}
-                              </span>
-                              {camp.budget.hardCapClamped && (
-                                <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-sm font-medium text-[#a92e5d]">
-                                  ✓ Dijaga Pagar Budget ({formatIdr(camp.budget.appliedDailyBudgetIdr)}/hari)
-                                </span>
-                              )}
-                            </div>
-                            <h3 className="mt-2 text-lg font-semibold text-neutral-900">
-                              {camp.campaignName}
-                            </h3>
-                            <p className="text-sm text-neutral-500">
-                              Tujuan Klik: <code>{camp.destinationUrlOrWa}</code> · Total Anggaran {camp.budget.durationDays} Hari:{' '}
-                              <strong className="text-neutral-900">{formatIdr(camp.budget.totalBudgetIdr)}</strong>
-                            </p>
-                          </div>
-
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              disabled
-                              onClick={() => handleToggleMetaCampaignRun(camp.id)}
-                              className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                                camp.status === 'active_running'
-                                  ? 'border border-neutral-200 bg-white text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]'
-                                  : 'bg-[#bd416e] text-white shadow-2xs hover:bg-[#a92e5d]'
-                              }`}
-                            >
-                              Penayangan belum tersedia
-                            </button>
-                            <button
-                              type="button"
-                              disabled
-                              onClick={() => handleRunMetaAutoOptimizer(camp.id)}
-                              className="rounded-xl bg-[#bd416e] px-4 py-2.5 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
-                            >
-                              <Zap className="mr-1.5 inline h-3.5 w-3.5 text-white" />
-                              Optimasi belum tersedia
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* 3 Pillars of Meta Ads: Demographics, Validated Interests, Budget & Outcome */}
-                        <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                          {/* Column 1: Demografi & Geo */}
-                          <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm">
-                            <p className="font-semibold uppercase tracking-wider text-neutral-400">
-                              1. Sisi Demografi & Lokasi
-                            </p>
-                            <ul className="mt-2.5 space-y-1.5 text-neutral-600">
-                              <li>
-                                • <strong className="text-neutral-900">Usia Target:</strong> {camp.demographics.ageMin} – {camp.demographics.ageMax} tahun
-                              </li>
-                              <li>
-                                • <strong className="text-neutral-900">Lokasi & Radius:</strong>{' '}
-                                {camp.demographics.locations
-                                  .map((l) => `${l.cityOrPinName} (+${l.radiusKm} km)`)
-                                  .join(', ')}
-                              </li>
-                              <li>
-                                • <strong className="text-neutral-900">Bahasa:</strong> {camp.demographics.languages.join(', ')}
-                              </li>
-                              <li>
-                                • <strong className="text-neutral-900">Advantage+ Audience:</strong> Aktif dengan panduan sinyal AI
-                              </li>
-                            </ul>
-                          </div>
-
-                          {/* Column 2: Validated Meta Interests */}
-                          <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm">
-                            <p className="font-semibold uppercase tracking-wider text-neutral-400">
-                              2. Sisi Interest Resmi Meta API
-                            </p>
-                            <div className="mt-2.5 space-y-2">
-                              {camp.validatedInterests.slice(0, 3).map((interest) => (
-                                <div
-                                  key={interest.id}
-                                  className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-2.5"
-                                >
-                                  <div className="flex items-center justify-between font-medium text-neutral-900">
-                                    <span>{interest.name}</span>
-                                    <span className="text-xs text-[#a92e5d]">
-                                      ID #{interest.id.slice(-5)}
-                                    </span>
-                                  </div>
-                                  <p className="mt-0.5 text-xs text-neutral-500">
-                                    Ukuran audiens: {(interest.audienceSizeLower / 1_000_000).toFixed(1)}M –{' '}
-                                    {(interest.audienceSizeUpper / 1_000_000).toFixed(1)}M orang
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          {/* Column 3: Sisi Budget & Estimasi Hasil */}
-                          <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm">
-                            <p className="font-semibold uppercase tracking-wider text-neutral-400">
-                              3. Sisi Budget & Proyeksi Harian
-                            </p>
-                            <div className="mt-2.5 space-y-2 text-neutral-600">
-                              <div className="flex justify-between">
-                                <span>Budget Harian Aktif:</span>
-                                <strong className="text-neutral-900">
-                                  {formatIdr(camp.budget.appliedDailyBudgetIdr)}/hari
-                                </strong>
-                              </div>
-                              <div className="flex justify-between">
-                                <span>Estimasi Jangkauan (Reach):</span>
-                                <strong className="text-neutral-900">
-                                  {camp.estimatedDailyOutcome.reachMin.toLocaleString('id-ID')} –{' '}
-                                  {camp.estimatedDailyOutcome.reachMax.toLocaleString('id-ID')} org/hari
-                                </strong>
-                              </div>
-                              <div className="flex justify-between">
-                                <span>Estimasi Klik CTA:</span>
-                                <strong className="text-neutral-900">
-                                  {camp.estimatedDailyOutcome.estimatedClicksMin} –{' '}
-                                  {camp.estimatedDailyOutcome.estimatedClicksMax} klik/hari
-                                </strong>
-                              </div>
-                              <div className="flex justify-between">
-                                <span>Target Biaya per Hasil (CPR):</span>
-                                <strong className="text-[#a92e5d]">
-                                  ~{formatIdr(camp.estimatedDailyOutcome.estimatedCostPerResultIdr)} / konversi
-                                </strong>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* A/B Creative Performance & Auto-Optimizer Split */}
-                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                          {camp.creatives.map((cr) => (
-                            <div
-                              key={cr.id}
-                              className={`rounded-xl border p-4 text-sm ${
-                                cr.status === 'winner_scaled'
-                                  ? 'border-pink-300 bg-white ring-1 ring-pink-100'
-                                  : cr.status === 'paused_by_ai_loser'
-                                    ? 'border-neutral-200 bg-neutral-50 opacity-75'
-                                    : 'border-neutral-200 bg-white'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-semibold text-neutral-900">{cr.variantLabel}</span>
-                                <span
-                                  className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                                    cr.status === 'winner_scaled'
-                                      ? 'bg-[#bd416e] text-white'
-                                      : cr.status === 'paused_by_ai_loser'
-                                        ? 'border border-neutral-200 bg-white text-neutral-500'
-                                        : 'border border-pink-200 bg-pink-50/70 text-[#a92e5d]'
-                                  }`}
-                                >
-                                  {cr.status === 'winner_scaled'
-                                    ? `★ PEMENANG · Alokasi Budget ${cr.budgetSharePct}%`
-                                    : cr.status === 'paused_by_ai_loser'
-                                      ? '✕ DIMATIKAN AI (Biaya Mahal)'
-                                      : `Alokasi Budget ${cr.budgetSharePct}%`}
-                                </span>
-                              </div>
-                              <p className="mt-1.5 font-medium text-neutral-900">{cr.headline}</p>
-                              <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-500">
-                                <span>CTR: <strong className="text-neutral-900">{cr.metrics.ctrPct}%</strong></span>
-                                <span>Konversi: <strong className="text-neutral-900">{cr.metrics.conversions} hasil</strong></span>
-                                <span>
-                                  Biaya per Hasil:{' '}
-                                  <strong className="text-neutral-900">
-                                    {formatIdr(cr.metrics.costPerResultIdr)}
-                                  </strong>
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* AI Media Buyer Optimization Logs */}
-                        {camp.optimizationLogs.length > 0 && (
-                          <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50/70 p-4 text-sm">
-                            <p className="font-semibold text-neutral-900">
-                              Riwayat Tindakan Otonom AI Media Buyer:
-                            </p>
-                            <ul className="mt-2 space-y-1.5 text-neutral-600">
-                              {camp.optimizationLogs.map((log) => (
-                                <li key={log.id} className="flex items-start gap-2">
-                                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#a92e5d]" />
-                                  <span>
-                                    <strong className="text-neutral-900">[{log.timestampWib}]</strong> {log.summary} (Efisiensi anggaran:{' '}
-                                    <strong className="text-[#a92e5d]">{formatIdr(log.savedOrReallocatedIdr)}/hari</strong>)
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan}/>}
             </VeloxaWorkspaceShell>
           )}
 
@@ -2068,7 +1440,7 @@ export default function VeloxaAiPlatformPage() {
                     key={tab.id}
                     type="button"
                     data-testid={`mobile-nav-tab-${tab.id}`}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => navigateWorkspace(tab.id)}
                     className={`flex flex-col items-center gap-1 rounded-xl py-1.5 text-xs font-semibold transition ${
                       isActive
                         ? 'bg-pink-50/90 text-[#a92e5d] ring-1 ring-pink-200'
@@ -2247,7 +1619,7 @@ export default function VeloxaAiPlatformPage() {
               Akun sosial
             </span>
             <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-semibold text-neutral-900">
-              Hubungkan akun sosial ke {brand.businessName}
+              Akun sosial workspace
             </h2>
           </div>
           <button
@@ -2259,9 +1631,9 @@ export default function VeloxaAiPlatformPage() {
           </button>
         </div>
 
-        <p className="mt-4 text-base text-neutral-600">Pilih cara menghubungkan akun bisnis Anda.</p>
+        <p className="mt-4 text-base text-neutral-600">Kelola semua koneksi workspace di sini. Setelah menambah akun, tautkan ke bisnis yang sesuai melalui Kelola bisnis.</p>
 
-        {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
+        {authUser && <VeloxaMetaConnections key={brand.workspaceId} accountBusinessLabels={Object.fromEntries(connections.filter(account=>account.connectionId).map(account=>[account.connectionId!,businesses.find(item=>item.connectionIds.includes(account.connectionId!))?.brand.businessName||'Belum ditautkan ke bisnis']))} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
           setConnectionsVerified(true);
           setConnections(withConnectionPlaceholders(verified,INITIAL_CHANNEL_CONNECTIONS));
         }} />}
