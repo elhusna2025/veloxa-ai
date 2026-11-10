@@ -7,10 +7,12 @@ import { ApiError, readJson } from './http';
 /** Small bounded RGB sample; no AI call, quota mutation, external URL or public media link. */
 export async function extractLogoPalette(bytes: Buffer): Promise<string[]> {
   let data: Buffer;
-  try { data = await sharp(bytes, { limitInputPixels: 30_000_000 }).rotate().resize(128, 128, { fit: 'inside', withoutEnlargement: true }).flatten({ background: '#ffffff' }).toColourspace('srgb').removeAlpha().raw().toBuffer(); }
+  try { data = await sharp(bytes, { limitInputPixels: 30_000_000 }).rotate().resize(128, 128, { fit: 'inside', withoutEnlargement: true }).toColourspace('srgb').ensureAlpha().raw().toBuffer(); }
   catch { throw new ApiError(400, 'Logo tidak dapat dibaca. Pilih foto logo lain.'); }
   const buckets = new Map<string, { count: number; rgb: number[] }>();
-  for (let i=0;i+2<data.length;i+=3) {
+  // Abaikan piksel transparan; latar transparan tidak boleh berubah menjadi warna sampel.
+  for (let i=0;i+3<data.length;i+=4) {
+    if (data[i+3] < 16) continue;
     const rgb=[data[i],data[i+1],data[i+2]]; const key=rgb.map(v=>Math.floor(v/24)).join(',');
     const entry=buckets.get(key)||{count:0,rgb:[0,0,0]};entry.count++;rgb.forEach((v,n)=>entry.rgb[n]+=v);buckets.set(key,entry);
   }

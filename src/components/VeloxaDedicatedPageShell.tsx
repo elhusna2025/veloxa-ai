@@ -1,4 +1,5 @@
 'use client';
+import {VeloxaSelect} from '@/components/VeloxaSelect';
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -53,7 +54,7 @@ export function VeloxaDedicatedPageShell({
       <header className="border-b border-neutral-200 bg-white">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-8">
           <Link href="/" data-testid="dedicated-header-home-link" className="flex items-center gap-2.5 text-xl font-semibold tracking-tight"><span className="grid h-9 w-9 place-items-center rounded-lg bg-neutral-950 text-base text-white">v</span>Veloxa<span className="text-[#a92e5d]">.</span></Link>
-          <div className="flex items-center gap-4"><label className="sr-only" htmlFor="veloxa-dedicated-lang-select">Pilih Bahasa & Mata Uang</label><select id="veloxa-dedicated-lang-select" data-testid="dedicated-lang-select" value={locale} onChange={event=>handleSelectLocale(event.target.value as VeloxaLocale)} className="max-w-[96px] rounded-lg border border-neutral-200 bg-white px-2 py-2 text-base">{VELOXA_LOCALES.map(item=><option key={item.code} value={item.code}>{item.label}</option>)}</select>{activePage!=='login'&&<Link href="/login" data-testid="dedicated-nav-login-link" className="text-base font-medium text-neutral-700">{locale==='id'?'Masuk':'Sign in'}</Link>}{activePage==='login'&&<Link href="/register" data-testid="dedicated-nav-register-link" className="text-base font-medium text-neutral-700">{locale==='id'?'Buat akun':'Create account'}</Link>}</div>
+          <div className="flex items-center gap-4"><label className="sr-only" htmlFor="veloxa-dedicated-lang-select">Pilih Bahasa & Mata Uang</label><VeloxaSelect fullWidth={false} id="veloxa-dedicated-lang-select" data-testid="dedicated-lang-select" value={locale} onValueChange={event=>handleSelectLocale(event as VeloxaLocale)} className="max-w-[96px] rounded-lg border border-neutral-200 bg-white px-2 py-2 text-base">{VELOXA_LOCALES.map(item=><option key={item.code} value={item.code}>{item.label}</option>)}</VeloxaSelect>{activePage!=='login'&&<Link href="/login" data-testid="dedicated-nav-login-link" className="text-base font-medium text-neutral-700">{locale==='id'?'Masuk':'Sign in'}</Link>}{activePage==='login'&&<Link href="/register" data-testid="dedicated-nav-register-link" className="text-base font-medium text-neutral-700">{locale==='id'?'Buat akun':'Create account'}</Link>}</div>
         </div>
       </header>
       <main className={`mx-auto w-full ${maxWidthClass} flex-1 px-5 py-10 sm:px-8 sm:py-14`}>

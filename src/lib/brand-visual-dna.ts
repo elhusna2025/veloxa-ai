@@ -12,6 +12,7 @@ export function savedBrandPalette(brand: BrandProfile): string[] {
   return [...new Set([brand.primaryColorHex, brand.accentColorHex, ...extras].map(normalizeBrandHex))];
 }
 export function normalizeBrandVisualDna(brand: BrandProfile): BrandProfile {
+  if(brand.paletteMode!==undefined&&!['logo','manual'].includes(brand.paletteMode))throw new Error('Mode palet tidak valid.');
   if (brand.logoAssetId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(brand.logoAssetId)) throw new Error('Pilih logo dari Foto brand.');
   if (brand.useBrandPalette !== undefined && typeof brand.useBrandPalette !== 'boolean') throw new Error('Pengaturan palet tidak valid.');
   if (!brand.useBrandPalette) return { ...brand };

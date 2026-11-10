@@ -1,4 +1,5 @@
 'use client';
+import {VeloxaSelect} from '@/components/VeloxaSelect';
 
 import { useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
@@ -8,8 +9,8 @@ import { VELOXA_LOCALES, type VeloxaLocale } from '@/lib/veloxa-i18n';
 export type WorkspaceTab = 'overview' | 'brand_vault' | 'studio' | 'autonomy' | 'meta_ads';
 const navigation = [
   { id: 'overview', label: 'Beranda', icon: LayoutDashboard, description: 'Ringkasan aktivitas workspace Anda.' },
-  { id: 'studio', label: 'Content Studio', icon: Wand2, description: 'Buat, tinjau, dan terbitkan konten Anda.' },
   { id: 'brand_vault', label: 'Profil & aset', icon: Camera, description: 'Identitas bisnis, referensi, dan koleksi media.' },
+  { id: 'studio', label: 'Content Studio', icon: Wand2, description: 'Buat, tinjau, dan terbitkan konten Anda.' },
   { id: 'autonomy', label: 'Jadwal konten', icon: CalendarDays, description: 'Atur rencana dan frekuensi konten.' },
   { id: 'meta_ads', label: 'Meta Ads', icon: Megaphone, description: 'Siapkan materi dan rencana iklan Anda.' },
 ] as const;
@@ -43,7 +44,7 @@ export function VeloxaWorkspaceShell(props: Props) {
       <div className="mx-auto max-w-[1480px] space-y-7 px-5 py-7 pb-10 sm:px-8 lg:px-10 lg:py-9">
         {props.status && <div role="status" aria-live="polite" className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm leading-relaxed text-neutral-600">{props.status}</div>}
         {props.children}
-        <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-neutral-200 pt-6 text-sm text-neutral-500"><span>Veloxa AI</span><div className="flex flex-wrap items-center gap-4"><button type="button" data-testid="local-first-sync-btn" onClick={props.onSync} className="inline-flex items-center gap-1.5 hover:text-neutral-900"><RefreshCw size={14}/>Sinkronkan</button><label className="sr-only" htmlFor="workspace-locale">Bahasa workspace</label><select id="workspace-locale" aria-label="Pilih Bahasa Workspace" value={props.locale} onChange={event => props.onLocale(event.target.value as VeloxaLocale)} className="max-w-40 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-sm">{VELOXA_LOCALES.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}</select><Link href="/privacy" className="hover:text-neutral-900">Privasi</Link></div></footer>
+        <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-neutral-200 pt-6 text-sm text-neutral-500"><span>Veloxa AI</span><div className="flex flex-wrap items-center gap-4"><button type="button" data-testid="local-first-sync-btn" onClick={props.onSync} className="inline-flex items-center gap-1.5 hover:text-neutral-900"><RefreshCw size={14}/>Sinkronkan</button><label className="sr-only" htmlFor="workspace-locale">Bahasa workspace</label><VeloxaSelect fullWidth={false} id="workspace-locale" aria-label="Pilih Bahasa Workspace" value={props.locale} onValueChange={event => props.onLocale(event as VeloxaLocale)} className="max-w-40 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-sm">{VELOXA_LOCALES.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}</VeloxaSelect><Link href="/privacy" className="hover:text-neutral-900">Privasi</Link></div></footer>
       </div>
     </div>
   </div>;

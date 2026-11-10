@@ -1,4 +1,5 @@
 'use client';
+import {VeloxaSelect} from '@/components/VeloxaSelect';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -541,12 +542,13 @@ export default function VeloxaAiPlatformPage() {
     if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri foto.');
     setWorkspaceAssets(previous=>[...previous.filter(asset=>assetBusiness(asset)!==id),...result.assets]);setSelectedReferenceIds(previous=>previous.filter(key=>result.assets.some(asset=>asset.id===key&&!asset.trashedAt)));
   };
-  const handleUploadBrandPhoto = async (file: File, title: string) => {
+  const handleUploadBrandPhoto = async (file: File, title: string,kind?:import('@/lib/asset-kind').AssetKindMetadata) => {
     if(!businessesReady)throw new Error('Daftar bisnis belum tersedia.');const epoch=hydrationEpoch.current;
-    const form=new FormData();form.set('workspaceId',workspaceBrand.workspaceId);form.set('businessId',activeBusinessId);form.set('file',file);form.set('title',title);
+    const form=new FormData();form.set('workspaceId',workspaceBrand.workspaceId);form.set('businessId',activeBusinessId);form.set('file',file);form.set('title',title);if(kind){form.set('category',kind.category);form.set('customCategoryLabel',kind.customCategoryLabel);}
     const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media',{method:'POST',body:form});
-    if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri foto.');setWorkspaceAssets(previous=>[result.asset,...previous.filter(asset=>asset.id!==result.asset.id)]);
+    if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri foto.');setWorkspaceAssets(previous=>[result.asset,...previous.filter(asset=>asset.id!==result.asset.id)]);return result.asset;
   };
+  const handleAssetMetadata=async(asset:BrandVaultAsset,kind:import('@/lib/asset-kind').AssetKindMetadata)=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media/category',{method:'PATCH',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,assetId:asset.id,expectedRevision:asset.metadataRevision||0,...kind})});if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri.');setWorkspaceAssets(previous=>previous.map(item=>item.id===asset.id?result.asset:item));return result.asset;};
   const handleAssetState = async (assetId:string,action:'trash'|'restore')=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media',{method:'PATCH',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,assetId,action})});if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri.');setWorkspaceAssets(previous=>previous.map(asset=>asset.id===assetId?result.asset:asset));if(action==='trash')setSelectedReferenceIds(previous=>previous.filter(id=>id!==assetId));};
   useEffect(()=>{let active=true;const epoch=hydrationEpoch.current;if(authUser&&businessesReady)void handleReloadBrandPhotos().catch(error=>{if(active&&epoch===hydrationEpoch.current)setStatusBanner(error instanceof Error?error.message:'Galeri belum dapat dimuat.');});return()=>{active=false;};},[authUser?.uid,activeBusinessId,businessesReady]);
 
@@ -755,19 +757,19 @@ export default function VeloxaAiPlatformPage() {
             <label htmlFor="veloxa-global-lang-select" className="sr-only">
               Select Language
             </label>
-            <select
+            <VeloxaSelect fullWidth={false}
               id="veloxa-global-lang-select"
               data-testid="header-lang-select"
               value={locale}
-              onChange={(e) => handleSelectLocale(e.target.value as VeloxaLocale)}
-              className="max-w-[136px] sm:max-w-none truncate rounded-xl sm:rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-semibold text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
+              onValueChange={(e) => handleSelectLocale(e as VeloxaLocale)}
+              className="max-w-[136px] sm:max-w-none truncate rounded-lg sm:rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-semibold text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
             >
               {VELOXA_LOCALES.map((loc) => (
                 <option key={loc.code} value={loc.code}>
                   {loc.flag} {loc.label} ({loc.currencyCode})
                 </option>
               ))}
-            </select>
+            </VeloxaSelect>
 
             {!authUser ? (
               <>
@@ -1040,21 +1042,21 @@ export default function VeloxaAiPlatformPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3.5">
-                            <select
+                            <VeloxaSelect
                               aria-label={`Ubah paket ${t.businessName}`}
                               value={t.planId}
-                              onChange={(e) =>
+                              onValueChange={(e) =>
                                 handleAdminChangeTenantPlan(
                                   t.workspaceId,
-                                  e.target.value as SubscriptionPlanId,
+                                  e as SubscriptionPlanId,
                                 )
                               }
-                              className="rounded-xl border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-800"
+                              className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-800"
                             >
                               <option value="starter_500k">Starter (Rp500rb)</option>
                               <option value="growth_1000k">Growth (Rp1jt)</option>
                               <option value="pro_1500k">Pro + Ads (Rp1,5jt)</option>
-                            </select>
+                            </VeloxaSelect>
                           </td>
                           <td className="px-4 py-3.5">
                             <button
@@ -1144,7 +1146,7 @@ export default function VeloxaAiPlatformPage() {
               onSync={() => void handleForceCloudSync()} onLocale={handleSelectLocale}
               isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => setActiveRole('admin')}
               status={statusBanner || undefined}
-              presetControls={authUser.isSuperAdmin ? <select aria-label="Pilih Inspeksi Brand" value={selectedPresetKey} onChange={event => handleSelectBrandPreset(event.target.value as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom')} className="mt-3 w-full rounded-lg border p-2 text-base"><option value="running_event">Nusantara Run</option><option value="cafe_fnb">Kopi Senja</option><option value="clinic_beauty">GlowDerm</option><option value="custom">Brand aktif</option></select> : undefined}
+              presetControls={authUser.isSuperAdmin ? <VeloxaSelect aria-label="Pilih Inspeksi Brand" value={selectedPresetKey} onValueChange={event => handleSelectBrandPreset(event as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom')} className="mt-3 w-full rounded-lg border p-2 text-base"><option value="running_event">Nusantara Run</option><option value="cafe_fnb">Kopi Senja</option><option value="clinic_beauty">GlowDerm</option><option value="custom">Brand aktif</option></VeloxaSelect> : undefined}
             >
               <VeloxaBusinessSwitcher businesses={businesses} activeId={activeBusinessId} accounts={connections} locked={businessLocked} ready={businessesReady} error={businessError} onSelect={selectBusiness} onCreate={createNewBusiness} onAssign={connectionIds=>saveBusinessChanges({connectionIds})} onReload={reloadBusinesses}/>
               {/* ====================================================================
@@ -1180,7 +1182,7 @@ export default function VeloxaAiPlatformPage() {
                  TAB 2: BRAND BRAIN & DUAL ASSET VAULT (REFERENSI GAYA vs FOTO ASLI)
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
-                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} accounts={activeConnections} accountsReady={connectionsVerified&&businessesReady} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
+                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} accounts={activeConnections} accountsReady={connectionsVerified&&businessesReady} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onMetadata={handleAssetMetadata} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
               )}
 
               {/* ====================================================================
@@ -1374,7 +1376,7 @@ export default function VeloxaAiPlatformPage() {
               {/* ====================================================================
                  TAB 5: AI AGENT MARKETING · META ADS ARCHITECT & AUTO-OPTIMIZER
                  ==================================================================== */}
-              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan}/>}
+              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} drafts={drafts.filter(item=>draftBusiness(item)===activeBusinessId)} onBusyChange={setBusinessSaving} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan}/>}
             </VeloxaWorkspaceShell>
           )}
 
@@ -1514,18 +1516,18 @@ export default function VeloxaAiPlatformPage() {
               <label htmlFor="onboard-category" className="font-medium text-neutral-700">
                 Kategori Industri
               </label>
-              <select
+              <VeloxaSelect
                 id="onboard-category"
                 value={onboardCategory}
-                onChange={(e) => setOnboardCategory(e.target.value as BusinessCategory)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-medium text-neutral-900"
+                onValueChange={(e) => setOnboardCategory(e as BusinessCategory)}
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 font-medium text-neutral-900"
               >
                 <option value="cafe_fnb">Cafe, Resto & F&B</option>
                 <option value="running_event">Event Lari / Konser / EO</option>
                 <option value="clinic_beauty">Klinik Kecantikan & Kesehatan</option>
                 <option value="fashion_retail">Fashion & Retail Lokal</option>
                 <option value="custom">Bisnis Kustom Lainnya</option>
-              </select>
+              </VeloxaSelect>
             </div>
             <div>
               <label htmlFor="onboard-city" className="font-medium text-neutral-700">
@@ -1575,16 +1577,16 @@ export default function VeloxaAiPlatformPage() {
               <label htmlFor="onboard-plan" className="font-medium text-neutral-700">
                 Paket Langganan Awal
               </label>
-              <select
+              <VeloxaSelect
                 id="onboard-plan"
                 value={onboardPlanId}
-                onChange={(e) => setOnboardPlanId(e.target.value as SubscriptionPlanId)}
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-medium text-neutral-900"
+                onValueChange={(e) => setOnboardPlanId(e as SubscriptionPlanId)}
+                className="mt-1 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 font-medium text-neutral-900"
               >
                 <option value="starter_500k">Starter (Rp500rb/bln)</option>
                 <option value="growth_1000k">Growth (Rp1jt/bln)</option>
                 <option value="pro_1500k">Pro + Meta Ads (Rp1,5jt/bln)</option>
-              </select>
+              </VeloxaSelect>
             </div>
           </div>
 

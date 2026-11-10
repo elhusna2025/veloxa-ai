@@ -11,6 +11,13 @@ test('logo sample finds saturated colors, ignores white background, handles mono
  const gray=await sharp({create:{width:20,height:20,channels:3,background:'#777777'}}).jpeg().toBuffer();assert.deepEqual(await extractLogoPalette(gray),['#777777']);
  await assert.rejects(extractLogoPalette(Buffer.from('bad')),error=>error instanceof ApiError&&error.status===400);
 });
+test('logo identity is stable across inverse blue and white marks and transparent backgrounds',async()=>{
+ const blueOnWhite=Buffer.from('<svg width="100" height="100"><rect width="100" height="100" fill="white"/><rect x="20" y="20" width="60" height="60" fill="#167D8D"/></svg>');
+ const whiteOnBlue=Buffer.from('<svg width="100" height="100"><rect width="100" height="100" fill="#167D8D"/><rect x="20" y="20" width="60" height="60" fill="white"/></svg>');
+ const transparent=Buffer.from('<svg width="100" height="100"><rect x="20" y="20" width="60" height="60" fill="#167D8D"/></svg>');
+ const [lightPalette,darkPalette,transparentPalette]=await Promise.all([blueOnWhite,whiteOnBlue,transparent].map(async svg=>extractLogoPalette(await sharp(svg).png().toBuffer())));
+ assert.equal(lightPalette[0],darkPalette[0]);assert.equal(lightPalette[0],transparentPalette[0]);
+});
 test('logo analysis authorizes workspace, enforces active owned asset and uses bounded private reads without writes',async()=>{
  const bytes=await logo();let downloads=0;let lastRange:unknown;let record:any={storagePath:`workspaces/workspace-a/vault/${id}.jpg`,asset:{id,workspaceId:'workspace-a',drawer:'real_asset',mediaType:'photo',title:'Logo'}};
  const ref={collection:(name:string)=>{assert.equal(name,'server_assets');return{doc:(assetId:string)=>{assert.equal(assetId,id);return{get:async()=>({data:()=>record})};}};}};

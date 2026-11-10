@@ -753,8 +753,8 @@ export function buildMetaAdCampaignPlan(input: {
 
   const city = input.targetCity?.trim() || brand.city || 'Jakarta';
   const radiusKm = Math.max(3, Math.min(80, input.radiusKm ?? (brand.category === 'cafe_fnb' ? 12 : 30)));
-  const ageMin = Math.max(18, Math.min(60, input.ageMin ?? (brand.category === 'running_event' ? 19 : 21)));
-  const ageMax = Math.max(ageMin + 4, Math.min(65, input.ageMax ?? 44));
+  const ageMin = Math.max(18, Math.min(64, input.ageMin ?? (brand.category === 'running_event' ? 19 : 21)));
+  const ageMax = Math.max(ageMin + 1, Math.min(65, input.ageMax ?? 44));
 
   const validatedInterests = searchValidatedMetaInterests(brand.category, input.customInterestKeyword);
 

@@ -31,7 +31,7 @@ const updateInput=z.object({workspaceId:z.string(),businessId:z.string().regex(/
 function profileInput(raw:unknown,workspaceId:string,id:string):BrandProfile {
   try{
     if(!raw||typeof raw!=='object'||JSON.stringify(raw).length>25000)throw new Error();
-    const base=blankBusinessProfile(workspaceId,id,'');const allowed=Object.fromEntries(Object.keys(base).concat(['logoAssetId','useBrandPalette','additionalColorHexes']).filter(key=>key in raw).map(key=>[key,(raw as Record<string,unknown>)[key]]));
+    const base=blankBusinessProfile(workspaceId,id,'');const allowed=Object.fromEntries(Object.keys(base).concat(['logoAssetId','useBrandPalette','additionalColorHexes','paletteMode']).filter(key=>key in raw).map(key=>[key,(raw as Record<string,unknown>)[key]]));
     const candidate={...base,...allowed,workspaceId,businessId:id} as BrandProfile;
     for(const key of ['businessName','businessDescription','city','targetAudience','brandTone','primaryColorHex','accentColorHex','visualVibe','defaultCta','whatsappNumber','websiteUrl'] as const)if(typeof candidate[key]!=='string')throw new Error('Isian profil bisnis tidak valid.');
     if(!BUSINESS_CATEGORIES.some(item=>item.value===candidate.category))throw new Error('Bidang bisnis tidak valid.');

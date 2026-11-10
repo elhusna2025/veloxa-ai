@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {makeBusinessAdPlan} from './business-planning';import {blankBusinessProfile} from './business-context';import type {ChannelConnectionState} from './veloxa-types';
+test('reviewed adult demographic boundaries persist exactly in a paused business ad plan',()=>{
+ const brand={...blankBusinessProfile('qa','primary','Berez ERP'),websiteUrl:'https://example.test'};const context={id:'primary',brand,connectionIds:['instagram_200'],revision:1,schedule:{connectionIds:[],timesWib:[],days:[]}};const accounts=[{connectionId:'instagram_200',channel:'instagram',connected:true,handle:'@berez',accountName:'Berez'}] as ChannelConnectionState[];
+ for(const[ageMin,ageMax]of[[18,19],[25,28],[61,65],[64,65]]){const plan=makeBusinessAdPlan(context,accounts,{connectionIds:['instagram_200'],title:'ERP',objective:'WEBSITE_CONVERSIONS',daily:50000,duration:3,dailyCap:100000,monthlyCap:300000,ageMin,ageMax});assert.equal(plan.demographics.ageMin,ageMin);assert.equal(plan.demographics.ageMax,ageMax);assert.equal(plan.status,'draft_paused');}
+ assert.throws(()=>makeBusinessAdPlan(context,accounts,{connectionIds:['instagram_200'],title:'ERP',objective:'WEBSITE_CONVERSIONS',daily:50000,duration:3,dailyCap:100000,monthlyCap:300000,ageMin:18.5,ageMax:65}),/Rentang usia/);
+ for(const partial of[{ageMax:NaN},{ageMax:65},{ageMin:25}])assert.throws(()=>makeBusinessAdPlan(context,accounts,{connectionIds:['instagram_200'],title:'ERP',objective:'WEBSITE_CONVERSIONS',daily:50000,duration:3,dailyCap:100000,monthlyCap:300000,...partial}),/kedua batas/);
+});

@@ -69,6 +69,7 @@ export interface BrandProfile {
   brandTone: string;
   logoAssetId?: string;
   useBrandPalette?: boolean;
+  paletteMode?: 'logo' | 'manual';
   additionalColorHexes?: string[];
   primaryColorHex: string;
   accentColorHex: string;
@@ -105,6 +106,9 @@ export interface BrandVaultAsset {
   uploadedFrom: RuntimePlatform;
   createdAt: string;
   usedInPostsCount: number;
+  category?: import('./asset-kind').AssetKind;
+  customCategoryLabel?: string;
+  metadataRevision?: number;
   extractedStyleDna?: ExtractedStyleDna;
   trashedAt?: string;
 }
@@ -328,6 +332,7 @@ export interface MetaOptimizationAction {
 }
 
 export interface MetaAdCampaignPlan {
+  aiPlanning?: import('./ad-planning').AdPlanningSuggestion;
   businessId?: string;
   destinationAccounts?: {connectionId:string;accountName:string;handle:string;channel:SocialChannelId}[];
   id: string;

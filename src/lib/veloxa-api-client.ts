@@ -1,3 +1,4 @@
+import {readAdPlanningStream,type AdPlanningStage,type AdPlanningSuggestion} from './ad-planning';
 import { ContentGenerationError, readGenerationStream, type GenerationProgress } from './content-generation';
 import {jsonFingerprint} from './profile-fingerprint';
 import {recoverGeneration,type OperationState} from './generation-recovery';
@@ -51,6 +52,8 @@ export async function analyzeVeloxaBrand(body:unknown,onProgress:(stage:Analysis
  if(response.ok&&response.headers.get('Content-Type')?.includes('application/x-ndjson'))return readBrandAnalysisStream(response,onProgress);
  const data=await response.json().catch(()=>({}));throw new Error(data.error||'Analisis profil belum tersedia.');
 }
+
+export async function requestAdPlanning(body:unknown,onProgress:(stage:AdPlanningStage)=>void):Promise<AdPlanningSuggestion>{const response=await signedVeloxaFetch('/api/veloxa/meta-ads/plan',{method:'POST',headers:{Accept:'application/x-ndjson'},body:JSON.stringify(body)});if(response.ok&&response.headers.get('Content-Type')?.includes('application/x-ndjson'))return readAdPlanningStream(response,onProgress);const result=await response.json().catch(()=>({}));throw new Error(result.error||'Usulan iklan belum tersedia.');}
 
 /** Private vault previews keep credentials in headers, never image URLs. */
 export async function veloxaApiBlob(path:string, init:RequestInit = {}):Promise<Blob> {

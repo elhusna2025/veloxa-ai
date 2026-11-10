@@ -1,3 +1,4 @@
+import {parseAssetKind,type AssetKindMetadata} from '../asset-kind';
 import {assertNoAutonomyDispatch} from './autonomy-dispatch';
 import { z } from 'zod';
 import { assetBusiness, businessId, PRIMARY_BUSINESS } from '../business-context';
@@ -24,10 +25,11 @@ export async function listWorkspacePhotos(request: Request, workspaceId: unknown
   return docs.docs.map(doc => doc.data() as AssetRecord).filter(record => isWorkspacePhoto(record, id) && assetBusiness(record.asset)===selectedBusiness && (includeTrash || !record.trashedAt)).map(record => publicBrandPhoto(record as AssetRecord & { asset: BrandVaultAsset }));
 }
 
-export async function persistWorkspacePhoto(ref: Awaited<ReturnType<typeof requireWorkspace>>['ref'], workspaceId:string, uid:string, bytes:Buffer, title:string, storage?:ReturnType<typeof adminBucket>,selectedBusiness=PRIMARY_BUSINESS) {
+export async function persistWorkspacePhoto(ref: Awaited<ReturnType<typeof requireWorkspace>>['ref'], workspaceId:string, uid:string, bytes:Buffer, title:string, storage?:ReturnType<typeof adminBucket>,selectedBusiness=PRIMARY_BUSINESS,kind?:AssetKindMetadata) {
+  const category=kind?parseAssetKind(kind):{};
   const id=randomUUID();const storagePath=`workspaces/${workspaceId}/vault/${id}.jpg`;const bucket=storage||adminBucket();const file=bucket.file(storagePath);
   await file.save(bytes,{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:'image/jpeg',cacheControl:'private, no-store'}});
-  const asset:BrandVaultAsset={id,workspaceId,...(selectedBusiness!==PRIMARY_BUSINESS?{businessId:selectedBusiness}:{}),title,description:'',drawer:'real_asset',mediaType:'photo',previewUrl:photoPreviewPath(workspaceId,id),aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
+  const asset:BrandVaultAsset={id,workspaceId,...category,metadataRevision:0,...(selectedBusiness!==PRIMARY_BUSINESS?{businessId:selectedBusiness}:{}),title,description:'',drawer:'real_asset',mediaType:'photo',previewUrl:photoPreviewPath(workspaceId,id),aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
   const assetRef=ref.collection('server_assets').doc(id);
   try {await ref.firestore.runTransaction(async tx=>{await assertNoAutonomyDispatch(tx,ref);tx.create(assetRef,{asset,storagePath,createdBy:uid});});}
   catch(error) {

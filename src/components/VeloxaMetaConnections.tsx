@@ -1,4 +1,5 @@
 'use client';
+import {VeloxaSelect} from '@/components/VeloxaSelect';
 import { useCallback, useEffect, useState } from 'react';
 import { veloxaApi } from '@/lib/veloxa-api-client';
 import type { ChannelConnectionState } from '@/lib/veloxa-types';
@@ -68,9 +69,9 @@ export function VeloxaMetaConnections({ workspaceId, onConnections, initialChann
       })} className="w-full rounded-xl bg-neutral-900 px-5 py-3 font-medium text-white disabled:opacity-50">{busy ? 'Memproses…' : method === 'instagram' ? 'Lanjutkan dengan Instagram' : 'Lanjutkan dengan Facebook'}</button>
       {method === 'instagram' && (accounts.instagramAccounts?.length || 0) > 0 && <div className="space-y-3 rounded-xl border p-4">
         <label htmlFor="instagram-account" className="block font-medium">Pilih akun Instagram untuk workspace ini</label>
-        <select id="instagram-account" value={instagramAccountId} onChange={event => setInstagramAccountId(event.target.value)} disabled={busy || loading} className="w-full rounded-xl border p-3">
+        <VeloxaSelect id="instagram-account" value={instagramAccountId} onValueChange={event => setInstagramAccountId(event)} disabled={busy || loading} className="w-full rounded-lg border p-3">
           {accounts.instagramAccounts?.map(account => <option key={account.accountId} value={account.accountId}>@{account.username}</option>)}
-        </select>
+        </VeloxaSelect>
         <button type="button" disabled={busy || loading || !instagramAccountId || !accounts.instagramLoginAvailable} onClick={() => void perform(async () => {
           const result = await veloxaApi<{ connections: ChannelConnectionState[] }>('/api/veloxa/instagram/connection', { method: 'POST', body: JSON.stringify({ workspaceId, accountId: instagramAccountId }) });
           const verified = result.connections.find(connection => connection.channel === 'instagram' && connection.connected);
@@ -80,9 +81,9 @@ export function VeloxaMetaConnections({ workspaceId, onConnections, initialChann
       </div>}
       {method === 'facebook' && accounts.pages.length > 0 && <div className="space-y-3 rounded-xl border p-4">
         <label htmlFor="meta-page" className="block font-medium">Pilih Facebook Page untuk workspace ini</label>
-        <select id="meta-page" value={pageId} onChange={event => setPageId(event.target.value)} disabled={busy || loading} className="w-full rounded-xl border p-3">
+        <VeloxaSelect id="meta-page" value={pageId} onValueChange={event => setPageId(event)} disabled={busy || loading} className="w-full rounded-lg border p-3">
           {accounts.pages.map(page => <option key={page.pageId} value={page.pageId}>{page.pageName}{page.instagramHandle ? ` · @${page.instagramHandle}` : ' · tanpa Instagram tertaut'}</option>)}
-        </select>
+        </VeloxaSelect>
         {!selectedPage?.instagramHandle && <p className="text-neutral-600">Page ini belum memiliki Instagram profesional yang tertaut. Anda bisa menghubungkan Instagram secara terpisah melalui pilihan Instagram saja.</p>}
         <button type="button" disabled={busy || loading || !selectedPage} onClick={() => void perform(async () => {
           const result = await veloxaApi<{ connections: ChannelConnectionState[] }>('/api/veloxa/meta/accounts', { method: 'POST', body: JSON.stringify({ workspaceId, pageId }) });

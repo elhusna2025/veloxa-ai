@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import {assetKindLabel} from '../asset-kind';
 import { assetBusiness, PRIMARY_BUSINESS } from '../business-context';
 import { adminBucket } from './firebase';
 import type { requireWorkspace } from './auth';
@@ -24,7 +25,7 @@ export async function loadContentReferences(ref: Awaited<ReturnType<typeof requi
     if(!bytes.length||bytes.length>remaining||total>MAX_REFERENCE_TOTAL_BYTES)throw new ApiError(413,'Ukuran referensi terlalu besar. Pilih lebih sedikit foto.');
     try { const meta=await sharp(bytes,{limitInputPixels:30_000_000}).metadata();if(meta.format!=='jpeg'||!meta.width||!meta.height)throw new Error('unsupported'); }
     catch { throw new ApiError(400,'Salah satu foto referensi tidak dapat dibaca. Unggah ulang fotonya.'); }
-    result.push({id,title:record.asset.title.slice(0,160),bytes});
+    result.push({id,title:(record.asset.category?assetKindLabel(record.asset)+': ':'')+record.asset.title.slice(0,160),bytes});
   }
   return result;
 }
