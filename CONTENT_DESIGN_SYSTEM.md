@@ -25,11 +25,11 @@ Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px.
 ## Hierarki dan ruang
 
 - Satu gagasan utama per slide; judul maksimal delapan kata/64 karakter. Isi pendukung maksimal 18 kata/125 karakter. Overlay Reels maksimal tujuh kata/48 karakter. Penjelasan rinci berada di caption atau voiceover.
-- Judul dan isi tidak boleh bertabrakan dengan logo, panel screenshot, CTA, atau tepi gambar. Copy feed menempati area kiri hingga 680 px. Judul dan isi berbagi ruang berdasarkan tinggi teks yang terukur, dengan jarak minimum 24 px dan ruang kosong sebelum panel screenshot. Ukuran huruf tidak turun di bawah batas minimum.
+- Judul dan isi tidak boleh bertabrakan dengan logo, panel screenshot, CTA, atau tepi gambar. Copy post tunggal menempati area kiri hingga 680 px; copy carousel memiliki bidang bawah selebar 952 px. Judul dan isi berbagi ruang berdasarkan tinggi teks yang terukur, dengan jarak minimum 24 px dan ruang kosong sebelum panel screenshot. Ukuran huruf tidak turun di bawah batas minimum.
 - Reels menyisakan 224 px di atas header dan setidaknya 320 px di bawah footer sebagai ruang antarmuka platform. Panel screenshot dan footer harus tetap terpisah.
 - CTA memiliki area sendiri; website berada di baris terpisah. Jangan menumpuk dua baris CTA di atas domain.
-- Foto tetap memenuhi kanvas. Pada carousel, latar putih lembut hanya mengikuti area teks agar foto tetap terang. Teks carousel berwarna gelap. Format lain memakai scrim di belakang teks putih. Target kontras minimum 4,5:1 untuk teks penting. CTA memakai tinta hitam atau putih yang paling kontras dengan warna brand.
-- Logo dan screenshot asli dipasang proporsional, tidak dipotong, digambar ulang, atau ditimpa teks. Screenshot asli di carousel ditempatkan utuh dalam bingkai perangkat. Screenshot aplikasi yang dipilih sebagai acuan memberi konteks topik; foto referensi membentuk satu adegan yang utuh.
+- Pada carousel, foto terang memenuhi area atas dan dipotong dari tengah. Tempatkan wajah dan objek utama di bagian tengah foto. Teks gelap berada di bidang bawah dengan aksen brand dan tinggi yang mengikuti teks terukur. Format lain memakai scrim di belakang teks putih. Target kontras minimum 4,5:1 untuk teks penting. CTA memakai tinta hitam atau putih yang paling kontras dengan warna brand.
+- Logo dan screenshot asli dipasang proporsional, tidak dipotong, digambar ulang, atau ditimpa teks. Screenshot asli di carousel ditempatkan utuh dalam bingkai perangkat. Screenshot aplikasi yang dipilih sebagai acuan visual ikut dikirim sebagai gambar pada slide yang relevan. Arahkan tampilan aplikasi ke perangkat dalam adegan, atau gunakan detailnya sebagai inspirasi topik sesuai arahan pengguna. Foto referensi membentuk satu adegan yang utuh.
 - Nomor slide dan petunjuk geser ada di navigasi Studio. Gambar carousel hanya menampilkan CTA dan alamat website pada slide penutup.
 
 ## Overflow dan konsistensi

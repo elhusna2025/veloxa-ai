@@ -19,7 +19,8 @@ export interface SocialPostImageParams {
   sceneReferenceLabels?: string[];
   carouselSlide?: boolean;
   hasOriginalScreenshot?: boolean;
-  screenshotContextLabels?: string[];
+  screenshotReferenceLabels?: string[];
+  slideReferenceDirection?: string;
 }
 
 type ImageGenerationRequest = {
@@ -58,8 +59,8 @@ function providerError(): ApiError {
 function buildPrompt(params: SocialPostImageParams): string {
   if (params.sceneOnly && params.carouselSlide) return [
     'Create one continuous edge-to-edge portrait photograph for this slide. Depict the specific message of this slide through a believable subject, action and setting. Use bright natural lighting, accurate skin tones and restrained brand accents. Keep the series art direction consistent and vary the action and camera composition with each slide.',
-    'Use attached photos to inform the people, products and setting in the same physical space. The files follow attachedVisualReferences in order, with Ref numbers from the user selection. Match scale, perspective, lighting and shadows. Keep the upper-left area calm for copy and place the main subject away from that area. The app will add all text and original artwork after rendering.',
-    'Screenshot context describes the topic only. Show its meaning through a real-world activity. Do not render interface text, brand marks, screenshots, floating panels, inset images, a collage, mock UI or graphic layouts, even when a brief requests those elements.',
+    'Use attached photos to inform the people, products and setting in the same physical space. The files follow attachedVisualReferences in order, with Ref numbers from the user selection. Match scale, perspective, lighting and shadows. The photo will be cropped around its center for a horizontal hero area; keep faces, hands and key objects in the middle half of the frame vertically. The app puts copy below the photo, so do not reserve empty space for typography.',
+    'Use the actual attached screenshot references to ground this slide: match recognizable shapes, colors and interface structure when the brief calls for showing the software on a screen in the scene. If a screenshot is specified as topic inspiration, depict that specific activity and keep the interface out of the picture. Never reproduce private data or invent readable screen text. Keep all elements in one physical scene without floating panels, insets, a collage, or graphic layout.',
     ...(params.hasOriginalScreenshot ? ['Keep a natural foreground tabletop visible in the lower-right area, with room for an original device display that the app will place there. Do not draw a screen or a device for that display.'] : []),
     JSON.stringify({
       business: params.businessName,
@@ -69,7 +70,8 @@ function buildPrompt(params: SocialPostImageParams): string {
       sceneDirection: params.visualDirection,
       compositionBrief: params.referenceInstruction,
       attachedVisualReferences: params.sceneReferenceLabels,
-      screenshotTopicReferences: params.screenshotContextLabels,
+      screenshotVisualReferences: params.screenshotReferenceLabels,
+      directionForThisSlide: params.slideReferenceDirection,
       palette: params.brandPalette,
     }),
   ].join('\n\n');
@@ -103,8 +105,8 @@ function validateParams(params: SocialPostImageParams): void {
   if(params.businessContext!==undefined){try{validateVisualBusinessContext(params.businessContext);}catch{throw new ApiError(400,'Konteks visual bisnis tidak valid.','invalid_social_image_input');}}
   if(params.brandPalette!==undefined&&(!Array.isArray(params.brandPalette)||params.brandPalette.length>6||params.brandPalette.some(color=>typeof color!=='string'||!/^#[0-9a-f]{6}$/i.test(color))))throw new ApiError(400,'Palet warna brand tidak valid.','invalid_social_image_input');
   if(params.sceneReferenceLabels!==undefined&&(!Array.isArray(params.sceneReferenceLabels)||params.sceneReferenceLabels.length!==(params.referenceImages?.length||0)||params.sceneReferenceLabels.some(label=>typeof label!=='string'||label.length>220)))throw new ApiError(400,'Label referensi tidak valid.','invalid_social_image_input');
-  if (params.screenshotContextLabels && (params.screenshotContextLabels.length > MAX_CONTENT_REFERENCES || params.screenshotContextLabels.some(label => typeof label !== 'string' || label.length > 220))) {
-    throw new ApiError(400, 'Label konteks screenshot tidak valid.', 'invalid_social_image_input');
+  if (params.screenshotReferenceLabels?.some(label => !params.sceneReferenceLabels?.includes(label))) {
+    throw new ApiError(400, 'Label referensi screenshot tidak valid.', 'invalid_social_image_input');
   }
   const references = params.referenceImages || [];
   if (references.length > MAX_CONTENT_REFERENCES || references.some(bytes => !Buffer.isBuffer(bytes) || !bytes.length || bytes.length > MAX_REFERENCE_IMAGE_BYTES) || references.reduce((sum, bytes) => sum + bytes.length, 0) > MAX_REFERENCE_TOTAL_BYTES || (params.referenceInstruction !== undefined && params.referenceInstruction.length > 1000)) throw new ApiError(400, 'Referensi visual tidak valid.', 'invalid_social_image_input');

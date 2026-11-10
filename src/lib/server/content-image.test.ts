@@ -10,20 +10,22 @@ test('scene-only provider receives scene data without asking AI to paint final t
  assert.match(prompt,/Output ONLY the photographic scene/);assert.match(prompt,/layered separately/);assert.match(prompt,/Ref 1: Model Berez/);assert.ok(!prompt.includes('Render only the supplied business name'));
 });
 
-test('carousel uses screenshot context as a topic and asks for a single bright scene despite panel instructions', async () => {
+test('carousel sends real screenshot pixels to the image editor and leaves the hero clear of text', async () => {
  const jpeg = await createJpegFixture();
  let called = false;
  await generateSocialPostImage({
   businessName:'Cendekia AI',title:'Latihan TKA',hook:'Berlatih bersama',cta:'',
-  sceneOnly:true,carouselSlide:true,screenshotContextLabels:['Ref 1: Tryout TKA'],
-  referenceInstruction:'Tampilkan Ref 1 sebagai panel tetap.',
- },{imageClient:{images:{generate:async request=>{
+  sceneOnly:true,carouselSlide:true,screenshotReferenceLabels:['Ref 3: Tryout TKA'],
+  sceneReferenceLabels:['Ref 3: Tryout TKA'],referenceImages:[jpeg],
+  slideReferenceDirection:'Gunakan Ref 3 di layar laptop guru.',
+ },{imageClient:{images:{generate:async()=>{throw Error('Screenshot must use edit');},edit:async request=>{
   called=true;
   assert.match(request.prompt,/one continuous edge-to-edge portrait photograph/);
   assert.match(request.prompt,/bright natural lighting/);
-  assert.match(request.prompt,/Screenshot context describes the topic only/);
-  assert.match(request.prompt,/floating panels/);
-  assert.match(request.prompt,/Ref 1: Tryout TKA/);
+  assert.match(request.prompt,/copy below the photo/);
+  assert.match(request.prompt,/Ref 3: Tryout TKA/);
+  assert.match(request.prompt,/Gunakan Ref 3 di layar laptop guru/);
+  assert.deepEqual(Buffer.from(await request.image[0].arrayBuffer()),jpeg);
   return {data:[{b64_json:jpeg.toString('base64')}]};
  }}}});
  assert.equal(called,true);

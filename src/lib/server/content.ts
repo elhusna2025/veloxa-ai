@@ -111,12 +111,10 @@ export async function createSocialContent(request: Request, dependencies: {
   const carousel = input.format === 'carousel';
   const labelReference = (item: typeof references[number]) => `Ref ${references.indexOf(item) + 1}: ${item.title}`;
   const visualReferences = references.filter(item => referenceRoles[item.id] === 'visual');
-  const screenshotContext = carousel ? visualReferences.filter(item => item.category === 'screenshot') : [];
-  const sceneReferences = visualReferences.filter(item => !screenshotContext.includes(item));
+  const screenshotReferences = visualReferences.filter(item => item.category === 'screenshot');
   const originalAssets=references.filter(item=>referenceRoles[item.id]!=='visual').map(item=>({id:item.id,role:referenceRoles[item.id] as 'logo'|'screenshot',bytes:item.bytes}));
   const referenceImageParams = references.length ? {
-    ...(sceneReferences.length ? { referenceImages: sceneReferences.map(item => item.bytes), sceneReferenceLabels: sceneReferences.map(labelReference) } : {}),
-    ...(screenshotContext.length ? { screenshotContextLabels: screenshotContext.map(labelReference) } : {}),
+    ...(visualReferences.length ? { referenceImages: visualReferences.map(item => item.bytes), sceneReferenceLabels: visualReferences.map(labelReference) } : {}),
     referenceInstruction: input.referenceInstruction || topic,
   } : {};
   if (references.length) progress('validation');
@@ -150,18 +148,39 @@ export async function createSocialContent(request: Request, dependencies: {
   }else if(input.format==='carousel'){
     const slides = draft.slides;
     if (!slides || slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
-    visualPlan.push(...slides.map((slide, index) => ({
-      businessName: brand.businessName,
-      title: slide.headline,
-      hook: slide.body,
-      cta: index === slides.length - 1 ? brand.defaultCta || 'Simpan' : '',
-      carouselSlide: true,
-      hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
-      visualDirection: slide.visualDirection,
-      ...imageContextParams,
-      ...paletteParams,
-      ...referenceImageParams,
-    })));
+    const brief = input.referenceInstruction || topic;
+    const slideBriefs = new Map<number, string>();
+    for (const match of brief.matchAll(/\bslide\s+(\d+)\s*[:.–-]?\s*([^]*?)(?=\bslide\s+\d+\b|$)/gi)) {
+      slideBriefs.set(Number(match[1]), match[2].trim());
+    }
+    const refNumbers = (direction: string) => new Set(Array.from(direction.matchAll(/\bref\s*(\d+)\b/gi), match => Number(match[1])));
+    visualPlan.push(...slides.map((slide, index) => {
+      const slideBrief = slideBriefs.get(index + 1) || '';
+      const requested = refNumbers(slideBrief);
+      const mentioned = requested.size ? requested : refNumbers(slide.visualDirection);
+      const matching = screenshotReferences.filter(item => mentioned.has(references.indexOf(item) + 1));
+      const screens = mentioned.size || !screenshotReferences.length
+        ? matching
+        : [screenshotReferences[index % screenshotReferences.length]];
+      const attached = visualReferences.filter(item => item.category !== 'screenshot' || screens.includes(item));
+      return {
+        businessName: brand.businessName,
+        title: slide.headline,
+        hook: slide.body,
+        cta: index === slides.length - 1 ? brand.defaultCta || 'Simpan' : '',
+        carouselSlide: true,
+        hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
+        visualDirection: slide.visualDirection,
+        ...imageContextParams,
+        ...paletteParams,
+        ...(references.length ? {
+          referenceInstruction: brief,
+          ...(slideBrief ? {slideReferenceDirection: slideBrief} : {}),
+          ...(attached.length ? {referenceImages: attached.map(item => item.bytes),sceneReferenceLabels: attached.map(labelReference)} : {}),
+          ...(screens.length ? {screenshotReferenceLabels: screens.map(labelReference)} : {}),
+        } : {}),
+      };
+    }));
   }else if(!input.sourceAssetId){
     visualPlan.push({businessName:brand.businessName,title:draft.title,hook:draft.hook,cta:brand.defaultCta||'Selengkapnya',...imageContextParams,...paletteParams,...referenceImageParams});
   }

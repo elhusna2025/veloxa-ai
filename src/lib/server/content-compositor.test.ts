@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { composeSocialVisual, compositionLayout, shortVisualCta, visualWebsite } from './content-compositor';
+import { composeSocialVisual, compositionLayout, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
 import { resolveReferenceRoles } from '../content-reference-roles';
 const params={businessName:'Berez ERP',title:'Penjualan & Stok Lebih Terpantau',hook:'Kelola transaksi dan persediaan dalam satu sistem.',cta:'Kenali Berez ERP',websiteUrl:'https://berez.dafinicode.com/',brandPalette:['#0061AD','#FFFFFF']};
 async function pixelSource(width:number,height:number){const data=Buffer.alloc(width*height*3);for(let i=0;i<data.length;i++)data[i]=(i*29+47)%256;return sharp(data,{raw:{width,height,channels:3}}).png().toBuffer();}
@@ -38,26 +38,30 @@ test('original logo and complete screenshot pixels survive all PNG compositions 
   }
  }
 });
-test('carousel preserves the photograph around the copy, keeps the original device display intact and only adds a final CTA', async () => {
+test('carousel keeps copy below the photograph, preserves the selected screenshot and adds CTA only at the end', async () => {
  const scene = await sharp({create:{width:1080,height:1350,channels:3,background:'#657F93'}}).png().toBuffer();
  const screenshot = await pixelSource(320,180);
  const content = {...params,carouselSlide:true,cta:'',originalAssets:[{id:'screen',role:'screenshot' as const,bytes:screenshot}]};
- const frame = compositionLayout(false,true,true);
+ const copy = await renderCompositionText(content);
  const first = await composeSocialVisual(scene, content);
- const last = await composeSocialVisual(scene, {...content,cta:'Pelajari selengkapnya'});
+ const final = {...content,cta:'Pelajari selengkapnya'};
+ const last = await composeSocialVisual(scene, final);
  async function pixels(image: Buffer,left: number,top: number,width=1,height=1) {
   return sharp(image).extract({left,top,width,height}).removeAlpha().raw().toBuffer();
  }
- for (const [x,y] of [[10,20],[930,360],[96,860],[96,1290]]) {
+ for (const [x,y] of [[10,20],[930,360],[96,500],[64,copy.heroHeight-1]]) {
   assert.deepEqual(await pixels(first,x,y), await pixels(scene,x,y));
  }
- assert.notDeepEqual(await pixels(last,60,1290), await pixels(scene,60,1290));
- const left=frame.screen.left+(frame.screen.width-320)/2;
- const top=frame.screen.top+(frame.screen.height-180)/2;
+ assert.deepEqual(await pixels(first,10,copy.heroHeight),Buffer.from([246,248,251]));
+ const left=500+(520-320)/2;
+ const top=copy.heroHeight-248+(210-180)/2;
  assert.deepEqual(await pixels(first,left,top,320,180),await pixels(screenshot,0,0,320,180));
- assert.deepEqual(await pixels(first,left-6,top+30),Buffer.from([23,35,49]));
- const [r,g,b]=await pixels(first,40,50);
- assert.ok(r>=230&&g>=230&&b>=230,'light copy backing stays readable over a dark photograph');
+ assert.ok(!copy.cta && !copy.site);
+ const finalCopy = await renderCompositionText(final);
+ assert.ok(finalCopy.cta && finalCopy.site);
+ const footerBottom=finalCopy.supportingTop+finalCopy.supporting!.height+26+finalCopy.cta.height+12+finalCopy.site.height;
+ assert.ok(footerBottom<=1300);
+ assert.deepEqual(await pixels(last,80,finalCopy.heroHeight+35),Buffer.from([0,97,173]));
 });
 
 test('protected screenshots fit proportionally with every edge preserved and text markup escaped',async()=>{
