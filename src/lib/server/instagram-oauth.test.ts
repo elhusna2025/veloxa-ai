@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { beginInstagramOAuth, finishInstagramOAuth, exchangeInstagramLogin, selectInstagramAccount, disconnectInstagram } from './instagram-oauth';
 import { instagramLoginConfig, isInstagramLoginConfigured, INSTAGRAM_LOGIN_SCOPES } from './instagram-config';
 import { ApiError } from './http';
+import { disconnectSocialAccount } from './social-connections';
+import { readSocialAccounts } from './social-accounts';
 import { disconnectMeta, selectMetaPage, beginMetaOAuth, finishMetaOAuth, META_SCOPES } from './meta-oauth';
 
 const keys = ['INSTAGRAM_LOGIN_ENABLED','META_APP_ID','META_APP_SECRET','INSTAGRAM_LOGIN_CONFIG_ID','INSTAGRAM_LOGIN_REDIRECT_URI','META_REDIRECT_URI'] as const;
@@ -77,7 +79,7 @@ test('disconnect is atomic against selection and invalidates in-flight OAuth wit
       assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/facebook'),true);
       // A genuinely new login after disconnect can still connect.
       await connect(f);await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);
-      assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),true);
+      assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram_202'),true);
     }
   }finally{restore();}
 });
@@ -99,7 +101,8 @@ test('disconnecting only Instagram preserves the existing Facebook Page authoriz
   f.db.values.set(f.ref.path+'/meta_authorizations/500',{pageName:'Page tetap',instagramId:'',instagramHandle:'',authorizedBy:'owner-test',expiresAt:0,['encryptedToken']:'unit-ciphertext'});
   await disconnectInstagram(f.request,f.ref.id,f.deps);
   const result=await selectMetaPage(f.request,f.ref.id,'500',f.deps);
-  assert.deepEqual(result.connections.map(c=>c.channel),['facebook']);
+  assert.deepEqual(result.connections.map(c=>c.channel),['facebook','facebook']);
+  assert.deepEqual(result.connections.map(c=>c.accountId).sort(),['400','500']);
   assert.equal(f.db.values.has(f.ref.path+'/meta_authorizations/500'),true);
   assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),false);
  }finally{restore();}
@@ -119,27 +122,28 @@ test('combined disconnect is atomic against Page selection in both transaction o
   }
  }finally{restore();}
 });
-test('Facebook-only Page preserves independent Unified Instagram and removes stale Page-linked Instagram atomically',async()=>{
+test('adding a Facebook-only Page preserves every existing independent or Page-linked Instagram',async()=>{
   for(const provider of ['instagram_unified','facebook']){
     const f=fixture();const now=Date.now();
     f.db.values.set(f.ref.path+'/meta_authorizations/500',{pageName:'Page baru',instagramId:'',instagramHandle:'',authorizedBy:'owner-test',expiresAt:now+60000,['encryptedToken']:'unit-ciphertext'});
     const existing={channel:'instagram',loginProvider:provider,accountId:'202',pageId:provider==='instagram_unified'?'':'400',accountName:'Contoh',handle:'@contoh.education',expiresAt:now+60000,['encryptedToken']:'unit-ciphertext'};
     f.db.values.set(f.ref.path+'/private_meta_connections/instagram',existing);
     const result=await selectMetaPage(f.request,f.ref.id,'500',f.deps);
-    assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook').accountId,'500');
-    assert.equal(result.connections.some(c=>c.channel==='instagram'),provider==='instagram_unified');
-    if(provider==='instagram_unified')assert.deepEqual(f.db.values.get(f.ref.path+'/private_meta_connections/instagram'),existing);
-    else assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),false);
+    assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook_500').accountId,'500');
+    assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook').accountId,'400');
+    assert.equal(result.connections.some(c=>c.channel==='instagram'),true);
+    assert.deepEqual(f.db.values.get(f.ref.path+'/private_meta_connections/instagram'),existing);
     assert.equal(f.calls.length,0);
   }
 });
-test('explicitly selecting a Page with paired Instagram replaces the previous independent account',async()=>{
+test('adding a Page with paired Instagram preserves the previous independent account',async()=>{
   const f=fixture();const now=Date.now();
   f.db.values.set(f.ref.path+'/meta_authorizations/500',{pageName:'Page baru',instagramId:'303',instagramHandle:'paired.ig',authorizedBy:'owner-test',expiresAt:now+60000,['encryptedToken']:'unit-ciphertext'});
   f.db.values.set(f.ref.path+'/private_meta_connections/instagram',{loginProvider:'instagram_unified',accountId:'202'});
   const result=await selectMetaPage(f.request,f.ref.id,'500',f.deps);
-  assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/instagram').accountId,'303');
-  assert.equal(result.connections.find(c=>c.channel==='instagram')?.handle,'@paired.ig');
+  assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/instagram_303').accountId,'303');
+  assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/instagram').accountId,'202');
+  assert.equal(result.connections.find(c=>c.accountId==='303')?.handle,'@paired.ig');
 });
 
 test('Unified Login fails closed without an enabled configuration and a trusted HTTPS callback',()=>{
@@ -156,15 +160,15 @@ test('Instagram-only Unified OAuth presents both login options, binds one-time s
     assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),false);
     const authorized=f.db.values.get(f.ref.path+'/instagram_authorizations/current');assert.equal(authorized.clientBusinessId,'700');assert.equal(authorized.configId,'888');assert.equal(authorized.encryptedToken,'encrypted-for-workspace-test');
     await assert.rejects(selectInstagramAccount(f.request,f.ref.id,'999',f.deps));
-    const result=await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);const connection=f.db.values.get(f.ref.path+'/private_meta_connections/instagram');
+    const result=await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);const connection=f.db.values.get(f.ref.path+'/private_meta_connections/instagram_202');
     assert.equal(connection.loginProvider,'instagram_unified');assert.equal(connection.pageId,'');assert.equal(connection.accountId,'202');assert.equal(connection.expiresAt,0);assert.equal(connection.clientBusinessId,'700');assert.equal(connection.configId,'888');
     assert.equal(result.connections.find(c=>c.channel==='instagram')?.handle,'@contoh.education');assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook').accountId,'400');
-    const metadata=JSON.stringify(f.db.values.get(f.ref.path+'/connections/instagram'));assert.equal(metadata.includes(credential),false);assert.equal(metadata.includes('encrypted-for-'),false);
+    const metadata=JSON.stringify(f.db.values.get(f.ref.path+'/connections/instagram_202'));assert.equal(metadata.includes(credential),false);assert.equal(metadata.includes('encrypted-for-'),false);
     const calls=f.calls.length;await assert.rejects(finishInstagramOAuth(f.callback(state),f.deps));assert.equal(f.calls.length,calls);
     await disconnectInstagram(f.request,f.ref.id,f.deps);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),false);assert.equal(f.db.values.has(f.ref.path+'/instagram_authorizations/current'),false);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/facebook'),true);
   }finally{restore();}
 });
-test('a repeated Unified grant clears a revoked selected account while leaving Facebook and separate Page-linked Instagram intact',async()=>{
+test('a different Unified grant does not prune previously connected accounts',async()=>{
   const restore=configure();try{
     for(const provider of ['instagram_unified','facebook']){
       const f=fixture();const active={channel:'instagram',loginProvider:provider,accountId:'999',pageId:provider==='facebook'?'400':'',accountName:'Revoked old account',handle:'@old.account',expiresAt:0,['encryptedToken']:'unit-old-placeholder'};
@@ -172,8 +176,8 @@ test('a repeated Unified grant clears a revoked selected account while leaving F
       f.db.values.set(f.ref.path+'/instagram_authorizations/current',{accounts:[{id:'999',username:'old.account'}],authorizedBy:'owner-test',generation:0});
       await connect(f);
       assert.equal(f.db.values.get(f.ref.path+'/instagram_authorizations/current').accounts.some((a:any)=>a.id==='999'),false);
-      assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),provider==='facebook');
-      assert.equal(f.db.values.has(f.ref.path+'/connections/instagram'),provider==='facebook');
+      assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),true);
+      assert.equal(f.db.values.has(f.ref.path+'/connections/instagram'),true);
       assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/facebook'),true);
       assert.equal(f.db.values.has(f.ref.path+'/instagram_authorizations/current'),true);
     }
@@ -284,7 +288,7 @@ test('proxy callback origins cannot change the configured public redirect or acc
    assert.equal(result.origin,'https://veloxa.example.test');
    assert.equal(result.workspaceId,f.ref.id);
    await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);
-   assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/instagram').accountId,'202');
+   assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/instagram_202').accountId,'202');
    assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook').accountId,'400');
   }
  }finally{restore();}
@@ -297,5 +301,38 @@ test('Instagram callback succeeds after Next trailing-slash normalization',async
   await finishInstagramOAuth(callback,f.deps);
   const result=await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);
   assert.equal(result.connections.find(c=>c.channel==='instagram')?.handle,'@contoh.education');
+ }finally{restore();}
+});
+
+
+test('ten Instagram accounts accumulate alongside Facebook with safe public metadata',async()=>{
+ const restore=configure();try{const f=fixture();await connect(f);const grant=f.db.values.get(f.ref.path+'/instagram_authorizations/current');grant.accounts=Array.from({length:10},(_,i)=>({id:String(1000+i),username:'brand.'+i}));f.db.values.set(f.ref.path+'/instagram_authorizations/current',grant);
+ let result;for(const account of grant.accounts)result=await selectInstagramAccount(f.request,f.ref.id,account.id,f.deps);
+ assert.equal(result!.connections.length,11);assert.equal(new Set(result!.connections.map(c=>c.connectionId)).size,11);assert.equal(result!.connections.filter(c=>c.channel==='instagram').length,10);
+ assert.equal(f.db.values.get(f.ref.path+'/private_meta_connections/facebook').accountId,'400');assert.equal(JSON.stringify(result).includes('encrypted-for-'),false);assert.equal(JSON.stringify(result).includes('encryptedToken'),false);
+ }finally{restore();}
+});
+test('different Instagram logins retain earlier account credentials and do not replace Facebook',async()=>{
+ const restore=configure();try{const f=fixture();await connect(f);await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);const original=f.db.values.get(f.ref.path+'/private_meta_connections/instagram_202');
+ const previous=f.deps.fetcher;f.deps.fetcher=async(input,init)=>{const path=new URL(String(input)).pathname;if(path.endsWith('/me'))return Response.json({client_business_id:'701'});if(path.endsWith('/me/assigned_instagram_accounts'))return Response.json({data:[{id:'303',username:'another.brand'}]});return previous(input,init);};
+ await connect(f);const result=await selectInstagramAccount(f.request,f.ref.id,'303',f.deps);assert.deepEqual(result.connections.map(c=>c.accountId).sort(),['202','303','400']);assert.deepEqual(f.db.values.get(f.ref.path+'/private_meta_connections/instagram_202'),original);assert.equal(f.db.values.has(f.ref.path+'/instagram_authorizations/700'),true);assert.equal(f.db.values.has(f.ref.path+'/instagram_authorizations/701'),true);
+ }finally{restore();}
+});
+test('per-account disconnect removes only one account and fences stale selections and OAuth callbacks',async()=>{
+ const restore=configure();try{const f=fixture({pagination:true});await connect(f);await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);await selectInstagramAccount(f.request,f.ref.id,'303',f.deps);
+ const begin=await beginInstagramOAuth(f.request,f.ref.id,f.deps);const state=new URL(begin.url).searchParams.get('state')!;
+ await disconnectSocialAccount(f.request,f.ref.id,'instagram_202',f.deps);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram_202'),false);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram_303'),true);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/facebook'),true);
+ await assert.rejects(selectInstagramAccount(f.request,f.ref.id,'202',f.deps),error=>error instanceof ApiError&&error.code==='reconnect_required');await assert.rejects(finishInstagramOAuth(f.callback(state),f.deps));
+ f.deps.now=()=>Date.now()+1000;await connect(f);await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram_202'),true);
+ }finally{restore();}
+});
+test('disconnect removes both stable and legacy aliases without leaving a fallback active',async()=>{
+ const restore=configure();try{const f=fixture();await connect(f);await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);const record=f.db.values.get(f.ref.path+'/private_meta_connections/instagram_202');f.db.values.set(f.ref.path+'/private_meta_connections/instagram',record);assert.equal(readSocialAccounts((await f.ref.collection('private_meta_connections').get()).docs).length,2);
+ await disconnectSocialAccount(f.request,f.ref.id,'instagram_202',f.deps);assert.equal(readSocialAccounts((await f.ref.collection('private_meta_connections').get()).docs).length,1);assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/instagram'),false);
+ }finally{restore();}
+});
+test('owner change rejects add/disconnect without mutating account records',async()=>{
+ const restore=configure();try{const f=fixture();await connect(f);await selectInstagramAccount(f.request,f.ref.id,'202',f.deps);f.db.values.set(f.ref.path,{ownerUid:'different-owner'});
+ const before=JSON.stringify([...f.db.values]);await assert.rejects(disconnectSocialAccount(f.request,f.ref.id,'instagram_202',f.deps));await assert.rejects(selectInstagramAccount(f.request,f.ref.id,'202',f.deps));assert.equal(JSON.stringify([...f.db.values]),before);
  }finally{restore();}
 });

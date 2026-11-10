@@ -12,12 +12,17 @@ interface PublishReviewDialogProps {
 
 export default function PublishReviewDialog({ draft, brandName, onCancel, onConfirm }: PublishReviewDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
 
-    if (draft && !dialog.open) dialog.showModal();
+    if (draft && !dialog.open) {
+      dialog.showModal();
+      headingRef.current?.focus({preventScroll:true});
+      dialog.scrollTop=0;
+    }
     else if (!draft && dialog.open) dialog.close();
 
     return () => {
@@ -45,7 +50,7 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
       <div className="space-y-5 p-5 sm:p-7">
         <header className="space-y-1">
           <p className="text-sm font-medium uppercase tracking-wide text-[#a92e5d]">Tinjauan publikasi</p>
-          <h2 id="publish-review-heading" className="text-xl font-semibold tracking-tight sm:text-2xl">Tinjau sebelum terbit</h2>
+          <h2 ref={headingRef} tabIndex={-1} id="publish-review-heading" className="text-xl font-semibold tracking-tight sm:text-2xl">Tinjau sebelum terbit</h2>
           <p className="text-base text-neutral-600">{draft.title} · {brandName}</p>
         </header>
 
@@ -56,7 +61,7 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
               {draft.publishTargets.map((target) => (
                 <li key={`${target.channel}-${target.accountId}`} className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-base">
                   <span className="font-semibold capitalize">{target.channel}</span>
-                  <span className="min-w-0 break-words text-right text-neutral-600">{target.accountName} <span className="text-neutral-500">({target.handle})</span></span>
+                  <span className="min-w-0 break-words text-right text-neutral-600">{target.accountName} <span className="text-neutral-500">({target.handle})</span>{draft.channelStatuses.some(status=>status.status==='published'&&(status.connectionId?status.connectionId===target.connectionId:status.accountId?status.accountId===target.accountId&&status.channel===target.channel:status.channel===target.channel&&draft.publishTargets!.filter(item=>item.channel===target.channel).length===1))&&<span className="mt-1 block text-sm text-emerald-700">Sudah terbit · tidak dikirim ulang</span>}</span>
                 </li>
               ))}
             </ul>
@@ -100,7 +105,6 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
         <footer className="flex flex-col-reverse gap-3 border-t border-neutral-100 pt-4 sm:flex-row sm:justify-end">
           <button
             type="button"
-            autoFocus
             onClick={onCancel}
             className="rounded-xl border border-neutral-200 bg-white px-4 py-3 text-base font-medium text-neutral-700 transition hover:border-neutral-400"
           >
@@ -108,11 +112,11 @@ export default function PublishReviewDialog({ draft, brandName, onCancel, onConf
           </button>
           <button
             type="button"
-            disabled={!draft.qualityReview.passed || (draft.format === 'short_video' ? !draft.renderedVideo : previewImages.length !== (draft.format === 'carousel' ? 5 : 1))}
+            disabled={!draft.publishTargets?.length || !draft.qualityReview.passed || (draft.format === 'short_video' ? !draft.renderedVideo : previewImages.length !== (draft.format === 'carousel' ? 5 : 1))}
             onClick={onConfirm}
             className="rounded-xl bg-[#D85A88] px-4 py-3 text-base font-medium text-white shadow-sm transition hover:bg-[#C44B78] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-[#D85A88]"
           >
-            Terbitkan sekarang
+            {draft.status==='publish_queued'?'Lanjutkan publikasi':'Terbitkan sekarang'}
           </button>
         </footer>
       </div>

@@ -6,6 +6,8 @@ import { encryptMetaToken } from './meta-crypto';
 import { graphRequest, MetaRequestError, type MetaConnection } from './meta-graph';
 import { publicConnection } from './meta-oauth';
 import { ApiError } from './http';
+import { disconnectAllSocial } from './social-disconnect-all';
+import { addInstagramAccount } from './social-connections';
 import { instagramLoginConfig, INSTAGRAM_LOGIN_SCOPES } from './instagram-config';
 
 const stateDigest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -87,51 +89,16 @@ export async function finishInstagramOAuth(url: URL, deps: Dependencies = {}) {
   await db.runTransaction(async tx => {
     const workspace = (await tx.get(ref)).data();
     const generation = generationValue((await tx.get(ref.collection('integration_guards').doc('instagram'))).data()?.generation);
-    const active = (await tx.get(ref.collection('private_meta_connections').doc('instagram'))).data() as MetaConnection | undefined;
     if (workspace?.ownerUid !== actor.uid) throw new ApiError(403, 'Pemilik workspace berubah. Mulai koneksi kembali.');
     if (generation !== actor.generation) throw new ApiError(409, 'Koneksi sudah dibatalkan. Mulai kembali dari Veloxa.', 'reconnect_required');
-    // A new grant invalidates a selected Unified account no longer shared; separate Page login remains independent.
-    if (active?.loginProvider === 'instagram_unified' && !login.accounts.some(account => account.id === active.accountId)) {
-      tx.delete(ref.collection('private_meta_connections').doc('instagram'));
-      tx.delete(ref.collection('connections').doc('instagram'));
-    }
-    // One private grant document avoids Firestore's 500-write limit when a business shares many accounts.
-    tx.set(ref.collection('instagram_authorizations').doc('current'), { accounts: login.accounts, generation, clientBusinessId: login.clientBusinessId, configId: config.configId, ['encryptedToken']: encrypted, expiresAt: login.expiresAt, authorizedBy: actor.uid, authorizedAt: now() });
+    const grant = { accounts: login.accounts, generation, clientBusinessId: login.clientBusinessId, configId: config.configId, encryptedToken: encrypted, expiresAt: login.expiresAt, authorizedBy: actor.uid, authorizedAt: now() };
+    tx.set(ref.collection('instagram_authorizations').doc(login.clientBusinessId), grant);
+    tx.set(ref.collection('instagram_authorizations').doc('current'), grant);
   });
   // The user selects an explicitly named Instagram account before replacing a current connection.
   return { origin: config.origin, workspaceId: actor.workspaceId };
 }
 
-export async function selectInstagramAccount(request: Request, workspaceId: unknown, accountId: unknown, deps: Dependencies = {}) {
-  const { ref, user } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
-  const config = instagramLoginConfig(); const id = numericId.parse(accountId); const now = deps.now || Date.now;
-  return (deps.database || adminDb()).runTransaction(async tx => {
-    const workspace = (await tx.get(ref)).data();
-    const value = (await tx.get(ref.collection('instagram_authorizations').doc('current'))).data();
-    const generation = generationValue((await tx.get(ref.collection('integration_guards').doc('instagram'))).data()?.generation);
-    const account = value?.accounts?.find((candidate: { id: string; username: string }) => candidate.id === id);
-    const facebook = (await tx.get(ref.collection('private_meta_connections').doc('facebook'))).data() as MetaConnection | undefined;
-    if (workspace?.ownerUid !== user.uid || !value || !account || value.generation !== generation || value.authorizedBy !== user.uid || value.configId !== config.configId || (value.expiresAt && value.expiresAt <= now())) throw new ApiError(409, 'Berikan izin Instagram untuk akun ini terlebih dahulu.', 'reconnect_required');
-    const connection: MetaConnection = { channel: 'instagram', loginProvider: 'instagram_unified', accountId: id, pageId: '', accountName: account.username, handle: '@' + account.username, ['encryptedToken']: value.encryptedToken, expiresAt: value.expiresAt, clientBusinessId: value.clientBusinessId, configId: value.configId };
-    tx.set(ref.collection('private_meta_connections').doc('instagram'), connection);
-    tx.set(ref.collection('connections').doc('instagram'), publicConnection(connection));
-    return { connections: [...(facebook ? [publicConnection(facebook)] : []), publicConnection(connection)] };
-  });
-}
+export const selectInstagramAccount = addInstagramAccount;
 
-export async function disconnectInstagram(request: Request, workspaceId: unknown, deps: Dependencies = {}) {
-  const { ref, user } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
-  const db = deps.database || adminDb();
-  await db.runTransaction(async tx => {
-    const workspace = (await tx.get(ref)).data();
-    const guard = ref.collection('integration_guards').doc('instagram');
-    const generation = generationValue((await tx.get(guard)).data()?.generation);
-    if (workspace?.ownerUid !== user.uid) throw new ApiError(403, 'Akses workspace telah berubah.');
-    // Selection reads this guard and the deleted grant. Firestore retries any racing selection,
-    // while the generation also invalidates OAuth callbacks that started before disconnect.
-    tx.set(guard, { generation: generation + 1 });
-    tx.delete(ref.collection('instagram_authorizations').doc('current'));
-    tx.delete(ref.collection('private_meta_connections').doc('instagram'));
-    tx.delete(ref.collection('connections').doc('instagram'));
-  });
-}
+export async function disconnectInstagram(request:Request,workspaceId:unknown,deps:Dependencies={}) { return disconnectAllSocial(request,workspaceId,true,deps); }

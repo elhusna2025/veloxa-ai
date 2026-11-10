@@ -23,6 +23,9 @@ import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { renderReelsVideo } from './reels-renderer';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
 import { publicConnection } from './meta-oauth';
+import { readSocialAccounts, connectionIdSchema } from './social-accounts';
+import { selectDraftAccounts, toAccountTarget } from './social-targets';
+import { MAX_PUBLISH_ACCOUNTS } from '../social-account-identity';
 import { getMetaLoginProvider, type MetaConnection as StoredMetaConnection } from './meta-graph';
 import { reserveGenerationAttempt, generationQuotaStatus } from './generation-policy';
 import { wibMonth } from './clock';
@@ -55,7 +58,7 @@ export async function uploadBrandPhoto(request: Request) {
   return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160));
 }
 
-const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
+const contentInput = z.object({ workspaceId: z.string(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -88,9 +91,9 @@ export async function createSocialContent(request: Request, dependencies: {
   try { businessContext=buildVisualBusinessContext(brand,topic); } catch(error){throw new ApiError(409,error instanceof Error?error.message:'Periksa profil bisnis.','profile_context_invalid');}
   const imageContextParams={businessContext};
   const selected = await ref.collection('private_meta_connections').get();
-  const connections = selected.docs.map(doc => publicConnection(doc.data() as MetaConnection));
-  if (!connections.some(connection => connection.connected)) throw new ApiError(409, 'Hubungkan Facebook Page atau Instagram terlebih dahulu.');
   const planId: SubscriptionPlanId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
+  const selectedAccounts=selectDraftAccounts(readSocialAccounts(selected.docs),input.selectedConnectionIds,planId);
+  const connections=selectedAccounts.map(publicConnection);
   if (input.sourceAssetId) {
     const record = (await ref.collection('server_assets').doc(input.sourceAssetId).get()).data();
     if (!isWorkspacePhoto(record, workspaceId) || record.trashedAt) throw new ApiError(404, 'Foto tidak tersedia. Pilih foto lain atau pulihkan dari Sampah.');
@@ -109,7 +112,10 @@ export async function createSocialContent(request: Request, dependencies: {
   draft.referenceRoles=referenceRoles;
   draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
   if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }
-  draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
+  const targetBindings=selectedAccounts.map(toAccountTarget);
+  draft.publishTargets=targetBindings;
+  draft.targetChannels=[...new Set(targetBindings.map(target=>target.channel))];
+  draft.channelStatuses=targetBindings.map(target=>({...target,status:'pending'}));
   if(input.sourceAssetId){
     draft.visualText=[brand.businessName,brand.businessName.slice(0,2).toUpperCase(),brand.city,brand.defaultCta.slice(0,48),draft.slides?.[0]?.badgeText||'CAROUSEL · FEED 4:5'];
   }else{
@@ -202,7 +208,7 @@ export async function createSocialContent(request: Request, dependencies: {
   }
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
   const targetProviders = Object.fromEntries(selected.docs.map(doc => doc.data() as StoredMetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => [connection.channel, getMetaLoginProvider(connection.loginProvider)]));
-  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode, profileFingerprint:fingerprint, snapshotRevision:draft.profileContext.snapshotRevision, forbiddenWordsAtGeneration:brand.forbiddenWords })));
+  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetBindings, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(), engineMode: generated.engineMode, profileFingerprint:fingerprint, snapshotRevision:draft.profileContext.snapshotRevision, forbiddenWordsAtGeneration:brand.forbiddenWords })));
   return { draft, engineMode: generated.engineMode, generationQuota };
   } catch (error) {
     if (error instanceof GenerationStageError) throw error;

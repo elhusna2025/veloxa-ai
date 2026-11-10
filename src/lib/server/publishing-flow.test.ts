@@ -76,6 +76,7 @@ function fixture() {
   const create = async (options: {
     format?: 'single_post' | 'carousel';
     topic?: string;
+    selectedConnectionIds?:string[];
     sourceAssetId?: string;
     referenceAssetIds?: string[];
     referenceInstruction?: string;
@@ -83,7 +84,7 @@ function fixture() {
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -514,4 +515,62 @@ test('changing the selected Page after creation cannot redirect an already-revie
   await f.ref.collection('private_meta_connections').doc('facebook').update({ accountId: '999', accountName: 'Different customer Page' });
   await assert.rejects(publishSocialContent(f.request(draft.id), { ...f.dependencies, publisher: async () => { assert.fail('must not dispatch to any account'); } }), error => error instanceof ApiError && error.code === 'target_changed');
   assert.equal(f.count(), 0);
+});
+
+
+function seedExtraInstagram(f:ReturnType<typeof fixture>){
+ f.database.values.set(`${f.ref.path}/private_meta_connections/instagram_201`,{channel:'instagram',accountId:'201',pageId:'101',accountName:'Second IG',handle:'@second',encryptedToken:'unit-second-placeholder',expiresAt:0});
+ return ['instagram_200','instagram_201','facebook_100'];
+}
+test('multi-account dispatch persists two Instagram receipts and a Facebook receipt with one quota',async()=>{
+ const f=fixture();const ids=seedExtraInstagram(f);const{draft}=await f.create({selectedConnectionIds:ids});const sent:string[]=[];
+ assert.deepEqual(draft.publishTargets?.map(target=>target.connectionId),ids);assert.equal(draft.channelStatuses.length,3);assert.equal(f.generateCalls(),1);assert.equal(f.renderCalls(),1);
+ const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async params=>{sent.push(params.accountId);return{externalPostId:'remote-'+params.accountId};}});
+ assert.deepEqual(sent,['200','201','100']);assert.equal(result.receipts.length,3);assert.equal(new Set(result.receipts.map(item=>item.connectionId)).size,3);assert.equal(result.draft.status,'published');assert.equal(f.count(),1);
+});
+test('retry skips a successful Instagram account even when that completed target is later disconnected',async()=>{
+ const f=fixture();const{draft}=await f.create({selectedConnectionIds:seedExtraInstagram(f)});let failed=true;const sent:string[]=[];const publisher=async(params:{accountId:string})=>{sent.push(params.accountId);if(params.accountId==='201'&&failed)throw new MetaRequestError('Definite rejection');return{externalPostId:'remote-'+params.accountId};};
+ const first=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(first.draft.status,'partially_published');assert.equal(f.count(),1);
+ f.database.values.delete(`${f.ref.path}/private_meta_connections/instagram`);failed=false;const second=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(second.draft.status,'published');assert.deepEqual(sent,['200','201','100','201']);assert.equal(f.count(),1);
+});
+test('unknown delivery for one of several Instagram accounts blocks automatic duplicate retry',async()=>{
+ const f=fixture();const{draft}=await f.create({selectedConnectionIds:seedExtraInstagram(f)});let calls=0;const publisher=async(params:{accountId:string})=>{calls++;if(params.accountId==='201')throw new MetaRequestError('Unknown send',true);return{externalPostId:'remote-'+params.accountId};};
+ const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(result.draft.status,'needs_attention');await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher}),error=>error instanceof ApiError&&error.code==='delivery_in_progress');assert.equal(calls,3);assert.equal(f.count(),1);
+});
+test('duplicate, foreign, expired and implicit multi-account targets fail before generation cost',async()=>{
+ for(const mode of ['duplicate','foreign','expired','implicit'] as const){const f=fixture();const ids=seedExtraInstagram(f);if(mode==='expired')f.database.values.get(`${f.ref.path}/private_meta_connections/instagram_201`)!.expiresAt=Date.now()-1;
+ await assert.rejects(f.create({selectedConnectionIds:mode==='duplicate'?[ids[0],ids[0]]:mode==='foreign'?['instagram_999']:mode==='implicit'?undefined:ids}));assert.equal(f.generateCalls(),0);assert.equal(f.generationCount(),0);}
+});
+test('legacy draft and channel-only job receipts retain original targets and do not duplicate delivery',async()=>{
+ const f=fixture();const{draft}=await f.create();const saved=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;delete saved.targetBindings;
+ saved.draft.publishTargets=saved.draft.publishTargets.map(({channel,accountId,accountName,handle}:any)=>({channel,accountId,accountName,handle}));
+ let calls=0;const publisher=async()=>({externalPostId:'remote-'+(++calls)});await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});const job=f.database.values.get(`${f.ref.path}/publish_jobs/${draft.id}`)!;job.receipts=job.receipts.map(({channel,status,externalPostId}:any)=>({channel,status,externalPostId}));
+ const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(calls,2);assert.equal(result.receipts.length,2);assert.equal(f.count(),1);
+});
+test('disconnect while loading media is rechecked before that remote send',async()=>{
+ const f=fixture();const{draft}=await f.create({selectedConnectionIds:seedExtraInstagram(f)});const original=f.dependencies.storage as unknown as {file:(path:string)=>{download:()=>Promise<Buffer[]>}};let removed=false;const sent:string[]=[];
+ const storage={...original,file:(path:string)=>({download:async()=>{const bytes=await original.file(path).download();if(!removed){removed=true;f.database.values.delete(`${f.ref.path}/private_meta_connections/instagram`);}return bytes;}})};
+ const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,storage:storage as never,publisher:async params=>{sent.push(params.accountId);return{externalPostId:'remote-'+params.accountId};}});assert.equal(result.draft.status,'partially_published');assert.deepEqual(sent,['201','100']);
+});
+
+
+test('ten Instagram destinations drain a persisted queue across requests without duplicate sends or quota',async()=>{
+ const f=fixture();const ids=Array.from({length:10},(_,i)=>'instagram_'+(9000+i));for(const [i,id]of ids.entries())f.database.values.set(`${f.ref.path}/private_meta_connections/${id}`,{channel:'instagram',accountId:String(9000+i),pageId:'100',accountName:'Brand '+i,handle:'@brand'+i,encryptedToken:'unit-placeholder',expiresAt:0});
+ const{draft}=await f.create({selectedConnectionIds:ids});const sent:string[]=[];const publisher=async(params:{accountId:string})=>{sent.push(params.accountId);return{externalPostId:'remote-'+params.accountId};};
+ let result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(result.draft.status,'publish_queued');assert.equal(result.receipts.length,3);assert.equal(result.pendingAccounts,7);assert.equal(f.count(),1);
+ for(let batch=0;result.hasMore&&batch<5;batch++)result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});
+ assert.equal(result.draft.status,'published');assert.equal(sent.length,10);assert.equal(new Set(sent).size,10);assert.equal(f.count(),1);assert.equal(result.draft.channelStatuses.length,10);
+});
+test('elapsed request budget checkpoints remaining accounts and never retries a failed one during continuation',async()=>{
+ const f=fixture();const{draft}=await f.create({selectedConnectionIds:seedExtraInstagram(f)});let clock=0;const sent:string[]=[];const publisher=async(params:{accountId:string})=>{sent.push(params.accountId);clock+=61_000;if(params.accountId==='200')throw new MetaRequestError('Definitive reject');return{externalPostId:'remote-'+params.accountId};};
+ let result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher,now:()=>clock});assert.equal(result.hasMore,true);assert.equal(result.receipts.length,1);assert.equal(f.count(),1);
+ while(result.hasMore)result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher,now:()=>clock});assert.deepEqual(sent,['200','201','100']);assert.equal(result.draft.status,'partially_published');assert.equal(f.count(),1);
+});
+
+
+test('disconnecting a queued destination does not block other accounts or resend completed ones',async()=>{
+ const f=fixture();const ids=Array.from({length:5},(_,i)=>'instagram_'+(9000+i));for(const [i,id]of ids.entries())f.database.values.set(`${f.ref.path}/private_meta_connections/${id}`,{channel:'instagram',accountId:String(9000+i),pageId:'100',accountName:'Brand '+i,handle:'@brand'+i,encryptedToken:'unit-placeholder',expiresAt:0});
+ const{draft}=await f.create({selectedConnectionIds:ids});const sent:string[]=[];const publisher=async(params:{accountId:string})=>{sent.push(params.accountId);return{externalPostId:'remote-'+params.accountId};};
+ const first=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(first.hasMore,true);f.database.values.delete(`${f.ref.path}/private_meta_connections/instagram_9003`);
+ const last=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher});assert.equal(last.draft.status,'partially_published');assert.deepEqual(sent,['9000','9001','9002','9004']);assert.equal(last.receipts.find(item=>item.connectionId==='instagram_9003')?.status,'failed');assert.equal(f.count(),1);
 });

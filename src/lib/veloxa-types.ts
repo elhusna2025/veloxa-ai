@@ -108,6 +108,9 @@ export interface BrandVaultAsset {
 }
 
 export interface ChannelConnectionState {
+  connectionId?: string;
+  accountId?: string;
+  loginProvider?: 'facebook' | 'instagram' | 'instagram_unified';
   channel: SocialChannelId;
   connected: boolean;
   handle: string;
@@ -164,6 +167,10 @@ export interface QualityReviewReport {
 }
 
 export interface ChannelPublishStatus {
+  connectionId?: string;
+  accountId?: string;
+  accountName?: string;
+  handle?: string;
   channel: SocialChannelId;
   status: 'pending' | 'scheduled' | 'publishing' | 'published' | 'skipped' | 'failed' | 'unknown';
   permalink?: string;
@@ -196,11 +203,11 @@ export interface ContentDraft {
   hashtags: string[];
   targetChannels: SocialChannelId[];
   channelStatuses: ChannelPublishStatus[];
-  status: 'draft' | 'repairing' | 'approved' | 'scheduled' | 'published' | 'publishing' | 'publish_failed' | 'partially_published' | 'needs_attention';
+  status: 'draft' | 'repairing' | 'approved' | 'scheduled' | 'published' | 'publishing' | 'publish_failed' | 'partially_published' | 'needs_attention' | 'publish_queued';
   renderedMedia?: { url: string; mimeType: 'image/jpeg'; width: number; height: number };
   renderedVideo?: { url: string; mimeType: 'video/mp4'; width: number; height: number; durationSeconds: number; voiceDisclosure: string };
   renderedSlides?: { url: string; mimeType: 'image/jpeg'; width: number; height: number }[];
-  publishTargets?: { channel: SocialChannelId; accountId: string; accountName: string; handle: string }[];
+  publishTargets?: { connectionId?: string; loginProvider?: 'facebook' | 'instagram' | 'instagram_unified'; channel: SocialChannelId; accountId: string; accountName: string; handle: string }[];
   scheduledForWib?: string;
   publishedAtWib?: string;
   slides?: SlideSpec[];

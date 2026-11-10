@@ -7,6 +7,7 @@ import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
 import type { ContentReferenceRoles } from '@/lib/content-reference-roles';
 import { profileFingerprint } from '@/lib/profile-fingerprint';
 import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
+import { withConnectionPlaceholders } from '@/lib/social-account-identity';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
 import { ContentGenerationError, type GenerationQuota, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
@@ -79,7 +80,7 @@ import {
   saveVeloxaLocale,
   type VeloxaLocale,
 } from '@/lib/veloxa-i18n';
-import { VeloxaMetaConnections } from '@/components/VeloxaMetaConnections';
+import { VeloxaSocialAccountsPanel as VeloxaMetaConnections } from '@/components/VeloxaSocialAccountsPanel';
 import { veloxaApi } from '@/lib/veloxa-api-client';
 import { VeloxaPublicLanding } from '@/components/VeloxaPublicLanding';
 import { VeloxaPublicHeader } from '@/components/VeloxaPublicHeader';
@@ -179,6 +180,9 @@ export default function VeloxaAiPlatformPage() {
   const [postsUsedThisMonth, setPostsUsedThisMonth] = useState<number>(0);
   const [connections, setConnections] = useState<ChannelConnectionState[]>(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
   const [connectionsVerified, setConnectionsVerified] = useState(false);
+  const [selectedConnectionIds,setSelectedConnectionIds]=useState<string[]>([]);
+  useEffect(()=>{setSelectedConnectionIds([]);},[brand.workspaceId]);
+  useEffect(()=>{if(connectionsVerified)setSelectedConnectionIds(previous=>previous.filter(id=>connections.some(account=>account.connectionId===id&&account.connected)));},[connections,connectionsVerified]);
   const [metaAccount, setMetaAccount] = useState<MetaAdsAccountConnection>(INITIAL_META_ADS_ACCOUNT);
   const [vaultAssets, setVaultAssets] = useState<BrandVaultAsset[]>([]);
   const [autonomyConfig, setAutonomyConfig] = useState<AutonomyConfig>(INITIAL_AUTONOMY_CONFIG);
@@ -356,7 +360,7 @@ export default function VeloxaAiPlatformPage() {
       if (metaResult.status === 'fulfilled') {
         const meta = metaResult.value;
         setConnectionsVerified(true);
-        setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => meta.connections.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
+        setConnections(withConnectionPlaceholders(meta.connections,INITIAL_CHANNEL_CONNECTIONS));
       } else {
         // Keep the last known account metadata. A failed check is not a disconnect.
         setConnectionsVerified(false);
@@ -608,7 +612,7 @@ export default function VeloxaAiPlatformPage() {
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
       requestStarted=true;
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, referenceRoles:Object.fromEntries(selectedReferenceIds.map(id=>[id,referenceRoles[id]||'visual'])), ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, selectedConnectionIds, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, referenceRoles:Object.fromEntries(selectedReferenceIds.map(id=>[id,referenceRoles[id]||'visual'])), ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic(''); setGenerationQuota(result.generationQuota || null);
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });
@@ -623,13 +627,20 @@ export default function VeloxaAiPlatformPage() {
   const confirmPublishDraftNow = async (draftId: string) => {
     const draft = drafts.find(item => item.id === draftId);
     if (!draft || publishingDraftId) return;
+    const publishEpoch=hydrationEpoch.current;
     setPublishReviewDraftId(null);
     setPublishingDraftId(draftId); setStatusBanner('Mengirim konten ke Meta. Jangan menutup halaman selama proses berlangsung…');
     try {
-      const result = await veloxaApi<{ draft: ContentDraft; receipts: { channel: string; status: string; error?: string }[]; quotaUsed: number }>('/api/veloxa/publish', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, draftId }) });
-      setDrafts(previous => previous.map(item => item.id === draftId ? result.draft : item)); setPostsUsedThisMonth(result.quotaUsed);
-      setStatusBanner(result.receipts.map(receipt => `${receipt.channel}: ${receipt.status === 'published' ? 'berhasil diterbitkan' : receipt.error || 'belum berhasil'}`).join(' · '));
-    } catch (error) { setStatusBanner(error instanceof Error ? error.message : 'Publikasi belum dapat dipastikan. Periksa akun Meta sebelum mencoba ulang.'); }
+      setGenerationFeedback(null);
+      for(let batch=0;batch<50;batch++){
+        if(hydrationEpoch.current!==publishEpoch)return;
+        const result = await veloxaApi<{ draft: ContentDraft; receipts: { channel:string; handle?:string; accountName?:string; status:string; error?:string }[]; quotaUsed:number; hasMore?:boolean; pendingAccounts?:number }>('/api/veloxa/publish',{method:'POST',body:JSON.stringify({workspaceId:brand.workspaceId,draftId})});
+        if(hydrationEpoch.current!==publishEpoch)return;
+        setDrafts(previous=>previous.map(item=>item.id===draftId?result.draft:item));setPostsUsedThisMonth(result.quotaUsed);
+        if(result.hasMore){setStatusBanner(`Publikasi diproses: ${result.receipts.length} akun diperiksa · ${result.pendingAccounts} akun menunggu. Jangan menutup halaman…`);continue;}
+        setStatusBanner(result.receipts.map(receipt=>`${receipt.channel} ${receipt.channel==='facebook'?receipt.accountName||receipt.handle||'':receipt.handle||receipt.accountName||''}: ${receipt.status==='published'?'berhasil diterbitkan':receipt.error||'belum berhasil'}`).join(' · '));break;
+      }
+    } catch (error) { if(hydrationEpoch.current!==publishEpoch)return;setStatusBanner(error instanceof Error ? error.message : 'Publikasi belum dapat dipastikan. Periksa akun Meta sebelum mencoba ulang.'); }
     finally { setPublishingDraftId(null); }
   };
 
@@ -1188,7 +1199,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <VeloxaStudioComposer brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
+                  <VeloxaStudioComposer accounts={connections} accountsVerified={connectionsVerified} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
 
                   <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{drafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
                   {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{drafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{drafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
@@ -1204,7 +1215,7 @@ export default function VeloxaAiPlatformPage() {
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-sm font-semibold text-[#a92e5d]">
-                                {draft.status === 'published' ? '✓ Sudah Tayang' : draft.status === 'needs_attention' ? 'Perlu diperiksa di Meta' : draft.status === 'partially_published' ? 'Sebagian kanal berhasil' : draft.status === 'publish_failed' ? 'Publikasi gagal' : draft.status === 'publishing' ? 'Sedang mengirim' : 'Draf — tinjau sebelum terbit'}
+                                {draft.status === 'published' ? '✓ Sudah Tayang' : draft.status === 'needs_attention' ? 'Perlu diperiksa di Meta' : draft.status === 'partially_published' ? 'Sebagian kanal berhasil' : draft.status === 'publish_failed' ? 'Publikasi gagal' : draft.status === 'publish_queued' ? 'Publikasi siap dilanjutkan' : draft.status === 'publishing' ? 'Sedang mengirim' : 'Draf — tinjau sebelum terbit'}
                               </span>
                               <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-sm font-medium text-neutral-700">
                                 {draft.format === 'short_video'
@@ -1231,7 +1242,7 @@ export default function VeloxaAiPlatformPage() {
                                 className="rounded-xl bg-[#bd416e] px-4 py-2 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
                               >
                                 <Send className="mr-1.5 inline h-3.5 w-3.5" />
-                                {draft.status === 'partially_published' ? 'Tinjau kanal yang gagal' : 'Tinjau & terbitkan'}
+                                {draft.status === 'publish_queued' ? 'Tinjau & lanjutkan publikasi' : draft.status === 'partially_published' ? 'Tinjau akun yang gagal' : 'Tinjau & terbitkan'}
                               </button>
                             )}
                             <button
@@ -1291,10 +1302,10 @@ export default function VeloxaAiPlatformPage() {
                               <span className="font-medium text-neutral-500">Tujuan publikasi:</span>
                               {draft.channelStatuses.map((cs) => (
                                 <span
-                                  key={cs.channel}
+                                  key={cs.connectionId||cs.channel}
                                   className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${CHANNEL_META[cs.channel].badgeClass}`}
                                 >
-                                  {CHANNEL_META[cs.channel].shortLabel}:{' '}
+                                  {CHANNEL_META[cs.channel].shortLabel} {cs.channel==='facebook'?cs.accountName||cs.handle||'':cs.handle||cs.accountName||''}:{' '}
                                   <span className="text-[#a92e5d]">
                                     {cs.status === 'published' ? '✓ Sudah Tayang' : cs.status === 'failed' ? 'Gagal dikirim' : cs.status === 'unknown' ? 'Perlu diperiksa' : 'Belum diterbitkan'}
                                     {cs.permalink && <a href={cs.permalink} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Lihat posting ↗</a>}
@@ -2252,7 +2263,7 @@ export default function VeloxaAiPlatformPage() {
 
         {authUser && <VeloxaMetaConnections key={brand.workspaceId} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
           setConnectionsVerified(true);
-          setConnections(INITIAL_CHANNEL_CONNECTIONS.map(connection => verified.find(item => item.channel === connection.channel) || { ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null }));
+          setConnections(withConnectionPlaceholders(verified,INITIAL_CHANNEL_CONNECTIONS));
         }} />}
       </dialog>
 

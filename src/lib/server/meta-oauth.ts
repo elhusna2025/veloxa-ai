@@ -7,6 +7,9 @@ import { graphRequest, graphVersion, type MetaConnection } from './meta-graph';
 import { discoverMetaPages } from './meta-pages';
 import { isInstagramLoginConfigured } from './instagram-config';
 import { ApiError } from './http';
+import { disconnectAllSocial } from './social-disconnect-all';
+import { addFacebookPage } from './social-connections';
+import { readSocialAccounts, publicSocialAccount } from './social-accounts';
 import type { ChannelConnectionState } from '../veloxa-types';
 
 export const META_SCOPES = ['instagram_basic', 'instagram_content_publish', 'pages_read_engagement', 'pages_show_list', 'pages_manage_posts'];
@@ -83,10 +86,8 @@ export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}) {
   await db.runTransaction(async tx => {
   const latestWorkspace = (await tx.get(workspaceRef)).data();
   const generation = readGeneration((await tx.get(metaGuard)).data()?.generation);
-  const previous = await tx.get(workspaceRef.collection('meta_authorizations'));
   if (latestWorkspace?.ownerUid !== actor.uid || generation !== (actor.generation ?? 0)) throw new ApiError(409, 'Koneksi Meta telah dibatalkan atau pemilik workspace berubah. Mulai kembali.', 'reconnect_required');
   const batch = tx;
-  for (const old of previous.docs) if (!pages.some(page => page.id === old.id)) batch.delete(old.ref);
   for (const page of pages) {
     batch.set(workspaceRef.collection('meta_authorizations').doc(page.id), {
       metaGeneration: generation, pageId: page.id, pageName: page.name.slice(0, 160), instagramId: page.instagram_business_account?.id || '',
@@ -98,70 +99,19 @@ export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}) {
   return { origin: config.origin, workspaceId: actor.workspaceId };
 }
 
-export function publicConnection(connection: MetaConnection): ChannelConnectionState {
-  return { channel: connection.channel, connected: !connection.expiresAt || connection.expiresAt > Date.now(), handle: connection.handle, accountName: connection.accountName,
-    followerCount: 0, oauthMode: connection.expiresAt && connection.expiresAt <= Date.now() ? 'pending_review' : 'direct_publish', tokenExpiresAt: connection.expiresAt ? new Date(connection.expiresAt).toISOString() : null, lastPublishedAt: connection.lastPublishedAt || null };
-}
+export const publicConnection = publicSocialAccount;
 
 export async function metaAccounts(request: Request, workspaceId: unknown) {
   const { ref, user } = await requireWorkspace(request, workspaceId, true);
-  const [pages, connections, instagram] = await Promise.all([ref.collection('meta_authorizations').get(), ref.collection('private_meta_connections').get(), ref.collection('instagram_authorizations').doc('current').get()]);
+  const [pages, connections, instagram] = await Promise.all([ref.collection('meta_authorizations').get(), ref.collection('private_meta_connections').get(), ref.collection('instagram_authorizations').get()]);
   return {
     instagramLoginAvailable: isInstagramLoginConfigured(),
-    instagramAccounts: instagram.data()?.authorizedBy === user.uid && (!instagram.data()?.expiresAt || instagram.data()!.expiresAt > Date.now()) ? (instagram.data()?.accounts || []).map((account: { id: string; username: string }) => ({ accountId: account.id, username: account.username })) : [],
+    instagramAccounts: [...new Map(instagram.docs.map(doc=>doc.data()).filter(grant=>grant.authorizedBy===user.uid&&(!grant.expiresAt||grant.expiresAt>Date.now())).sort((a,b)=>(a.authorizedAt||0)-(b.authorizedAt||0)).flatMap(grant=>(grant.accounts||[]).map((account:{id:string;username:string})=>[account.id,{accountId:account.id,username:account.username}] as const))).values()],
     pages: pages.docs.filter(doc => !doc.data().expiresAt || doc.data().expiresAt > Date.now()).map(doc => ({ pageId: doc.id, pageName: doc.data().pageName, instagramHandle: doc.data().instagramHandle })),
-    connections: connections.docs.map(doc => publicConnection(doc.data() as MetaConnection)),
+    connections: readSocialAccounts(connections.docs).map(publicConnection),
   };
 }
 
-export async function selectMetaPage(request: Request, workspaceId: unknown, pageId: unknown, deps: { authorize?: typeof requireWorkspace; database?: ReturnType<typeof adminDb> } = {}) {
-  const { ref, user } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
-  const id = z.string().regex(/^\d+$/).parse(pageId);
-  const db = deps.database || adminDb();
-  return db.runTransaction(async tx => {
-    const workspace = (await tx.get(ref)).data();
-    const generation = readGeneration((await tx.get(ref.collection('integration_guards').doc('meta'))).data()?.generation);
-    const authorized = (await tx.get(ref.collection('meta_authorizations').doc(id))).data();
-    const existingInstagram = (await tx.get(ref.collection('private_meta_connections').doc('instagram'))).data() as MetaConnection | undefined;
-    if (workspace?.ownerUid !== user.uid || !authorized || authorized.authorizedBy !== user.uid || (authorized.metaGeneration ?? 0) !== generation || (authorized.expiresAt && authorized.expiresAt <= Date.now())) throw new ApiError(409, 'Berikan izin Meta untuk Page ini terlebih dahulu.', 'reconnect_required');
-  const connections: MetaConnection[] = [{ channel: 'facebook', accountId: id, pageId: id, accountName: authorized.pageName, handle: id, encryptedToken: authorized.encryptedToken, expiresAt: authorized.expiresAt }];
-  if (authorized.instagramId) connections.push({ ...connections[0], channel: 'instagram', accountId: authorized.instagramId, accountName: authorized.instagramHandle, handle: '@' + authorized.instagramHandle });
-  const independentInstagram = existingInstagram?.loginProvider === 'instagram' || existingInstagram?.loginProvider === 'instagram_unified' ? existingInstagram : undefined;
-  if (!authorized.instagramId && independentInstagram) connections.push(independentInstagram);
-  // The Page authorization is deleted in the same global disconnect transaction, so racing selection retries.
-  // Facebook-only Pages preserve independent Instagram; stale Page-linked pairs are removed.
-  if (!authorized.instagramId && !independentInstagram) {
-    tx.delete(ref.collection('private_meta_connections').doc('instagram'));
-    tx.delete(ref.collection('connections').doc('instagram'));
-  }
-  for (const connection of connections) {
-    tx.set(ref.collection('private_meta_connections').doc(connection.channel), connection);
-    tx.set(ref.collection('connections').doc(connection.channel), publicConnection(connection));
-  }
-  return { connections: connections.map(publicConnection) };
-  });
-}
+export const selectMetaPage = addFacebookPage;
 
-export async function disconnectMeta(request: Request, workspaceId: unknown, deps: { authorize?: typeof requireWorkspace; database?: ReturnType<typeof adminDb> } = {}) {
-  const { ref, user } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
-  await (deps.database || adminDb()).runTransaction(async tx => {
-    const workspace = (await tx.get(ref)).data();
-    const guard = ref.collection('integration_guards').doc('instagram');
-    const generation = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1).parse((await tx.get(guard)).data()?.generation ?? 0);
-    const metaGuard = ref.collection('integration_guards').doc('meta');
-    const metaGeneration = readGeneration((await tx.get(metaGuard)).data()?.generation);
-    const authorizations = await tx.get(ref.collection('meta_authorizations'));
-    if (workspace?.ownerUid !== user.uid) throw new ApiError(403, 'Akses workspace telah berubah.');
-    // Seven writes revoke both connections and the independent grant. Refuse an oversized
-    // transaction before any mutation rather than leaving a partially disconnected pair.
-    if (authorizations.docs.length > 493) throw new ApiError(409, 'Terlalu banyak otorisasi untuk diputus sekaligus. Hubungi administrator.');
-    tx.set(guard, { generation: generation + 1 });
-    tx.set(metaGuard, { generation: metaGeneration + 1 });
-    tx.delete(ref.collection('instagram_authorizations').doc('current'));
-    for (const channel of ['facebook', 'instagram']) {
-      tx.delete(ref.collection('private_meta_connections').doc(channel));
-      tx.delete(ref.collection('connections').doc(channel));
-    }
-    for (const doc of authorizations.docs) tx.delete(doc.ref);
-  });
-}
+export async function disconnectMeta(request:Request,workspaceId:unknown,deps:{authorize?:typeof requireWorkspace;database?:ReturnType<typeof adminDb>}={}) { return disconnectAllSocial(request,workspaceId,false,deps); }
