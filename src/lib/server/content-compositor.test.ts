@@ -38,6 +38,28 @@ test('original logo and complete screenshot pixels survive all PNG compositions 
   }
  }
 });
+test('carousel preserves the photograph around the copy, keeps the original device display intact and only adds a final CTA', async () => {
+ const scene = await sharp({create:{width:1080,height:1350,channels:3,background:'#657F93'}}).png().toBuffer();
+ const screenshot = await pixelSource(320,180);
+ const content = {...params,carouselSlide:true,cta:'',originalAssets:[{id:'screen',role:'screenshot' as const,bytes:screenshot}]};
+ const frame = compositionLayout(false,true,true);
+ const first = await composeSocialVisual(scene, content);
+ const last = await composeSocialVisual(scene, {...content,cta:'Pelajari selengkapnya'});
+ async function pixels(image: Buffer,left: number,top: number,width=1,height=1) {
+  return sharp(image).extract({left,top,width,height}).removeAlpha().raw().toBuffer();
+ }
+ for (const [x,y] of [[10,20],[930,360],[96,860],[96,1290]]) {
+  assert.deepEqual(await pixels(first,x,y), await pixels(scene,x,y));
+ }
+ assert.notDeepEqual(await pixels(last,60,1290), await pixels(scene,60,1290));
+ const left=frame.screen.left+(frame.screen.width-320)/2;
+ const top=frame.screen.top+(frame.screen.height-180)/2;
+ assert.deepEqual(await pixels(first,left,top,320,180),await pixels(screenshot,0,0,320,180));
+ assert.deepEqual(await pixels(first,left-6,top+30),Buffer.from([23,35,49]));
+ const [r,g,b]=await pixels(first,40,50);
+ assert.ok(r>=230&&g>=230&&b>=230,'light copy backing stays readable over a dark photograph');
+});
+
 test('protected screenshots fit proportionally with every edge preserved and text markup escaped',async()=>{
  const screenshot=await pixelSource(1000,500);const scene=await pixelSource(300,400);const output=await composeSocialVisual(scene,{...params,title:'Berez <ERP> & “Bisnis”',brandPalette:['#FFFFFF','#0061AD'],originalAssets:[{id:'screen',role:'screenshot',bytes:screenshot}]});
  const box=compositionLayout(false,true).screen;const fitted=await sharp(screenshot).resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});

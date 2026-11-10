@@ -28,8 +28,9 @@ Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px.
 - Judul dan isi tidak boleh bertabrakan dengan logo, panel screenshot, CTA, atau tepi gambar. Copy feed menempati area kiri hingga 680 px. Judul dan isi berbagi ruang berdasarkan tinggi teks yang terukur, dengan jarak minimum 24 px dan ruang kosong sebelum panel screenshot. Ukuran huruf tidak turun di bawah batas minimum.
 - Reels menyisakan 224 px di atas header dan setidaknya 320 px di bawah footer sebagai ruang antarmuka platform. Panel screenshot dan footer harus tetap terpisah.
 - CTA memiliki area sendiri; website berada di baris terpisah. Jangan menumpuk dua baris CTA di atas domain.
-- Foto tetap memenuhi kanvas. Gunakan scrim gelap di belakang copy agar tulisan putih terbaca pada foto terang. Target kontras minimum 4,5:1 untuk teks penting; CTA memakai tinta hitam/putih yang paling kontras dengan warna brand.
-- Logo dan screenshot asli dipasang proporsional, tidak dipotong, digambar ulang, atau ditimpa teks.
+- Foto tetap memenuhi kanvas. Pada carousel, latar putih lembut hanya mengikuti area teks agar foto tetap terang. Teks carousel berwarna gelap. Format lain memakai scrim di belakang teks putih. Target kontras minimum 4,5:1 untuk teks penting. CTA memakai tinta hitam atau putih yang paling kontras dengan warna brand.
+- Logo dan screenshot asli dipasang proporsional, tidak dipotong, digambar ulang, atau ditimpa teks. Screenshot asli di carousel ditempatkan utuh dalam bingkai perangkat. Screenshot aplikasi yang dipilih sebagai acuan memberi konteks topik; foto referensi membentuk satu adegan yang utuh.
+- Nomor slide dan petunjuk geser ada di navigasi Studio. Gambar carousel hanya menampilkan CTA dan alamat website pada slide penutup.
 
 ## Overflow dan konsistensi
 

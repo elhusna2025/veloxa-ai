@@ -6,6 +6,7 @@ import { createSocialContent } from './content';
 import { analyzeBrandLogo } from './brand-palette';
 import { loadContentReferences } from './content-references';
 import type { ContentAgentParams } from './content-agent';
+import type { SocialPostImageParams } from './content-image';
 import { changeWorkspacePhotoState, listWorkspacePhotos, persistWorkspacePhoto, previewWorkspacePhoto } from './brand-assets';
 import { publishSocialContent } from './publishing';
 import { ApiError } from './http';
@@ -100,7 +101,7 @@ function fixture() {
     referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
+    renderImage?: (params: SocialPostImageParams) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
@@ -368,6 +369,33 @@ test('all chosen reference bytes and direction reach single/carousel visuals and
   assert.deepEqual(brief,{titles:ids.map((_,index)=>`Reference ${index+1}`),instruction});assert.deepEqual(draft.usedRealAssetIds,ids);assert.equal(draft.referenceInstruction,instruction);assert.equal(f.generationCount(),1);
  }
 });
+test('carousel uses screenshot topics and preserves the numbering and bytes of attached photos', async () => {
+  const f = fixture();
+  const ids = await seedReferences(f, 3);
+  for (const index of [0, 2]) {
+    const record = f.database.values.get(`${f.ref.path}/server_assets/${ids[index]}`)!;
+    record.asset.category = 'screenshot';
+  }
+  const scene = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#82A0B2' } }).jpeg().toBuffer();
+  let calls = 0;
+  const {draft} = await f.create({
+    format: 'carousel',
+    referenceAssetIds: ids,
+    referenceInstruction: 'Tampilkan Ref 1 sebagai panel tetap.',
+    referenceRoles: {[ids[0]]:'visual', [ids[1]]:'visual', [ids[2]]:'screenshot'},
+    renderImage: async input => {
+      calls++;
+      assert.deepEqual(input.sceneReferenceLabels, ['Ref 2: Reference 2']);
+      assert.deepEqual(input.screenshotContextLabels, ['Ref 1: Screenshot aplikasi: Reference 1']);
+      assert.deepEqual(input.referenceImages, [f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[1]}.jpg`)]);
+      assert.equal(input.hasOriginalScreenshot, true);
+      return scene;
+    },
+  });
+  assert.equal(calls, 5);
+  assert.deepEqual(draft.usedRealAssetIds, ids);
+});
+
 test('protected originals stay out of AI scene requests and are composited into every post/carousel',async()=>{
  for(const format of ['single_post','carousel'] as const){
   const f=fixture();const ids=await seedReferences(f,3);let calls=0;
@@ -459,7 +487,8 @@ test('carousel generation renders and stores five ordered slides while consuming
   assert.equal(rendered.length, 5);
   assert.deepEqual(rendered.map(item => item.title), Array.from({ length: 5 }, (_, index) => `Headline ${index + 1}`));
   assert.deepEqual(rendered.map(item => item.hook), Array.from({ length: 5 }, (_, index) => `Body ${index + 1}`));
-  assert.deepEqual(rendered.slice(0, 4).map(item => item.cta), Array.from({ length: 4 }, (_, index) => `${index + 1}/5 · Geser untuk lanjut`));
+  assert.deepEqual(rendered.slice(0, 4).map(item => item.cta), ['', '', '', '']);
+  assert.ok(result.draft.visualText?.every(text => !text.includes('Geser untuk lanjut')));
   assert.equal(rendered[4].cta, 'Simpan');
   assert.equal(result.draft.renderedSlides?.length, 5);
   assert.equal(result.draft.renderedMedia?.url, result.draft.renderedSlides?.[0].url);
