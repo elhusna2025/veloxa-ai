@@ -9,9 +9,17 @@ async function pixelSource(width:number,height:number){const data=Buffer.alloc(w
 test('bundled font renders readable Latin copy without any installed system fonts',async()=>{
  const{mkdtemp,writeFile,rm,mkdir}=await import('node:fs/promises');const{tmpdir}=await import('node:os');const path=await import('node:path');const{execFile}=await import('node:child_process');const{promisify}=await import('node:util');const dir=await mkdtemp(path.join(tmpdir(),'veloxa-isolated-font-'));
  try{await mkdir(path.join(dir,'empty'));const config=path.join(dir,'fonts.conf');await writeFile(config,`<?xml version="1.0"?><fontconfig><dir>${dir}/empty</dir><cachedir>${dir}/cache</cachedir></fontconfig>`);
-  const script=`import sharp from 'sharp';import assert from 'node:assert/strict';import{composeSocialVisual,compositionLayout}from './src/lib/server/content-compositor.ts';const scene=await sharp({create:{width:1080,height:1350,channels:3,background:'#bacbd7'}}).jpeg().toBuffer();const output=await composeSocialVisual(scene,${JSON.stringify(params)});const box=compositionLayout(false,false).title;const rendered=await sharp(output).extract(box).trim({background:'#FFFFFF'}).png().toBuffer({resolveWithObject:true});assert.ok(rendered.info.width>600,'Latin headline must not degrade into narrow missing-glyph boxes');assert.ok(rendered.info.height>55,'Latin headline must retain its intended font size');`;
+  const script=`import sharp from 'sharp';import assert from 'node:assert/strict';import{composeSocialVisual,compositionLayout}from './src/lib/server/content-compositor.ts';const scene=await sharp({create:{width:1080,height:1350,channels:3,background:'#000000'}}).jpeg().toBuffer();const output=await composeSocialVisual(scene,${JSON.stringify(params)});const box=compositionLayout(false,false).title;const rendered=await sharp(output).extract(box).threshold(230).trim({background:'#000000'}).png().toBuffer({resolveWithObject:true});assert.ok(rendered.info.width>400,'Latin headline must not degrade into narrow missing-glyph boxes');assert.ok(rendered.info.height>55,'Latin headline must retain its intended font size');`;
   await promisify(execFile)(process.execPath,['--import','tsx','--input-type=module','-e',script],{cwd:process.cwd(),env:{...process.env,FONTCONFIG_FILE:config,FONTCONFIG_PATH:dir},timeout:30000});
  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+
+test('photography fills the canvas outside original artwork and text, without opaque white bands',async()=>{
+ const scenes=await Promise.all(['#E711B1','#11E741'].map(background=>sharp({create:{width:1080,height:1920,channels:3,background}}).jpeg().toBuffer()));
+ for(const aspectRatio of ['4:5','9:16'] as const){const outputs=await Promise.all(scenes.map(scene=>composeSocialVisual(scene,{...params,aspectRatio}).then(output=>sharp(output).removeAlpha().raw().toBuffer({resolveWithObject:true}))));const[{data,info},other]=outputs;
+  for(const[x,y]of [[16,16],[1060,16],[16,info.height-16],[1060,info.height-16],[1030,Math.floor(info.height/2)]]){const offset=(y*info.width+x)*info.channels;const pixel=data.subarray(offset,offset+3);assert.ok(pixel.some((value,index)=>Math.abs(value-other.data[offset+index])>8),'photo changes must remain visible outside artwork, even under shading');assert.ok(pixel.some(value=>value<245),'no blank white canvas panel');}
+ }
 });
 
 test('explicit roles reject foreign keys, invalid roles and duplicate protected materials; never infer names',()=>{

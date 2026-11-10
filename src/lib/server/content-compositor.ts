@@ -11,8 +11,8 @@ export interface VisualCompositionParams {
 }
 interface Rect { left: number; top: number; width: number; height: number }
 export function compositionLayout(vertical: boolean, screenshot: boolean) {
- const width=1080, height=vertical?1920:1350, offset=vertical?160:0;
- return {width,height,brand:{left:48,top:32+offset,width:984,height:96},title:{left:48,top:164+offset,width:984,height:154},subtitle:{left:48,top:338+offset,width:984,height:104},hero:{left:screenshot?460:0,top:470+offset,width:screenshot?620:width,height:vertical?850:694},screen:{left:48,top:vertical?1092:772,width:700,height:vertical?420:392},footer:{left:48,top:vertical?1574:1200,width:984,height:vertical?142:112}};
+ const width=1080, height=vertical?1920:1350, offset=vertical?128:0;
+ return {width,height,brand:{left:48,top:48+offset,width:984,height:96},title:{left:48,top:184+offset,width:560,height:240},subtitle:{left:48,top:450+offset,width:560,height:116},hero:{left:0,top:0,width,height},screen:{left:48,top:vertical?1210:780,width:640,height:356},footer:{left:48,top:vertical?1620:1190,width:640,height:112}};
 }
 function escapeMarkup(value: string) { return value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;'); }
 function invalid(): never {throw new ApiError(422,'Teks atau aset visual belum dapat ditata dengan jelas. Ringkas judul atau penjelasan, lalu coba lagi.','visual_composition_invalid');}
@@ -35,15 +35,16 @@ export async function composeSocialVisual(scene: Buffer, params: VisualCompositi
  const palette=params.brandPalette||[];if(palette.length>6||palette.some(color=>!/^#[a-f0-9]{6}$/i.test(color)))return invalid();
  const primary=palette[0]||'#173B57';
  const luminance=(hex:string)=>[1,3,5].map(start=>parseInt(hex.slice(start,start+2),16)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
- const ink=[primary,...palette.slice(1),'#173B57'].find(color=>1.05/(luminance(color)+.05)>=4.5)!;
  const vertical=params.aspectRatio==='9:16';const screen=assets.find(asset=>asset.role==='screenshot');const logo=assets.find(asset=>asset.role==='logo');const layout=compositionLayout(vertical,!!screen);
  const layers: OverlayOptions[]=[];
- const hero=await sharp(scene,{limitInputPixels:30_000_000}).rotate().resize(layout.hero.width,layout.hero.height,{fit:'cover',position:'north'}).png().toBuffer();layers.push({input:hero,left:layout.hero.left,top:layout.hero.top});
- const headerBrand=await fitText(params.businessName,logo?760:984,72,34,22,'#243746',true);if(headerBrand)layers.push({input:headerBrand,left:logo?250:48,top:layout.brand.top+30});
- const headline=await fitText(params.title,layout.title.width,layout.title.height,76,28,ink,true);if(headline)layers.push({input:headline,left:layout.title.left,top:layout.title.top});
+ const hero=await sharp(scene,{limitInputPixels:30_000_000}).rotate().resize(layout.hero.width,layout.hero.height,{fit:'cover',position:'north'}).png().toBuffer();layers.push({input:hero,left:0,top:0});
+ // The scene stays edge-to-edge. Shade the copy area instead of adding opaque blank panels.
+ const shade=Buffer.from(`<svg width="${layout.width}" height="${layout.height}"><defs><linearGradient id="left"><stop offset="0" stop-color="#061827" stop-opacity=".78"/><stop offset=".65" stop-color="#061827" stop-opacity=".35"/><stop offset="1" stop-color="#061827" stop-opacity="0"/></linearGradient><linearGradient id="top" x2="0" y2="1"><stop offset="0" stop-color="#061827" stop-opacity=".25"/><stop offset=".55" stop-color="#061827" stop-opacity="0"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#left)"/><rect width="100%" height="100%" fill="url(#top)"/></svg>`);layers.push({input:shade,left:0,top:0});
+ const headerBrand=await fitText(params.businessName,logo?760:984,72,34,22,'#FFFFFF',true);if(headerBrand)layers.push({input:headerBrand,left:logo?250:48,top:layout.brand.top+30});
+ const headline=await fitText(params.title,layout.title.width,layout.title.height,76,28,'#FFFFFF',true);if(headline)layers.push({input:headline,left:layout.title.left,top:layout.title.top});
  // Reels narration remains in the audio; only the short overlay is printed.
  const subtitle=vertical?'':params.hook;
- const supporting=await fitText(subtitle,layout.subtitle.width,layout.subtitle.height,34,22,'#354957');if(supporting)layers.push({input:supporting,left:layout.subtitle.left,top:layout.subtitle.top});
+ const supporting=await fitText(subtitle,layout.subtitle.width,layout.subtitle.height,34,22,'#FFFFFF');if(supporting)layers.push({input:supporting,left:layout.subtitle.left,top:layout.subtitle.top});
  async function original(asset: OriginalVisualAsset, box: Rect) {
   const fitted=await sharp(asset.bytes,{limitInputPixels:30_000_000}).rotate().resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});
   layers.push({input:fitted.data,left:box.left+Math.floor((box.width-fitted.info.width)/2),top:box.top+Math.floor((box.height-fitted.info.height)/2)});
@@ -53,7 +54,7 @@ export async function composeSocialVisual(scene: Buffer, params: VisualCompositi
  const footer=Buffer.from(`<svg width="${layout.footer.width}" height="${layout.footer.height}"><rect width="100%" height="100%" rx="16" fill="${primary}"/></svg>`);layers.push({input:footer,left:layout.footer.left,top:layout.footer.top});
  // Choose the higher-contrast ink, including brands whose primary color is white.
  const foreground=luminance(primary)>.179?'#000000':'#FFFFFF';
- const cta=await fitText(shortVisualCta(params.cta),920,48,34,24,foreground,true);if(cta)layers.push({input:cta,left:80,top:layout.footer.top+16});
- const site=await fitText(visualWebsite(params.websiteUrl),920,36,27,20,foreground);if(site)layers.push({input:site,left:80,top:layout.footer.top+66});
- return sharp({create:{width:layout.width,height:layout.height,channels:3,background:'#FFFFFF'}}).composite(layers).png().toBuffer();
+ const cta=await fitText(shortVisualCta(params.cta),layout.footer.width-64,48,34,24,foreground,true);if(cta)layers.push({input:cta,left:80,top:layout.footer.top+16});
+ const site=await fitText(visualWebsite(params.websiteUrl),layout.footer.width-64,36,27,20,foreground);if(site)layers.push({input:site,left:80,top:layout.footer.top+66});
+ return sharp({create:{width:layout.width,height:layout.height,channels:3,background:'#061827'}}).composite(layers).png().toBuffer();
 }
