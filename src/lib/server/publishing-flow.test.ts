@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { profileFingerprint } from '../profile-fingerprint';
+import { profileFingerprint,jsonFingerprint } from '../profile-fingerprint';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { createSocialContent } from './content';
@@ -45,6 +45,7 @@ class Collection {
   constructor(public database: Database, public path: string) {}
   doc(id: string) { return new Doc(this.database, `${this.path}/${id}`); }
   limit(count: number) { return { get: async () => ({ docs: (await this.get()).docs.slice(0,count) }) }; }
+  where(key:string,_operator:string,value:unknown){return{limit:(count:number)=>({get:async()=>({docs:(await this.get()).docs.filter(doc=>doc.data()?.[key]===value).slice(0,count)})})};}
   async get() {
     const docs = [...this.database.values.keys()].filter(key => key.startsWith(this.path + '/') && !key.slice(this.path.length + 1).includes('/')).map(key => new Doc(this.database, key));
     return { docs: await Promise.all(docs.map(ref => ref.get())) };
@@ -128,6 +129,15 @@ test('profile analysis discards suggestions when ownership/account mapping chang
  const {analyzeSocialBrand}=await import('./brand-analysis');for(const change of ['owner','mapping','token']as const){const f=fixture();f.database.values.set(`${f.ref.path}/business_contexts/primary`,{revision:1,connectionIds:['instagram_200']});const request=new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,businessId:'primary',profileFingerprint:await profileFingerprint(JSON.parse(f.database.values.get(f.ref.path)!.snapshotJson).brand),connectionIds:['instagram_200']})});let ai=0;
  await assert.rejects(analyzeSocialBrand(request,{authorize:f.authorize as never,collect:async()=>{if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='other';else if(change==='mapping')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];else f.database.values.get(`${f.ref.path}/private_meta_connections/instagram`)!.encryptedToken='changed';return{sources:[{id:'p',kind:'profile',label:'Bio',text:'Sistem ERP'}],images:[],warnings:[],websites:[]};},suggest:async()=>{ai++;return{suggestions:[],warnings:[]};}}));assert.equal(ai,0);assert.equal(f.generationCount(),0);}
 });
+
+test('operation retry is single-shot and recovers persisted draft after completion update or connection loss',async()=>{
+ const {prepareContentOperation,readContentOperation}=await import('./content-operation');const f=fixture();const operationId='123e4567-e89b-42d3-a456-426614174099';const body={workspaceId:f.ref.id,businessId:'primary',operationId,format:'carousel',topic:'',referenceAssetIds:[]};const request=()=>new Request('http://localhost/api',{method:'POST',body:JSON.stringify(body)});let calls=0;const draft={id:'draft_recovery',workspaceId:f.ref.id,businessId:'primary',format:'carousel',renderedMedia:{url:'/cover.jpg'},renderedSlides:Array.from({length:5},()=>({url:'/slide.jpg'}))};
+ const create=(async(_request:any,deps:any)=>{calls++;deps.onProgress({stage:'script'});deps.onProgress({stage:'saving'});f.database.values.set(`${f.ref.path}/social_drafts/${draft.id}`,{draft,operationId,engineMode:'openai_live'});return{draft,engineMode:'openai_live'};})as never;
+ const first=await prepareContentOperation(request(),{authorize:f.authorize as never,create});assert.equal(first.start,true);const replay=await prepareContentOperation(request(),{authorize:f.authorize as never,create});assert.equal(replay.start,false);await first.run(()=>{});assert.equal(calls,1);const recovered=await readContentOperation(request(),f.ref.id,'primary',operationId,{authorize:f.authorize as never});assert.equal(recovered.state,'complete');assert.equal(recovered.result?.draft.id,draft.id);const {operationId:omitted,...originalInput}=body;await assert.rejects(readContentOperation(request(),f.ref.id,'primary',operationId,{authorize:f.authorize as never,expectedInputFingerprint:await jsonFingerprint({...originalInput,topic:'New request'})}),/permintaan berbeda/);assert.equal((await readContentOperation(request(),f.ref.id,'primary',operationId,{authorize:f.authorize as never,expectedInputFingerprint:await jsonFingerprint(originalInput)})).state,'complete');
+ const job=f.database.values.get(`${f.ref.path}/generation_jobs/${operationId}`)!;delete job.draftId;job.state='running';const fallback=await readContentOperation(request(),f.ref.id,'primary',operationId,{authorize:f.authorize as never});assert.equal(fallback.result?.draft.id,draft.id);assert.equal(calls,1);await assert.rejects(prepareContentOperation(new Request('http://localhost/api',{method:'POST',body:JSON.stringify({...body,topic:'Different'})}),{authorize:f.authorize as never,create}),/permintaan lain/);
+});
+
+test('empty manual topic and no references still generate five contextual slides with saved DNA',async()=>{const f=fixture();const ws=f.database.values.get(f.ref.path)!;const snap=JSON.parse(ws.snapshotJson);snap.brand.businessDescription='Berez ERP untuk pengelolaan stok dan keuangan';snap.brand.useBrandPalette=true;snap.brand.primaryColorHex='#0061AD';snap.brand.accentColorHex='#FFFFFF';ws.snapshotJson=JSON.stringify(snap);let renders=0;const result=await f.create({topic:'',format:'carousel',referenceAssetIds:[],renderImage:async input=>{renders++;assert.equal(input.businessContext?.description,snap.brand.businessDescription);assert.deepEqual(input.brandPalette,['#0061AD','#FFFFFF']);return sharp({create:{width:1080,height:1350,channels:3,background:'#0061AD'}}).jpeg().toBuffer();}});assert.equal(renders,5);assert.equal(result.draft.renderedSlides?.length,5);assert.equal(f.generationCount(),1);});
 
 const photoId = '123e4567-e89b-42d3-a456-426614174000';
 async function seedPhoto(f: ReturnType<typeof fixture>) {

@@ -6,8 +6,8 @@ export class GenerationStageError extends ApiError {
     super(error instanceof ApiError ? error.status : 503, error instanceof ApiError ? error.message : `${GENERATION_LABELS[stage]} belum berhasil. Silakan coba lagi.`, error instanceof ApiError ? error.code : 'generation_stage_failed');
   }
 }
-export function streamContentGeneration<T>(generate: (progress: (event: GenerationProgress) => void) => Promise<T>) {
-  const requestId = randomUUID(); const encoder = new TextEncoder(); let closed = false; let heartbeat: ReturnType<typeof setInterval>;
+export function streamContentGeneration<T>(generate: (progress: (event: GenerationProgress) => void) => Promise<T>, requestId:string = randomUUID()) {
+  const encoder = new TextEncoder(); let closed = false; let heartbeat: ReturnType<typeof setInterval>;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (event: object) => { if (!closed) { try { controller.enqueue(encoder.encode(JSON.stringify({ ...event, requestId }) + '\n')); } catch { closed = true; clearInterval(heartbeat); } } };

@@ -5,8 +5,10 @@ function canonical(value: unknown): unknown {
  return value;
 }
 /** Shared browser/server fingerprint of the complete saved profile, independent of key order. */
-export async function profileFingerprint(brand: BrandProfile): Promise<string> {
- const bytes=new TextEncoder().encode(JSON.stringify(canonical(brand)));
+export async function profileFingerprint(brand: BrandProfile): Promise<string> { return jsonFingerprint(brand); }
+/** Canonical digest for request identity too; no prompt text is kept in browser storage. */
+export async function jsonFingerprint(value:unknown): Promise<string> {
+ const bytes=new TextEncoder().encode(JSON.stringify(canonical(value)));
  const digest=await crypto.subtle.digest('SHA-256',bytes);
  return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
 }
