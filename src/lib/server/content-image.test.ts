@@ -4,6 +4,12 @@ import sharp from 'sharp';
 import { ApiError } from './http';
 import { generateSocialPostImage } from './content-image';
 
+test('scene-only provider receives scene data without asking AI to paint final text, logo or product UI',async()=>{
+ const source=await sharp({create:{width:64,height:80,channels:3,background:'white'}}).jpeg().toBuffer();let prompt='';
+ await generateSocialPostImage({businessName:'Berez ERP',title:'Stok lebih rapi',hook:'Pencatatan persediaan',cta:'Kenali Berez ERP',sceneOnly:true,referenceImages:[source],sceneReferenceLabels:['Ref 1: Model Berez']},{imageClient:{images:{generate:async()=>{throw Error('wrong route');},edit:async request=>{prompt=request.prompt;assert.equal(request.image.length,1);return{data:[{b64_json:source.toString('base64')}]};}}}});
+ assert.match(prompt,/Output ONLY the photographic scene/);assert.match(prompt,/layered separately/);assert.match(prompt,/Ref 1: Model Berez/);assert.ok(!prompt.includes('Render only the supplied business name'));
+});
+
 const params = {
   businessName: 'Kedai Senja',
   title: 'Ruang untuk jeda',

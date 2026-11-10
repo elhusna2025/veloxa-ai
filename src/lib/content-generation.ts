@@ -1,5 +1,5 @@
 /** Shared, credential-free generation feedback protocol. No estimated percentages. */
-export const GENERATION_STAGES = ['sync', 'validation', 'references', 'script', 'images', 'media', 'voiceover', 'rendering', 'saving'] as const;
+export const GENERATION_STAGES = ['sync', 'validation', 'references', 'script', 'images', 'media', 'voiceover', 'rendering', 'compositing', 'saving'] as const;
 export type GenerationStage = typeof GENERATION_STAGES[number];
 export interface GenerationQuota { mode: 'standard' | 'development'; dailyLimit: number | null; used: number; day: string }
 export interface GenerationProgress { stage: GenerationStage }
@@ -7,7 +7,7 @@ export interface GenerationFeedback { status: 'running' | 'success' | 'error'; s
 export const GENERATION_LABELS: Record<GenerationStage, string> = {
   sync: 'Menyimpan profil bisnis', validation: 'Memeriksa akun dan kuota', references: 'Memuat foto referensi', script: 'Menyusun naskah dan caption',
   images: 'Membuat visual konten', media: 'Membuat visual dan voiceover', voiceover: 'Membuat voiceover',
-  rendering: 'Merangkai video Reels', saving: 'Menyimpan draf dan media',
+  compositing: 'Menata teks dan aset asli', rendering: 'Merangkai video Reels', saving: 'Menyimpan draf dan media',
 };
 export function isGenerationStage(value: unknown): value is GenerationStage { return typeof value === 'string' && (GENERATION_STAGES as readonly string[]).includes(value); }
 export class ContentGenerationError extends Error {

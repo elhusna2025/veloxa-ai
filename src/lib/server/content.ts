@@ -10,6 +10,8 @@ import { ApiError, readJson } from './http';
 import { GenerationStageError } from './content-generation-stream';
 import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
+import { resolveReferenceRoles } from '../content-reference-roles';
+import { composeSocialVisual } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -52,7 +54,7 @@ export async function uploadBrandPhoto(request: Request) {
   return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160));
 }
 
-const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional() });
+const contentInput = z.object({ workspaceId: z.string(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -68,6 +70,7 @@ export async function createSocialContent(request: Request, dependencies: {
   try {
   progress('validation');
   const input = contentInput.parse(await readJson(request));
+  let referenceRoles;try{referenceRoles=resolveReferenceRoles(input.referenceAssetIds||[],input.referenceRoles);}catch(error){throw new ApiError(400,error instanceof Error?error.message:'Peran referensi tidak valid.');}
   if (input.sourceAssetId && input.referenceAssetIds?.length) throw new ApiError(400, 'Pilih salah satu jenis sumber visual.');
   if (input.format !== 'single_post' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk carousel dan Reels.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
@@ -93,27 +96,37 @@ export async function createSocialContent(request: Request, dependencies: {
   }
   if (input.referenceAssetIds?.length) progress('references');
   const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage);
-  const referenceImageParams = references.length ? { referenceImages: references.map(item => item.bytes), referenceInstruction: input.referenceInstruction || topic } : {};
+  const visualReferences=references.filter(item=>referenceRoles[item.id]==='visual');
+  const originalAssets=references.filter(item=>referenceRoles[item.id]!=='visual').map(item=>({id:item.id,role:referenceRoles[item.id] as 'logo'|'screenshot',bytes:item.bytes}));
+  const referenceImageParams = references.length ? { ...(visualReferences.length?{referenceImages:visualReferences.map(item=>item.bytes),sceneReferenceLabels:visualReferences.map(item=>`Ref ${references.indexOf(item)+1}: ${item.title}`)}:{}), referenceInstruction: input.referenceInstruction || topic } : {};
   if (references.length) progress('validation');
   // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: topic, vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
+  draft.referenceRoles=referenceRoles;
   draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
   if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
+  const renderVisual:typeof generateSocialPostImage=async params=>{
+    const scene=await(dependencies.renderImage||generateSocialPostImage)({...params,sceneOnly:true});
+    if(stage!=='compositing')progress('compositing');
+    let composed:Buffer;try{composed=await composeSocialVisual(scene,{...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
+    return sharp(composed).resize(params.aspectRatio==='9:16'?720:1080,params.aspectRatio==='9:16'?1280:1350).jpeg({quality:94}).toBuffer();
+  };
   let media: Awaited<ReturnType<typeof savePublicJpeg>>;
   let storagePaths: string[] | undefined;
   let videoStoragePath: string | undefined;
   if (input.format === 'short_video') {
     if (!draft.videoScenes || draft.videoScenes.length !== 4) throw new ApiError(502, 'Naskah Reels belum lengkap.', 'invalid_content_agent_response');
-    const renderImage = dependencies.renderImage || generateSocialPostImage;
+    const renderImage = renderVisual;
     progress('media');
     const results = await Promise.allSettled([
-      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...imageContextParams, ...paletteParams, ...referenceImageParams }))).then(images => { if (images.some(image => image.status !== 'fulfilled')) throw new ApiError(502, 'Gambar Reels belum lengkap.', 'reels_media_unavailable'); return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
+      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...imageContextParams, ...paletteParams, ...referenceImageParams }))).then(images => { const failed=images.find(image=>image.status==='rejected');if(failed?.status==='rejected')throw failed.reason; return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
       (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes.map(scene => scene.voiceover).join(' ')),
     ] as const);
+    if(results[0].status==='rejected'&&results[0].reason instanceof GenerationStageError)throw results[0].reason;
     if (results[0].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Visual Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'images');
     if (results[1].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Voiceover Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'voiceover');
     const voice = results[1].value;
@@ -130,7 +143,7 @@ export async function createSocialContent(request: Request, dependencies: {
     draft.caption = `${draft.caption}\n\n${REELS_VOICE_DISCLOSURE}`;
   } else if (input.format === 'carousel') {
     if (!draft.slides || draft.slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
-    const renderImage = dependencies.renderImage || generateSocialPostImage;
+    const renderImage = renderVisual;
     progress('images');
     const results = await Promise.allSettled(draft.slides.map(async (slide, index) => renderImage({
       businessName: brand.businessName,
@@ -142,7 +155,8 @@ export async function createSocialContent(request: Request, dependencies: {
       ...referenceImageParams,
       visualDirection: slide.visualDirection,
     })));
-    if (results.some(result => result.status === 'rejected')) throw new ApiError(502, 'Gambar carousel belum dapat dibuat. Silakan coba lagi.', 'carousel_image_unavailable');
+    const failed=results.find(result=>result.status==='rejected');
+    if(failed?.status==='rejected'){if(failed.reason instanceof GenerationStageError)throw failed.reason;throw new GenerationStageError(new ApiError(502,'Gambar carousel belum dapat dibuat. Silakan coba lagi.','carousel_image_unavailable'),'images');}
     const slideBytes = results.map(result => result.status === 'fulfilled' ? result.value : Buffer.alloc(0));
     const slideMedia: Awaited<ReturnType<typeof savePublicJpeg>>[] = [];
     progress('saving');
@@ -164,7 +178,7 @@ export async function createSocialContent(request: Request, dependencies: {
     draft.usedRealAssetIds = [input.sourceAssetId];
     bytes = await base.jpeg({ quality: 92 }).toBuffer();
     } else {
-      bytes = await (dependencies.renderImage || generateSocialPostImage)({
+      bytes = await renderVisual({
         businessName: brand.businessName,
         title: draft.title,
         hook: draft.hook,

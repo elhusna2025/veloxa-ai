@@ -98,7 +98,7 @@ test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt
       offerings: [],
       format: 'single_post',
       customTopic: 'USER_PROMPT_SENTINEL instruksi yang tidak boleh tampil sebagai judul',
-      extraInstructions: 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan.',
+      extraInstructions: 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan. Teks visual ditata secara terpisah dari foto AI. Buat judul konkret maksimal 8 kata, hook dan isi per slide ringkas maksimal 18 kata. Jangan menaruh seluruh narasi Reels di textOverlay; gunakan overlay singkat. CTA visual harus singkat; URL tetap berasal dari website bisnis tersimpan.',
     }),
     stream: true,
   });

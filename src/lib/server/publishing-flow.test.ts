@@ -79,10 +79,11 @@ function fixture() {
     sourceAssetId?: string;
     referenceAssetIds?: string[];
     referenceInstruction?: string;
+    referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -268,6 +269,19 @@ test('all chosen reference bytes and direction reach single/carousel visuals and
   assert.deepEqual(brief,{titles:ids.map((_,index)=>`Reference ${index+1}`),instruction});assert.deepEqual(draft.usedRealAssetIds,ids);assert.equal(draft.referenceInstruction,instruction);assert.equal(f.generationCount(),1);
  }
 });
+test('protected originals stay out of AI scene requests and are composited into every post/carousel',async()=>{
+ for(const format of ['single_post','carousel'] as const){
+  const f=fixture();const ids=await seedReferences(f,3);let calls=0;
+  const roles={[ids[0]]:'visual',[ids[1]]:'screenshot',[ids[2]]:'logo'} as const;
+  const {draft}=await f.create({format,referenceAssetIds:ids,referenceRoles:roles,renderImage:async(input:any)=>{calls++;assert.equal(input.sceneOnly,true);assert.deepEqual(input.referenceImages,[f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[0]}.jpg`)]);assert.deepEqual(input.sceneReferenceLabels,['Ref 1: Reference 1']);return sharp({create:{width:1080,height:1350,channels:3,background:'#102030'}}).jpeg().toBuffer();}});
+  assert.deepEqual(draft.referenceRoles,roles);assert.equal(calls,format==='carousel'?5:1);assert.deepEqual(draft.usedRealAssetIds,ids);
+  const record=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;const paths=record.storagePaths||[record.storagePath];for(const path of paths){const meta=await sharp(f.blobs.get(path)!).metadata();assert.equal(meta.width,1080);assert.equal(meta.height,1350);}
+ }
+});
+test('bad or ambiguous roles cannot consume generation quota or invoke providers',async()=>{
+ for(const role of ['foreign','invalid','duplicate-logo','duplicate-screen']){const f=fixture();const ids=await seedReferences(f,3);const roles=role==='foreign'?{'123e4567-e89b-42d3-a456-426614174099':'logo'}:role==='invalid'?{[ids[0]]:'not-a-role'}:{[ids[0]]:role==='duplicate-logo'?'logo':'screenshot',[ids[1]]:role==='duplicate-logo'?'logo':'screenshot'};await assert.rejects(f.create({referenceAssetIds:ids,referenceRoles:roles as never}));assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);assert.equal(f.renderCalls(),0);}
+});
+
 test('reference loading uses a bounded Storage range and rejects oversize before buffering full objects',async()=>{
  const f=fixture();const ids=await seedReferences(f,1);const seen:any[]=[];const length=5*1024*1024;
  const storage={file:()=>({download:async(options:{start:number;end:number})=>{seen.push(options);return[Buffer.alloc(Math.min(length,options.end-options.start+1))];}})};
@@ -288,7 +302,7 @@ test('content progress reflects completed boundaries and classifies script/image
   for (const format of ['single_post', 'carousel'] as const) {
     const f = fixture(); const stages: string[] = [];
     await f.create({ format, onProgress: event => stages.push(event.stage) });
-    assert.deepEqual(stages, ['validation', 'script', 'images', 'saving']);
+    assert.deepEqual(stages, ['validation', 'script', 'images', 'compositing', 'saving']);
     assert.equal(f.generationCount(), 1);
   }
   for (const stage of ['script', 'images']) {

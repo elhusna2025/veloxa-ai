@@ -77,10 +77,11 @@ function fixture() {
     sourceAssetId?: string;
     referenceAssetIds?: string[];
     referenceInstruction?: string;
+    referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -142,10 +143,18 @@ test('saved DNA reaches all four Reels scene render calls without changing voice
  let seen=0;await f.create({renderImage:async params=>{seen++;assert.deepEqual(params.brandPalette,['#167D8D','#FCAB20']);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(seen,4);assert.equal(f.generationCount(),1);
 });
 
+test('protected roles are applied to all four Reels images without entering image-edit references',async()=>{
+ const f=fixture();const ids=Array.from({length:3},(_,i)=>`123e4567-e89b-42d3-a456-42661417400${i}`);
+ for(const [index,id] of ids.entries()){const bytes=await sharp({create:{width:80,height:60,channels:3,background:['#cc3344','#2277aa','#aabbcc'][index]}}).jpeg().toBuffer();const storagePath=`workspaces/${f.ref.id}/vault/${id}.jpg`;f.database.values.set(`${f.ref.path}/server_assets/${id}`,{asset:{id,workspaceId:f.ref.id,title:`Ref ${index+1}`,mediaType:'photo'},storagePath});f.blobs.set(storagePath,bytes);}
+ let images=0;const roles={[ids[0]]:'visual',[ids[1]]:'screenshot',[ids[2]]:'logo'} as const;
+ const {draft}=await f.create({referenceAssetIds:ids,referenceRoles:roles,renderImage:async(input:any)=>{images++;assert.equal(input.sceneOnly,true);assert.equal(input.referenceImages.length,1);assert.deepEqual(input.referenceImages[0],f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[0]}.jpg`));return sharp({create:{width:720,height:1280,channels:3,background:'white'}}).jpeg().toBuffer();}});
+ assert.equal(images,4);assert.deepEqual(draft.referenceRoles,roles);assert.equal(draft.renderedVideo?.width,720);assert.equal(f.generationCount(),1);
+});
+
 test('Reels reports actual media/render/save stages and distinguishes failed voice from failed images', async () => {
   const f = fixture(); const stages: string[] = [];
   await f.create({ onProgress: event => stages.push(event.stage) });
-  assert.deepEqual(stages, ['validation', 'script', 'media', 'rendering', 'saving']);
+  assert.deepEqual(stages, ['validation', 'script', 'media', 'compositing', 'rendering', 'saving']);
   for (const stage of ['voiceover', 'images', 'rendering']) {
     const failed = fixture();
     const fail = async () => { throw new Error('PRIVATE_REELS_DETAILS'); };
@@ -167,7 +176,7 @@ test('switching Instagram login provider forces a new draft before publication q
 
 test('Reels generation stores real video metadata and private MP4 path, then publishes once to both bound accounts', async () => {
   const f=fixture();const seen:string[]=[];
-  const {draft}=await f.create({renderImage:async p=>{assert.equal((p as {aspectRatio?:string}).aspectRatio,'9:16');seen.push(p.title);return Buffer.from(p.title);},renderVideo:async p=>{assert.equal(p.images.length,4);assert.deepEqual(p.images.map(b=>b.toString()),['Langkah 1','Langkah 2','Langkah 3','Langkah 4']);assert.equal(p.sampleRate,24000);return {mp4:Buffer.from('mock-mp4-output'),poster:await sharp({create:{width:720,height:1280,channels:3,background:'#ffffff'}}).jpeg().toBuffer(),width:720,height:1280,durationSeconds:25,mimeType:'video/mp4'};}});
+  const {draft}=await f.create({renderImage:async p=>{assert.equal((p as {aspectRatio?:string}).aspectRatio,'9:16');seen.push(p.title);return sharp({create:{width:720,height:1280,channels:3,background:'#d0e0f0'}}).jpeg().toBuffer();},renderVideo:async p=>{assert.equal(p.images.length,4);for(const image of p.images){const meta=await sharp(image).metadata();assert.equal(meta.width,720);assert.equal(meta.height,1280);}assert.deepEqual(seen,['Langkah 1','Langkah 2','Langkah 3','Langkah 4']);assert.equal(p.sampleRate,24000);return {mp4:Buffer.from('mock-mp4-output'),poster:await sharp({create:{width:720,height:1280,channels:3,background:'#ffffff'}}).jpeg().toBuffer(),width:720,height:1280,durationSeconds:25,mimeType:'video/mp4'};}});
   const record=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
   assert.equal(draft.format,'short_video');assert.equal(draft.renderedVideo?.durationSeconds,25);assert.equal(draft.renderedVideo?.width,720);assert.match(draft.caption,/Voiceover menggunakan suara AI\./);assert.equal(seen.length,4);assert.equal(f.generationCount(),1);assert.equal(f.blobs.size,2);assert.match(record.videoStoragePath,/^workspaces\/workspace-a\/renders\/.+\.mp4$/);assert.equal('videoStoragePath' in draft,false);
   const sends:string[]=[];const reelPublisher=async(p:Parameters<typeof publishMetaReel>[0])=>{sends.push(p.channel);assert.deepEqual(p.videoBytes,Buffer.from('mock-mp4-output'));assert.equal(p.videoUrl,draft.renderedVideo!.url);assert.equal(p.accountId,p.channel==='facebook'?'100':'200');return{externalPostId:`remote-${p.channel}`};};
