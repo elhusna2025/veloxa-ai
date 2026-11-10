@@ -14,5 +14,5 @@ test('service area requires an exact explicit service quote; office location nev
  raw.city={value:'Bandung',sourceIds:['p'],basis:'observed',reason:'Lokasi kantor',evidenceQuote:'Kantor Berez di Bandung.'};assert.equal(validateAnalysisOutput(raw,evidence).length,0);
  raw.city={value:'Seluruh Indonesia (online)',sourceIds:['p'],basis:'observed',reason:'Cakupan disebutkan',evidenceQuote:'Melayani seluruh Indonesia secara online.'};assert.equal(validateAnalysisOutput(raw,evidence)[0].key,'city');
  raw.city.evidenceQuote='Melayani seluruh Indonesia dan luar negeri';assert.equal(validateAnalysisOutput(raw,evidence).length,0);
+ raw.city={value:'Bandung',sourceIds:['p'],basis:'observed',reason:'Office confused with coverage',evidenceQuote:evidence.sources[0].text};assert.equal(validateAnalysisOutput(raw,evidence).length,0);
 });
-

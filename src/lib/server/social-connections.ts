@@ -1,3 +1,4 @@
+import {assertNoAutonomyDispatch} from './autonomy-dispatch';
 import { requireWorkspace } from './auth';
 import { adminDb } from './firebase';
 import { ApiError } from './http';
@@ -12,6 +13,7 @@ const generation=(value:unknown)=>z.number().int().nonnegative().max(Number.MAX_
 export async function addFacebookPage(request:Request,workspaceId:unknown,pageId:unknown,deps:Deps={}) {
  const {ref,user}=await(deps.authorize||requireWorkspace)(request,workspaceId,true);const id=numeric.parse(pageId);
  return(deps.database||adminDb()).runTransaction(async tx=>{
+  await assertNoAutonomyDispatch(tx,ref);
   const workspace=(await tx.get(ref)).data();
   const authorized=(await tx.get(ref.collection('meta_authorizations').doc(id))).data();
   const existing=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);
@@ -31,6 +33,7 @@ export async function addFacebookPage(request:Request,workspaceId:unknown,pageId
 export async function addInstagramAccount(request:Request,workspaceId:unknown,accountId:unknown,deps:Deps={}) {
  const {ref,user}=await(deps.authorize||requireWorkspace)(request,workspaceId,true);const id=numeric.parse(accountId);const config=instagramLoginConfig();const now=(deps.now||Date.now)();
  return(deps.database||adminDb()).runTransaction(async tx=>{
+  await assertNoAutonomyDispatch(tx,ref);
   const workspace=(await tx.get(ref)).data();const grants=await tx.get(ref.collection('instagram_authorizations'));
   const guard=(await tx.get(ref.collection('integration_guards').doc(socialConnectionId('instagram',id)))).data();
   const existing=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);
@@ -47,6 +50,7 @@ export async function addInstagramAccount(request:Request,workspaceId:unknown,ac
 export async function disconnectSocialAccount(request:Request,workspaceId:unknown,connectionId:unknown,deps:Deps={}) {
  const {ref,user}=await(deps.authorize||requireWorkspace)(request,workspaceId,true);const key=connectionIdSchema.parse(connectionId);
  await(deps.database||adminDb()).runTransaction(async tx=>{
+  await assertNoAutonomyDispatch(tx,ref);
   const workspace=(await tx.get(ref)).data();const raw=await tx.get(ref.collection('private_meta_connections'));const accounts=readSocialAccounts(raw.docs);
   const guards=await Promise.all(['meta','instagram'].map(name=>tx.get(ref.collection('integration_guards').doc(name))));
   if(workspace?.ownerUid!==user.uid)throw new ApiError(403,'Akses workspace telah berubah.');

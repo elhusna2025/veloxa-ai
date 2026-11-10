@@ -13,8 +13,8 @@ export function validateAnalysisOutput(raw:unknown,evidence:SocialEvidence):Bran
  for(const [key,fact]of Object.entries(parsed)){if(key==='logoSourceId'||!fact||typeof fact!=='object'||!('value'in fact)||fact.value===null)continue;
   if(!fact.sourceIds.length||fact.sourceIds.some(id=>!evidence.sources.some(source=>source.id===id)))throw new ApiError(502,'AI menyertakan sumber yang tidak tersedia. Profil belum diubah; coba analisis ulang.');
   if(key==='city'){
-   const quote='evidenceQuote'in fact?String(fact.evidenceQuote).trim():'';const text=quote.toLowerCase();const region=String(fact.value).toLowerCase().replace(/\([^)]*\)/g,'').trim();
-   if(fact.basis!=='observed'||!region||!quote||!/(melayani|area layanan|cakupan layanan|jangkauan layanan|service area|serving|nationwide|worldwide)/i.test(quote)||!text.includes(region)||!fact.sourceIds.some(id=>evidence.sources.find(source=>source.id===id)?.text.toLowerCase().includes(text)))continue;
+   const quote='evidenceQuote'in fact?String(fact.evidenceQuote).trim():'';const text=quote.toLowerCase();const servicePhrases=quote.match(/(?:melayani|area layanan|cakupan layanan|jangkauan layanan|service area|serving|nationwide|worldwide)[^.!?\n;]{0,180}/gi)||[];const region=String(fact.value).toLowerCase().replace(/\([^)]*\)/g,'').trim();
+   if(fact.basis!=='observed'||!region||!quote||!/(melayani|area layanan|cakupan layanan|jangkauan layanan|service area|serving|nationwide|worldwide)/i.test(quote)||!servicePhrases.some(phrase=>phrase.toLowerCase().includes(region)&&!/(kantor|alamat|berlokasi|office address)/i.test(phrase))||!fact.sourceIds.some(id=>evidence.sources.find(source=>source.id===id)?.text.toLowerCase().includes(text)))continue;
   }
   if(key==='websiteUrl'&&(fact.basis!=='observed'||!evidence.websites.includes(String(fact.value))))continue;
   let value:BrandSuggestion['value']=fact.value as string;

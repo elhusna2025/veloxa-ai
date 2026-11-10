@@ -576,6 +576,7 @@ service cloud.firestore {
         request.resource.data.get('ownerUid', '') == request.auth.uid && initialTrial(request.resource.data) &&
         request.resource.data.get('snapshotRevision', 0) == 1 && isValidWorkspace(request.resource.data);
       allow update: if isAuthenticated() &&
+        !exists(/databases/$(database)/documents/workspaces/$(workspaceId)/server_operation_guards/organic_dispatch) &&
         (resource.data.ownerUid == request.auth.uid || isSuperAdmin()) &&
         areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed']) &&
         validSnapshotUpdate() && isValidWorkspace(request.resource.data);

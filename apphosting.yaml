@@ -7,6 +7,14 @@ runConfig:
   memory: 512Mi
 
 env:
+  - variable: VELOXA_SCHEDULER_EMAIL
+    value: firebase-app-hosting-compute@veloxa-ai-saas.iam.gserviceaccount.com
+    availability:
+      - RUNTIME
+  - variable: VELOXA_SCHEDULER_AUDIENCE
+    value: https://veloxa.dafinicode.com/api/veloxa/autonomy/tick/
+    availability:
+      - RUNTIME
   - variable: NODE_OPTIONS
     value: --no-experimental-webstorage
     availability:

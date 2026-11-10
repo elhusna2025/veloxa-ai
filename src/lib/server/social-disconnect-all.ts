@@ -1,10 +1,11 @@
+import {assertNoAutonomyDispatch} from './autonomy-dispatch';
 import { requireWorkspace } from './auth';
 import { adminDb } from './firebase';
 import { ApiError } from './http';
 import { z } from 'zod';
 export async function disconnectAllSocial(request:Request,workspaceId:unknown,instagramOnly:boolean,deps:{authorize?:typeof requireWorkspace;database?:ReturnType<typeof adminDb>}={}){
  const{ref,user}=await(deps.authorize||requireWorkspace)(request,workspaceId,true);
- await(deps.database||adminDb()).runTransaction(async tx=>{
+ await(deps.database||adminDb()).runTransaction(async tx=>{await assertNoAutonomyDispatch(tx,ref);
   const workspace=(await tx.get(ref)).data();const raw=await tx.get(ref.collection('private_meta_connections'));const grants=await tx.get(ref.collection('instagram_authorizations'));const pages=instagramOnly?null:await tx.get(ref.collection('meta_authorizations'));
   const names=instagramOnly?['instagram']:['instagram','meta'];const guards=await Promise.all(names.map(name=>tx.get(ref.collection('integration_guards').doc(name))));
   if(workspace?.ownerUid!==user.uid)throw new ApiError(403,'Akses workspace telah berubah.');

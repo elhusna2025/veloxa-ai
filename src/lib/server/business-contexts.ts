@@ -1,3 +1,4 @@
+import {assertNoAutonomyDispatch} from './autonomy-dispatch';
 import { randomUUID } from 'node:crypto';
 import { BUSINESS_CATEGORIES } from '../business-categories';
 import { profileFingerprint } from '../profile-fingerprint';
@@ -48,7 +49,7 @@ export async function createBusiness(request:Request,dependencies:{authorize?:ty
 }
 export async function updateBusiness(request:Request,dependencies:{authorize?:typeof requireWorkspace}={}){
  const input=updateInput.parse(await readJson(request));const id=businessId(input.businessId);const {ref,user}=await(dependencies.authorize||requireWorkspace)(request,input.workspaceId,true);
- const result=await ref.firestore.runTransaction(async tx=>{const ws=(await tx.get(ref)).data();assertOwner(ws,user);const contexts=await loadBusinessContexts(ref,ws!,tx);const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);
+ const result=await ref.firestore.runTransaction(async tx=>{await assertNoAutonomyDispatch(tx,ref);const ws=(await tx.get(ref)).data();assertOwner(ws,user);const contexts=await loadBusinessContexts(ref,ws!,tx);const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);
   let current:BusinessContext;try{current=getBusiness(contexts,id);}catch{throw new ApiError(404,'Bisnis tidak ditemukan.');}
   if(current.revision!==input.expectedRevision)throw new ApiError(409,'Bisnis telah diubah pada tab lain. Muat ulang sebelum menyimpan.','business_conflict');
   if(id===PRIMARY_BUSINESS&&input.profile!==undefined&&input.expectedProfileFingerprint!==await profileFingerprint(current.brand))throw new ApiError(409,'Profil bisnis utama telah berubah. Muat ulang sebelum menyimpan.','profile_conflict');

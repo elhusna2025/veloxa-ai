@@ -71,6 +71,7 @@ export async function createSocialContent(request: Request, dependencies: {
   generateVoice?: typeof generateReelsVoiceover;
   renderVideo?: typeof renderReelsVideo;
   onProgress?: (progress: GenerationProgress) => void;
+  source?:'autonomous_agent';
 } = {}) {
   let stage: GenerationStage = 'validation';
   const progress = (next: GenerationStage) => { stage = next; dependencies.onProgress?.({ stage }); };
@@ -112,7 +113,7 @@ export async function createSocialContent(request: Request, dependencies: {
   // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
-  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
+  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.referenceRoles=referenceRoles;
   if(source.metadata)draft.contentSource=source.metadata;

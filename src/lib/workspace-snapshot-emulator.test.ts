@@ -27,6 +27,11 @@ test('real Firestore emulator: CAS two tabs, legacy migration, blind writes, ten
   await assert.rejects(getDoc(doc(outsider,'workspaces',id)),/permission|denied/i);
   await assert.rejects(setDoc(doc(a,'platform_configs','generation_any'),{mode:'development',enabled:true}),/permission|denied/i);
   const saved=(await getDoc(doc(a,'workspaces',id))).data()!;assert.equal(saved.name,'Profil Terbaru');assert.equal(saved.snapshotRevision,2);assert.equal(saved.quotaUsed,0);
+  const guardUrl=`http://127.0.0.1:8787/v1/projects/${projectId}/databases/(default)/documents/workspaces/${id}/server_operation_guards/organic_dispatch`;
+  const locked=await fetch(guardUrl,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields:{leaseId:{stringValue:'in-flight-fixture'}}})});assert.equal(locked.ok,true);
+  await assert.rejects(setDoc(doc(a,'workspaces',id),{city:'Cannot change during send'},{merge:true}),/permission|denied/i);
+  await assert.rejects(setDoc(doc(a,'workspaces',id,'server_operation_guards','organic_dispatch'),{leaseId:'override'}),/permission|denied/i);
+  assert.equal((await fetch(guardUrl,{method:'DELETE',headers:{Authorization:'Bearer owner'}})).ok,true);
   await setDoc(doc(a,'workspaces',id),{slug:'us aha',logoUrl:'https://example.test/logo.png',timezone:'Asia/Jakarta',currency:'IDR',onboardingStep:2,onboardingCompleted:true,primaryColor:'#0061AD',accentColor:'#FFFFFF',trialEndsAt:'2027-01-01T00:00:00.000Z'},{merge:true});
   assert.equal(await commitWorkspaceSnapshot(a,id,changed,ownerUid,2),2);
   const legacyId=`ws_legacy_${suffix}`;const legacy={...snapshot,brand:{...snapshot.brand,workspaceId:legacyId}};

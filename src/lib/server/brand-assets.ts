@@ -1,3 +1,4 @@
+import {assertNoAutonomyDispatch} from './autonomy-dispatch';
 import { z } from 'zod';
 import { assetBusiness, businessId, PRIMARY_BUSINESS } from '../business-context';
 import { randomUUID } from 'node:crypto';
@@ -28,7 +29,7 @@ export async function persistWorkspacePhoto(ref: Awaited<ReturnType<typeof requi
   await file.save(bytes,{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:'image/jpeg',cacheControl:'private, no-store'}});
   const asset:BrandVaultAsset={id,workspaceId,...(selectedBusiness!==PRIMARY_BUSINESS?{businessId:selectedBusiness}:{}),title,description:'',drawer:'real_asset',mediaType:'photo',previewUrl:photoPreviewPath(workspaceId,id),aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
   const assetRef=ref.collection('server_assets').doc(id);
-  try {await assetRef.create({asset,storagePath,createdBy:uid});}
+  try {await ref.firestore.runTransaction(async tx=>{await assertNoAutonomyDispatch(tx,ref);tx.create(assetRef,{asset,storagePath,createdBy:uid});});}
   catch(error) {
     // An RPC timeout can arrive after a successful commit. Never delete on uncertainty.
     let confirmed:Awaited<ReturnType<typeof assetRef.get>>;
@@ -36,8 +37,8 @@ export async function persistWorkspacePhoto(ref: Awaited<ReturnType<typeof requi
     const stored=confirmed.data();
     if(confirmed.exists&&isWorkspacePhoto(stored,workspaceId)&&stored.asset.id===id&&stored.storagePath===storagePath)return publicBrandPhoto(stored);
     const code=(error as {code?:unknown})?.code;
-    const definitelyRejected=[3,7,9,'invalid-argument','permission-denied','failed-precondition'].includes(code as number|string);
-    if(!confirmed.exists&&definitelyRejected){await file.delete({ignoreNotFound:true}).catch(()=>{});throw new ApiError(503,'Foto belum tersimpan. Silakan unggah lagi.','photo_metadata_unavailable');}
+    const definitelyRejected=error instanceof ApiError&&error.code==='autonomy_dispatch_in_progress'||[3,7,9,'invalid-argument','permission-denied','failed-precondition'].includes(code as number|string);
+    if(!confirmed.exists&&definitelyRejected){await file.delete({ignoreNotFound:true}).catch(()=>{});if(error instanceof ApiError)throw error;throw new ApiError(503,'Foto belum tersimpan. Silakan unggah lagi.','photo_metadata_unavailable');}
     throw new ApiError(503,'Status unggahan belum dapat dipastikan. Muat ulang galeri sebelum mengunggah lagi.','photo_save_uncertain');
   }
   return asset;
@@ -56,7 +57,7 @@ export async function changeWorkspacePhotoState(request: Request, dependencies: 
   const { ref, workspaceId, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
   const selectedBusiness=businessId(input.businessId);
   const assetRef = ref.collection('server_assets').doc(input.assetId);
-  return ref.firestore.runTransaction(async tx => {
+  return ref.firestore.runTransaction(async tx => {await assertNoAutonomyDispatch(tx,ref);
     const [workspace, assetDoc] = await Promise.all([tx.get(ref), tx.get(assetRef)]);
     if (!hasWorkspaceAccess(user.uid, workspace.data() || {}, isVerifiedAdmin(user))) throw new ApiError(403, 'Anda tidak memiliki izin untuk workspace ini.');
     const record = assetDoc.data() as AssetRecord | undefined;

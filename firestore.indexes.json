@@ -1,4 +1,4 @@
 {
-  "indexes": [],
+  "indexes": [{"collectionGroup":"auto_content_rules","queryScope":"COLLECTION","fields":[{"fieldPath":"enabled","order":"ASCENDING"},{"fieldPath":"nextDueMs","order":"ASCENDING"}]}],
   "fieldOverrides": []
 }

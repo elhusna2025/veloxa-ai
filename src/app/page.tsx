@@ -525,7 +525,7 @@ export default function VeloxaAiPlatformPage() {
     router.push(authUser ? '/onboarding' : '/register');
   };
 
-  const navigateWorkspace=(tab:UserTabId)=>{if(profileDirty&&activeTab==='brand_vault'&&tab!=='brand_vault'){setStatusBanner('Simpan atau batalkan perubahan profil sebelum berpindah halaman.');return;}setActiveTab(tab);};
+  const navigateWorkspace=(tab:UserTabId)=>{if(profileDirty&&['brand_vault','autonomy'].includes(activeTab)&&tab!==activeTab){setStatusBanner('Simpan atau batalkan perubahan sebelum berpindah halaman.');return;}setActiveTab(tab);};
   const businessLocked=isWorkspaceLoading||isCreatingContent||Boolean(publishingDraftId)||businessSaving||profileDirty||profileBusy;
   const selectBusiness=(id:string)=>{if(businessLocked||!businessesReady||!businesses.some(item=>item.id===id))return;hydrationEpoch.current++;try{sessionStorage.setItem(`veloxa:business:${authUser?.uid}:${workspaceBrand.workspaceId}`,id);}catch{ /* Storage is optional. */ }setActiveBusinessId(id);setStatusBanner('');};
   const reloadBusinesses=async()=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(workspaceBrand.workspaceId)}`);if(epoch!==hydrationEpoch.current)return;setBusinesses(result.businesses);setBusinessesReady(true);setBusinessError('');};
@@ -1369,7 +1369,7 @@ export default function VeloxaAiPlatformPage() {
               {/* ====================================================================
                  TAB 4: AGENT KONTEN OTONOM & KAMPANYE EVENT (USER BEBAS ATUR FREKUENSI)
                  ==================================================================== */}
-              {activeTab === 'autonomy' && <VeloxaBusinessSchedule key={activeBusinessId} events={eventCampaigns.filter(event=>(event.businessId||PRIMARY_BUSINESS)===activeBusinessId)} onCreateEvent={handleSaveBusinessEvent} business={{...activeBusiness,brand}} accounts={activeConnections} drafts={businessDrafts} ready={businessesReady&&connectionsVerified} onSave={schedule=>saveBusinessChanges({schedule})}/>}
+              {activeTab === 'autonomy' && <VeloxaBusinessSchedule key={activeBusinessId} events={eventCampaigns.filter(event=>(event.businessId||PRIMARY_BUSINESS)===activeBusinessId)} onCreateEvent={handleSaveBusinessEvent} business={{...activeBusiness,brand}} accounts={activeConnections} assets={vaultAssets} drafts={businessDrafts} ready={businessesReady&&connectionsVerified} onBusyChange={setProfileBusy} onDirtyChange={setProfileDirty}/>}
 
               {/* ====================================================================
                  TAB 5: AI AGENT MARKETING · META ADS ARCHITECT & AUTO-OPTIMIZER
