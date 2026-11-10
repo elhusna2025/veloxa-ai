@@ -6,7 +6,7 @@ import { ApiError } from './http';
 import { generateBrandContentDraft, runAutonomousQualityRepairLoop } from '../veloxa-engine';
 import type { runContentCreatorAndCriticAgent } from '../veloxa-openai-agents';
 
-export type ContentAgentParams = Parameters<typeof runContentCreatorAndCriticAgent>[0] & { referenceBrief?: { titles: string[]; instruction: string } };
+export type ContentAgentParams = Parameters<typeof runContentCreatorAndCriticAgent>[0] & { offeringFocus?:{ids:string[];intent:import('../content-source').ContentIntent}; referenceBrief?: { titles: string[]; instruction: string } };
 export type ContentAgentResult = Awaited<ReturnType<typeof runContentCreatorAndCriticAgent>>;
 
 const contentOutput = z.object({
@@ -88,6 +88,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
         defaultCta: params.brand.defaultCta,
         forbiddenWords: params.brand.forbiddenWords,
         offerings: params.brand.offerings,
+        ...(params.offeringFocus?{offeringFocus:params.offeringFocus}:{}),
         format: params.format,
         customTopic: params.customTopic,
         extraInstructions: params.format === 'carousel'
@@ -100,6 +101,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
       if(params.format!=='single_post') brief.extraInstructions=[brief.extraInstructions,'Setiap visualDirection (carousel) atau visual (Reels) harus menggambarkan pesan spesifik headline/body atau narasi pada slide/adegan tersebut, dengan subjek dan aktivitas yang relevan. Bedakan adegan sesuai pesan: jangan ulang satu latar abstrak atau adegan bisnis umum untuk semua slide. Pilih satu arahan seni dan nuansa visual yang konsisten sebagai satu seri; jaga variasi komposisi per slide. Gunakan konteks deskripsi dan produk bisnis yang benar, tanpa mengarang antarmuka produk, angka, harga atau testimoni.'].filter(Boolean).join(' ');
       brief.extraInstructions = [brief.extraInstructions,'Teks visual ditata secara terpisah dari foto AI. Buat judul konkret maksimal 8 kata, hook dan isi per slide ringkas maksimal 18 kata. Jangan menaruh seluruh narasi Reels di textOverlay; gunakan overlay singkat. CTA visual harus singkat; URL tetap berasal dari website bisnis tersimpan.'].filter(Boolean).join(' ');
       if (params.referenceBrief) brief.extraInstructions = [brief.extraInstructions, 'Ikuti referenceBrief.instruction untuk arahan komposisi visual pada seluruh slide/adegan. ReferenceBrief.titles hanya keterangan foto, bukan sumber klaim tentang bisnis. Jangan mengarang fitur atau harga dari judul foto.'].filter(Boolean).join(' ');
+      if(params.offeringFocus)brief.extraInstructions += ' Fokuskan konten pada offerings yang dipilih pengguna ini. offeringFocus.intent menentukan tujuan: auto pilih sudut relevan, education jelaskan manfaat dengan edukasi, introduction perkenalkan produk, promotion ajak mengenal atau memakai produk tanpa mengarang harga, diskon, tenggat, atau hasil pasti. Bila beberapa produk dipilih, hubungkan secara masuk akal sebagai satu cerita.';
       stream = await client.beta.agents.sessions.create({
         agent_id: agentId,
         environment: { type: 'none' },

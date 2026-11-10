@@ -1,4 +1,8 @@
 'use client';
+import {BrandProfileAssistant} from './BrandProfileAssistant';
+import {analyzeVeloxaBrand} from '@/lib/veloxa-api-client';
+import {applyBrandSuggestions,type BrandAnalysis,type AnalysisStage,type SuggestionKey} from '@/lib/brand-analysis';
+import {profileFingerprint} from '@/lib/profile-fingerprint';
 import { BusinessCategoryPicker } from './BusinessCategoryPicker';
 import { VeloxaBrandVisualDna } from './VeloxaBrandVisualDna';
 import { veloxaApi } from '@/lib/veloxa-api-client';
@@ -6,9 +10,9 @@ import { AuthenticatedBrandPhoto } from '@/components/AuthenticatedBrandPhoto';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Building2, Check, ImagePlus, Images, Loader2, Plus, RotateCcw, Save, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
-import type { BrandProfile, BrandVaultAsset } from '@/lib/veloxa-types';
+import type { BrandProfile, BrandVaultAsset, ChannelConnectionState } from '@/lib/veloxa-types';
 interface Props {
-  brand: BrandProfile; assets: BrandVaultAsset[];
+  brand: BrandProfile; assets: BrandVaultAsset[]; accounts?:ChannelConnectionState[];accountsReady?:boolean;
   onSave: (brand: BrandProfile) => Promise<void>;
   onUpload: (file: File, title: string) => Promise<void>;
   onAssetState: (assetId: string, action: 'trash' | 'restore') => Promise<void>;
@@ -41,6 +45,17 @@ export function VeloxaBrandWorkspace(props: Props) {
     try { await action();setFeedback({kind:'success',message}); } catch(error) { setFeedback({kind:'error',message:error instanceof Error?error.message:'Perubahan belum berhasil. Silakan coba lagi.'}); }
     finally {operation.current=false;setBusy(null);}
   }
+  async function analyzeProfile(ids:string[],progress:(stage:AnalysisStage)=>void) {
+    if(operation.current||dirty||!props.accountsReady)throw new Error('Simpan perubahan atau tunggu akun selesai dimuat.');
+    operation.current=true;setBusy('analysis');setFeedback(null);
+    try{return await analyzeVeloxaBrand({workspaceId:props.brand.workspaceId,businessId:props.brand.businessId||'primary',profileFingerprint:await profileFingerprint(props.brand),connectionIds:ids},progress);}
+    finally{operation.current=false;setBusy(null);}
+  }
+  async function applyAnalysis(result:BrandAnalysis,keys:SuggestionKey[]) {
+    if(operation.current||dirty)throw new Error('Simpan atau batalkan perubahan formulir terlebih dahulu.');
+    if(result.baseFingerprint!==await profileFingerprint(props.brand))throw new Error('Profil berubah. Analisis ulang sebelum memakai usulan.');
+    setForm(applyBrandSuggestions(initial,result,keys));setTab('identity');setFeedback(null);
+  }
   function analyzeLogo(assetId:string) {
     void run('palette',async()=>{
       const result=await veloxaApi<{colors:string[]}>('/api/veloxa/brand/palette',{method:'POST',body:JSON.stringify({workspaceId:form.workspaceId,businessId:form.businessId||'primary',assetId})});
@@ -58,6 +73,7 @@ export function VeloxaBrandWorkspace(props: Props) {
     <section className="relative overflow-hidden rounded-xl border border-[#eadde3] bg-gradient-to-br from-white via-white to-[#f9edf3] p-5 sm:p-7">
       <div className="flex items-start gap-4"><div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-[#a92e5d] text-xl font-semibold text-white">{props.brand.businessName.slice(0,1).toUpperCase()}</div><div className="min-w-0"><p className="text-sm font-medium text-[#a92e5d]">Dasar konten Anda</p><h2 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Kenalkan bisnis Anda.</h2><p className="mt-2 max-w-2xl text-base leading-relaxed text-neutral-500">Profil membentuk naskah dan caption. Unggah foto di Foto & referensi, lalu pilih yang ingin dipadukan di Studio.</p></div></div>
     </section>
+    <BrandProfileAssistant brand={props.brand} accounts={props.accounts||[]} ready={!!props.accountsReady} disabled={!!busy||libraryLoading} dirty={dirty} onAnalyze={analyzeProfile} onApply={applyAnalysis}/>
     <div role="tablist" aria-label="Bagian profil dan aset" className="grid grid-cols-2 gap-1 sm:grid-cols-4 rounded-xl border border-neutral-200 bg-white p-1.5">{tabs.map(item=><button key={item.id} type="button" role="tab" id={`brand-tab-${item.id}`} aria-selected={tab===item.id} aria-controls={`brand-panel-${item.id}`} disabled={!!busy} onClick={()=>{setTab(item.id);setFeedback(null);}} className={`flex min-w-0 flex-col items-center justify-center gap-2 rounded-lg px-2 py-3 text-sm font-medium sm:flex-row sm:text-base ${tab===item.id?'bg-[#faf0f4] text-[#a92e5d]':'text-neutral-500 hover:bg-neutral-50'}`}><item.icon size={19}/>{item.label}</button>)}</div>
     {busy==='palette'&&<p role="status" className="flex items-center gap-2 text-base text-neutral-500"><Loader2 size={18} className="animate-spin"/>Mengambil warna logo…</p>}
     {feedback&&<div role={feedback.kind==='error'?'alert':'status'} className={`flex items-start gap-2 rounded-lg border p-4 text-base ${feedback.kind==='error'?'border-red-200 bg-red-50 text-red-900':'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>{feedback.kind==='success'&&<Check size={19} className="mt-0.5 shrink-0"/>}{feedback.message}</div>}

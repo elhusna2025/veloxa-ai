@@ -3,7 +3,7 @@ import { assetBusiness, assertBusinessTargets } from '../business-context';
 import { resolveBusinessContext } from './business-contexts';
 import { buildVisualBusinessContext } from '../content-business-context';
 import { profileFingerprint } from '../profile-fingerprint';
-import { defaultContentTopic } from '../veloxa-brand-profile';
+import { resolveContentSource } from '../content-source';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { adminBucket } from './firebase';
@@ -61,7 +61,7 @@ export async function uploadBrandPhoto(request: Request) {
   return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160),undefined,context.id);
 }
 
-const contentInput = z.object({ workspaceId: z.string(), businessId:z.string().optional(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
+const contentInput = z.object({ sourceMode:z.enum(['manual','offerings']).optional(),offeringIds:z.array(z.string().min(1).max(180)).max(30).optional(),contentIntent:z.enum(['auto','education','introduction','promotion']).optional(), workspaceId: z.string(), businessId:z.string().optional(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -82,11 +82,12 @@ export async function createSocialContent(request: Request, dependencies: {
   if (input.format !== 'single_post' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk carousel dan Reels.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
   const {contexts,context}=await resolveBusinessContext(ref,workspace,input.businessId);
-  const brand=context.brand;
-  if (!brand || brand.workspaceId !== workspaceId || !brand.businessName) throw new ApiError(409, 'Lengkapi Brand Brain workspace sebelum membuat konten.');
-  const fingerprint=await profileFingerprint(brand);
+  const savedBrand=context.brand;
+  if (!savedBrand || savedBrand.workspaceId !== workspaceId || !savedBrand.businessName) throw new ApiError(409, 'Lengkapi Brand Brain workspace sebelum membuat konten.');
+  const fingerprint=await profileFingerprint(savedBrand);
   if(input.expectedProfileFingerprint!==fingerprint)throw new ApiError(409,'Profil bisnis telah berubah di tab atau perangkat lain. Isian topik tetap ada. Muat ulang profil sebelum membuat draf.','profile_conflict');
-  const topic=input.topic||defaultContentTopic(brand);
+  let source;try{source=resolveContentSource(savedBrand,input);}catch(error){throw new ApiError(400,error instanceof Error?error.message:'Pilihan produk tidak valid.','invalid_offering_selection');}
+  const {brand,topic}=source;
   let brandPalette:string[];
   try { brandPalette=savedBrandPalette(brand); } catch { throw new ApiError(409,'Periksa palet warna di Profil & aset, lalu simpan ulang.'); }
   const paletteParams=brandPalette.length?{brandPalette}:{};
@@ -111,9 +112,10 @@ export async function createSocialContent(request: Request, dependencies: {
   // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
-  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: topic, vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
+  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   draft.referenceRoles=referenceRoles;
+  if(source.metadata)draft.contentSource=source.metadata;
   if(input.businessId!==undefined||contexts.length>1||context.revision>0)draft.businessId=context.id;
   draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
   if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }

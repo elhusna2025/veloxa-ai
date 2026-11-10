@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import type {ContentIntent,ContentSourceMode} from '@/lib/content-source';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
 import { VeloxaBusinessSwitcher } from '@/components/VeloxaBusinessSwitcher';
@@ -208,6 +209,9 @@ export default function VeloxaAiPlatformPage() {
   const [metaAdCampaigns, setMetaAdCampaigns] = useState<MetaAdCampaignPlan[]>([]);
 
   // Studio form state
+  const [studioSourceMode,setStudioSourceMode]=useState<ContentSourceMode>('manual');
+  const [studioOfferingIds,setStudioOfferingIds]=useState<string[]>([]);
+  const [studioContentIntent,setStudioContentIntent]=useState<ContentIntent>('auto');
   const [studioFormat, setStudioFormat] = useState<ContentFormat>('single_post');
   const [isCreatingContent, setIsCreatingContent] = useState(false);
   const [generationQuota, setGenerationQuota] = useState<GenerationQuota | null>(null);
@@ -221,8 +225,9 @@ export default function VeloxaAiPlatformPage() {
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [referenceInstruction, setReferenceInstruction] = useState('');
   const [referenceRoles, setReferenceRoles] = useState<ContentReferenceRoles>({});
-  useEffect(() => { setSelectedReferenceIds([]); setReferenceRoles({}); setReferenceInstruction('');setStudioTopic('');setProfileDirty(false);setProfileBusy(false);setAdsSourceDraft(undefined);setPublishReviewDraftId(null);setGenerationFeedback(null); }, [brand.workspaceId,activeBusinessId]);
+  useEffect(() => { setSelectedReferenceIds([]); setReferenceRoles({}); setReferenceInstruction('');setStudioTopic('');setStudioSourceMode('manual');setStudioOfferingIds([]);setStudioContentIntent('auto');setProfileDirty(false);setProfileBusy(false);setAdsSourceDraft(undefined);setPublishReviewDraftId(null);setGenerationFeedback(null); }, [brand.workspaceId,activeBusinessId]);
   const [studioTopic, setStudioTopic] = useState<string>('');
+  useEffect(()=>{setStudioOfferingIds(previous=>previous.filter(id=>brand.offerings.some(item=>item.id===id)));},[brand.offerings]);
   const [studioFilter, setStudioFilter] = useState<'all' | 'draft' | 'published' | 'attention'>('all');
 
   // Event campaign creator state
@@ -615,6 +620,7 @@ export default function VeloxaAiPlatformPage() {
   const handleGenerateStudioDraft = async (_source: ContentDraft['source'] = 'manual_studio', scheduledSlotWib?: string) => {
     if (generationAttempt.current) return;
     if(!businessesReady||!selectedConnectionIds.length||selectedConnectionIds.some(id=>!activeBusiness.connectionIds.includes(id))){setStatusBanner('Pilih bisnis dan tautkan akun tujuan yang sesuai sebelum membuat konten.');return;}
+    if(studioSourceMode==='offerings'&&(!studioOfferingIds.length||studioOfferingIds.some(id=>!brand.offerings.some(item=>item.id===id)))){setStatusBanner('Centang produk milik bisnis aktif sebelum membuat konten.');return;}
     if (scheduledSlotWib) { setStatusBanner('Penjadwalan belum diaktifkan. Buat dan tinjau post tunggal di Studio dahulu.'); return; }
     const attempt = {}; generationAttempt.current = attempt;
     const epoch = hydrationEpoch.current;
@@ -628,7 +634,7 @@ export default function VeloxaAiPlatformPage() {
       if (!current()) return;
       stage = 'validation'; setGenerationFeedback({ status: 'running', stage });
       requestStarted=true;
-      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, businessId:activeBusinessId, selectedConnectionIds, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, referenceRoles:Object.fromEntries(selectedReferenceIds.map(id=>[id,referenceRoles[id]||'visual'])), ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
+      const result = await veloxaApi<{ draft: ContentDraft; engineMode: string; generationQuota?: GenerationQuota }>('/api/veloxa/content', { method: 'POST', body: JSON.stringify({ workspaceId: brand.workspaceId, businessId:activeBusinessId, sourceMode:studioSourceMode,...(studioSourceMode==='offerings'?{offeringIds:studioOfferingIds,contentIntent:studioContentIntent}:{}), selectedConnectionIds, topic: studioTopic.trim(), expectedProfileFingerprint, format: studioFormat, referenceAssetIds: selectedReferenceIds, referenceRoles:Object.fromEntries(selectedReferenceIds.map(id=>[id,referenceRoles[id]||'visual'])), ...(selectedReferenceIds.length ? { referenceInstruction: referenceInstruction.trim() } : {}) }) }, { onProgress: progress => { if (current()) { stage = progress.stage; setGenerationFeedback({ status: 'running', stage }); } } });
       if (!current()) return;
       setDrafts(previous => [result.draft, ...previous]); setStudioTopic(''); setGenerationQuota(result.generationQuota || null);
       setGenerationFeedback({ status: 'success', stage: 'saving', message: 'Draf berhasil dibuat. Tinjau hasilnya pada koleksi konten di bawah. Belum ada konten diterbitkan.' });
@@ -1173,7 +1179,7 @@ export default function VeloxaAiPlatformPage() {
                  TAB 2: BRAND BRAIN & DUAL ASSET VAULT (REFERENSI GAYA vs FOTO ASLI)
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
-                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
+                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} accounts={activeConnections} accountsReady={connectionsVerified&&businessesReady} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
               )}
 
               {/* ====================================================================
@@ -1181,7 +1187,7 @@ export default function VeloxaAiPlatformPage() {
                  ==================================================================== */}
               {activeTab === 'studio' && (
                 <div className="space-y-6">
-                  <VeloxaStudioComposer accounts={activeConnections} accountsVerified={connectionsVerified&&businessesReady} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
+                  <VeloxaStudioComposer sourceMode={studioSourceMode} onSourceMode={setStudioSourceMode} offerings={brand.offerings} offeringIds={studioOfferingIds} onOfferings={setStudioOfferingIds} contentIntent={studioContentIntent} onIntent={setStudioContentIntent} accounts={activeConnections} accountsVerified={connectionsVerified&&businessesReady} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={() => void handleGenerateStudioDraft('manual_studio')} />
 
                   <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{businessDrafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
                   {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{businessDrafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{businessDrafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
@@ -1272,11 +1278,12 @@ export default function VeloxaAiPlatformPage() {
                         </div>
 
                         {/* Live Rendered Visual Poster / Carousel Preview + Quality Gate */}
-                        <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr]">
+                        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(280px,480px)_minmax(0,1fr)]">
                           <div className="overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50 p-2">
                             <StudioMediaPreview draft={draft} fallbackUrl={buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })} />
                           </div>
                           <div className="space-y-3">
+                            {draft.contentSource?.mode==='offerings'&&<p className="rounded-lg border border-pink-100 bg-pink-50/50 p-3 text-sm text-neutral-700"><strong>Fokus produk:</strong> {draft.contentSource.offeringTitles.join(' · ')}</p>}
                             <details className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600"><summary className="cursor-pointer font-medium text-neutral-800">Pemeriksaan kualitas · {draft.qualityReview.score}/100</summary><p className="mt-3 leading-relaxed">{draft.qualityReview.summary}</p><p className="mt-2">{draft.qualityReview.issues.length} masalah · {draft.qualityReview.repairAttempts} perbaikan</p></details>
 
                             {/* Multi-Channel Distribution Badges */}

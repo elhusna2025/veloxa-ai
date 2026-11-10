@@ -35,6 +35,7 @@ class Database {
     const tx = { get: (ref: Doc) => ref.get(), getAll: (...refs: Doc[]) => Promise.all(refs.map(ref => ref.get())),
       create: (ref: Doc, data: any) => operations.push(() => {assert.equal(this.values.has(ref.path),false);this.write(ref,data,false);}),
       set: (ref: Doc, data: any, options?: { merge?: boolean }) => operations.push(() => this.write(ref, data, options?.merge)),
+      delete:(ref:Doc)=>operations.push(()=>this.values.delete(ref.path)),
       update: (ref: Doc, data: any) => operations.push(() => this.write(ref, data)) };
     try { const result = await action(tx); operations.forEach(operation => operation()); return result; }
     finally { release(); }
@@ -77,6 +78,7 @@ function fixture() {
   const create = async (options: {
     format?: 'single_post' | 'carousel';
     topic?: string;
+    sourceMode?:'manual'|'offerings';offeringIds?:string[];contentIntent?:'auto'|'education'|'introduction'|'promotion';
     selectedConnectionIds?:string[];
     businessId?:string;
     sourceAssetId?: string;
@@ -86,7 +88,7 @@ function fixture() {
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
     generate: async input => {
       generateCalls++;
@@ -106,6 +108,26 @@ function fixture() {
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
   return { database, ref, blobs, create, dependencies, request, count, generationCount, authorize, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+test('product focus reaches generation and render for single/carousel, invalid product consumes no quota',async()=>{
+ for(const format of ['single_post','carousel']as const){const f=fixture();const record=f.database.values.get(f.ref.path)!;const snap=JSON.parse(record.snapshotJson);snap.brand.offerings=[{id:'erp',title:'Cloud ERP',highlight:'Laporan arus kas',category:'service',priceLabel:''},{id:'pos',title:'Kasir POS',highlight:'Transaksi toko',category:'product',priceLabel:''}];record.snapshotJson=JSON.stringify(snap);
+  await assert.rejects(f.create({sourceMode:'offerings',offeringIds:['foreign'],topic:'',format}));assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);
+  let generated:any;const result=await f.create({sourceMode:'offerings',offeringIds:['erp'],contentIntent:'education',topic:'',format,generate:async input=>{generated=input;const draft=generateBrandContentDraft(input);if(format==='carousel')draft.slides=Array.from({length:5},(_,i)=>({slideNumber:i+1,headline:'Laporan arus kas',body:'ERP untuk bisnis',visualDirection:'Pemilik usaha membaca laporan',badgeText:`${i+1}/5`}));return{draft,engineMode:'deterministic_local'};},renderImage:async input=>{assert.ok(JSON.stringify(input.businessContext).includes('Laporan arus kas'));return sharp({create:{width:1080,height:1350,channels:3,background:'white'}}).jpeg().toBuffer();}});
+  assert.deepEqual(generated.brand.offerings.map((item:any)=>item.id),['erp']);assert.deepEqual(generated.offeringFocus,{ids:['erp'],intent:'education'});assert.deepEqual(result.draft.contentSource?.offeringIds,['erp']);assert.equal(JSON.parse(record.snapshotJson).brand.offerings.length,2);
+ }
+});
+
+test('profile analysis rejects foreign accounts/stale profile and uses lease; never writes profile or quota',async()=>{
+ const {analyzeSocialBrand}=await import('./brand-analysis');const f=fixture();f.database.values.set(`${f.ref.path}/business_contexts/primary`,{revision:1,connectionIds:['instagram_200']});const original=f.database.values.get(f.ref.path)!.snapshotJson;
+ const body={workspaceId:f.ref.id,businessId:'primary',profileFingerprint:await profileFingerprint(JSON.parse(original).brand),connectionIds:['instagram_200']};const request=(extra={})=>new Request('http://localhost/api',{method:'POST',body:JSON.stringify({...body,...extra})});let calls=0;let release!:()=>void;const wait=new Promise<void>(resolve=>release=resolve);const dependencies={authorize:f.authorize as never,collect:async()=>{calls++;await wait;return{sources:[{id:'p',kind:'profile' as const,label:'Profil',text:'Sistem ERP'}],images:[],warnings:[],websites:[]};},suggest:async()=>({suggestions:[],warnings:[]})};
+ await assert.rejects(analyzeSocialBrand(request({connectionIds:['facebook_100']}),dependencies),/bisnis ini/);await assert.rejects(analyzeSocialBrand(request({profileFingerprint:'0'.repeat(64)}),dependencies),/berubah/);assert.equal(calls,0);
+ const first=analyzeSocialBrand(request(),dependencies);while(!calls)await new Promise(resolve=>setImmediate(resolve));await assert.rejects(analyzeSocialBrand(request(),dependencies),/masih berjalan/);release();const result=await first;assert.equal(result.businessId,'primary');assert.equal(f.database.values.get(f.ref.path)!.snapshotJson,original);assert.equal(f.generationCount(),0);assert.equal(f.count(),0);assert.equal(f.database.values.has(`${f.ref.path}/profile_analysis_jobs/primary`),false);
+});
+
+test('profile analysis discards suggestions when ownership/account mapping changes during provider work',async()=>{
+ const {analyzeSocialBrand}=await import('./brand-analysis');for(const change of ['owner','mapping','token']as const){const f=fixture();f.database.values.set(`${f.ref.path}/business_contexts/primary`,{revision:1,connectionIds:['instagram_200']});const request=new Request('http://localhost/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,businessId:'primary',profileFingerprint:await profileFingerprint(JSON.parse(f.database.values.get(f.ref.path)!.snapshotJson).brand),connectionIds:['instagram_200']})});let ai=0;
+ await assert.rejects(analyzeSocialBrand(request,{authorize:f.authorize as never,collect:async()=>{if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='other';else if(change==='mapping')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];else f.database.values.get(`${f.ref.path}/private_meta_connections/instagram`)!.encryptedToken='changed';return{sources:[{id:'p',kind:'profile',label:'Bio',text:'Sistem ERP'}],images:[],warnings:[],websites:[]};},suggest:async()=>{ai++;return{suggestions:[],warnings:[]};}}));assert.equal(ai,0);assert.equal(f.generationCount(),0);}
+});
 
 const photoId = '123e4567-e89b-42d3-a456-426614174000';
 async function seedPhoto(f: ReturnType<typeof fixture>) {

@@ -1,4 +1,5 @@
 import { ContentGenerationError, readGenerationStream, type GenerationProgress } from './content-generation';
+import {readBrandAnalysisStream,type AnalysisStage,type BrandAnalysis} from './brand-analysis';
 import { getFirebaseAuthInstance } from './veloxa-auth';
 
 /** Only send Firebase credentials to our own API, never to arbitrary URLs. */
@@ -22,6 +23,12 @@ export async function veloxaApi<T>(path: string, init: RequestInit = {}, feedbac
   const data = await response.json();
   if (!response.ok) { const message = data.error || 'Permintaan belum berhasil. Silakan coba lagi.'; if (feedback) throw new ContentGenerationError(message); throw new Error(message); }
   return data as T;
+}
+
+export async function analyzeVeloxaBrand(body:unknown,onProgress:(stage:AnalysisStage)=>void):Promise<BrandAnalysis>{
+ const response=await signedVeloxaFetch('/api/veloxa/brand/analyze',{method:'POST',headers:{Accept:'application/x-ndjson'},body:JSON.stringify(body)});
+ if(response.ok&&response.headers.get('Content-Type')?.includes('application/x-ndjson'))return readBrandAnalysisStream(response,onProgress);
+ const data=await response.json().catch(()=>({}));throw new Error(data.error||'Analisis profil belum tersedia.');
 }
 
 /** Private vault previews keep credentials in headers, never image URLs. */

@@ -192,6 +192,7 @@ export interface OrganicPerformanceMetrics {
 }
 
 export interface ContentDraft {
+  contentSource?: import('./content-source').OfferingContentSource;
   businessId?: string;
   referenceRoles?: import('./content-reference-roles').ContentReferenceRoles;
   visualText?: string[];
