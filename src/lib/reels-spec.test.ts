@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from'node:assert/strict';import{REELS_SPEC,reelsWordCount,estimateReelsDuration}from'./reels-spec';
+test('Reels estimation is bounded20–60 and independent from the final measured media duration',()=>{assert.equal(REELS_SPEC.maxDurationSeconds,60);assert.equal(estimateReelsDuration('kata '.repeat(40)),20);assert.equal(estimateReelsDuration('kata '.repeat(100)),45);assert.equal(estimateReelsDuration('kata '.repeat(200)),60);assert.equal(reelsWordCount('satu, dua! 2026 tiga'),4);});

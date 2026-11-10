@@ -22,6 +22,7 @@ export default function StudioMediaPreview({ draft, fallbackUrl }: StudioMediaPr
 
   if (draft.format !== 'carousel') {
     const imageUrl = draft.renderedMedia?.url || fallbackUrl;
+    if (!imageUrl) return <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-base text-amber-900">Pratinjau belum tersedia. Teks draf lama belum muat pada ukuran yang nyaman dibaca; buat ulang draf untuk menyiapkan visual final.</p>;
     return <ContentMediaGallery key={draft.id} title={draft.title} testId={`rendered-poster-img-${draft.id}`} images={[{url:imageUrl,alt:draft.title}]}/>;
   }
 

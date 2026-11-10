@@ -1,13 +1,14 @@
 import OpenAI from 'openai';
 import { OpenAIRealtimeWS } from 'openai/realtime/ws';
 import { ApiError } from './http';
+import { REELS_SPEC, reelsWordCount } from '../reels-spec';
 
 export const REELS_VOICE_MODEL = 'gpt-realtime-2.1-mini';
 export const REELS_VOICE_DISCLOSURE = 'Voiceover menggunakan suara AI.';
 
-const MAX_AUDIO_BYTES = 45 * 48_000;
+const MAX_AUDIO_BYTES = REELS_SPEC.maxSourceAudioSeconds * 48_000;
 const SAFE_VOICE_ERROR = new ApiError(503, 'Voiceover Reels belum dapat dibuat. Silakan coba lagi.', 'reels_voice_unavailable');
-const INVALID_SCRIPT_ERROR = new ApiError(400, 'Skrip Reels harus berisi 40–65 kata dan maksimal 1.200 karakter.', 'invalid_reels_script');
+const INVALID_SCRIPT_ERROR = new ApiError(400, `Skrip Reels harus berisi ${REELS_SPEC.minVoiceWords}–${REELS_SPEC.maxVoiceWords} kata dan maksimal ${REELS_SPEC.maxScriptChars.toLocaleString('id-ID')} karakter.`, 'invalid_reels_script');
 
 interface VoiceConnection {
   on(event: string, listener: (value?: unknown) => void): this;
@@ -24,9 +25,9 @@ interface VoiceDependencies {
 }
 
 function isValidScript(script: string): boolean {
-  if (typeof script !== 'string' || script.trim().length === 0 || script.length > 1200) return false;
-  const words = script.match(/[\p{L}\p{N}]+/gu) || [];
-  return words.length >= 40 && words.length <= 65;
+  if (typeof script !== 'string' || script.trim().length === 0 || script.length > REELS_SPEC.maxScriptChars) return false;
+  const words = reelsWordCount(script);
+  return words >= REELS_SPEC.minVoiceWords && words <= REELS_SPEC.maxVoiceWords;
 }
 
 function safeBase64Buffer(value: unknown): Buffer | null {
@@ -109,7 +110,7 @@ export async function generateReelsVoiceover(
             response: {
               conversation: 'none',
               output_modalities: ['audio'],
-              instructions: 'Ucapkan hanya naskah pengguna persis dalam Bahasa Indonesia. Gunakan suara percakapan yang lembut, halus, hangat, dan dekat, seperti sedang mengobrol santai langsung dengan satu orang. Ekspresif secara halus: rasa ingin tahu yang tulus pada pertanyaan pembuka, penekanan kecil pada gagasan penting, lalu penutup yang penuh dukungan. Biarkan tinggi-rendah nada mengalir dengan variasi kecil yang tidak teratur; hindari pola naik-turun berulang, pelafalan setiap suku kata yang terlalu rapi, atau penekanan seragam. Gabungkan kata menjadi frasa percakapan yang utuh. Gunakan jeda singkat alami di pergantian pikiran, jangan berhenti di setiap kata. Tempo santai dan luwes, sekitar 25–30 detik. Senyum tipis dalam suara, bukan gaya penyiar, presentasi, atau iklan. Tetap jelas tanpa berbisik, mendesah, suara napas buatan, berteriak, atau tambahan kata dan efek suara.',
+              instructions: `Ucapkan hanya naskah pengguna persis dalam Bahasa Indonesia. Gunakan suara percakapan yang lembut, halus, hangat, dan dekat, seperti sedang mengobrol santai langsung dengan satu orang. Ekspresif secara halus: rasa ingin tahu yang tulus pada pertanyaan pembuka, penekanan kecil pada gagasan penting, lalu penutup yang penuh dukungan. Biarkan tinggi-rendah nada mengalir dengan variasi kecil yang tidak teratur; hindari pola naik-turun berulang, pelafalan setiap suku kata yang terlalu rapi, atau penekanan seragam. Gabungkan kata menjadi frasa percakapan yang utuh. Gunakan jeda singkat alami di pergantian pikiran, jangan berhenti di setiap kata. Tempo santai dan luwes; sesuaikan panjang naskah untuk durasi ${REELS_SPEC.minDurationSeconds}–${REELS_SPEC.maxDurationSeconds} detik tanpa memanjangkan jeda atau menambah kata. Senyum tipis dalam suara, bukan gaya penyiar, presentasi, atau iklan. Tetap jelas tanpa berbisik, mendesah, suara napas buatan, berteriak, atau tambahan kata dan efek suara.`,
               input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: script }] }],
               audio: { output: { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' } },
             },

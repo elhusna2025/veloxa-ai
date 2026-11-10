@@ -109,6 +109,33 @@ function fixture() {
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
 
+test('all visual copy is preflighted before any paid image or voice request, including the last slide',async()=>{
+ for(const format of ['single_post','carousel','short_video'] as const){
+  const f=fixture();let images=0,voices=0;
+  await assert.rejects(f.create({format,generate:async input=>{
+   const draft=generateBrandContentDraft(input);draft.title='Kenali bisnis Anda';draft.hook='Informasi bisnis yang jelas.';
+   const overflow='Informasi penting 123 '.repeat(20);
+   if(format==='single_post')draft.hook=overflow;
+   if(format==='carousel')draft.slides=Array.from({length:5},(_,index)=>({slideNumber:index+1,headline:`Slide ${index+1}`,body:index===4?overflow:'Informasi bisnis.',visualDirection:'Adegan bisnis',badgeText:`${index+1}/5`}));
+   if(format==='short_video')draft.videoScenes=Array.from({length:4},(_,index)=>({sceneNumber:index+1,timeRange:'00:00–00:05',visualDirection:'Adegan bisnis',voiceover:'Informasi bisnis yang jelas.',textOverlay:index===3?overflow:`Langkah ${index+1}`}));
+   return {draft,engineMode:'deterministic_local'};
+  },renderImage:async()=>{images++;throw new Error('paid image must not start');},generateVoice:async()=>{voices++;throw new Error('paid voice must not start');}}),(error:any)=>error.stage==='compositing'&&error.message.includes('Ringkas judul'));
+  assert.equal(images,0);assert.equal(voices,0);assert.equal([...f.database.values.keys()].filter(key=>key.includes('/social_drafts/')).length,0);
+ }
+});
+
+test('visual preflight does not treat detailed captions or Reels voiceover as printed feed body',async()=>{
+ for(const format of ['single_post','short_video'] as const){
+  const f=fixture();let images=0;
+  const{draft}=await f.create({format,generate:async input=>{
+   const draft=generateBrandContentDraft(input);draft.title='Kenali bisnis Anda';draft.hook='Informasi bisnis yang jelas.';draft.caption='Penjelasan rinci untuk pembaca. '.repeat(40);
+   if(format==='short_video')draft.videoScenes=Array.from({length:4},(_,index)=>({sceneNumber:index+1,timeRange:'00:00–00:05',visualDirection:'Adegan bisnis',voiceover:'Narasi panjang yang tetap berada di audio. '.repeat(8),textOverlay:`Langkah ${index+1}`}));
+   return {draft,engineMode:'deterministic_local'};
+  },renderImage:async()=>{images++;return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});
+  assert.equal(images,format==='short_video'?4:1);assert.ok(draft.caption.includes('Penjelasan rinci untuk pembaca.'));if(format==='short_video')assert.equal(draft.videoScenes?.[3].textOverlay,'Langkah 4');
+ }
+});
+
 test('every Reels scene receives complete product context and publisher rejects prohibited narration despite forged quality',async()=>{
  const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,businessDescription:'D'.repeat(2000),websiteUrl:'https://business.example.test',offerings:Array.from({length:7},(_,i)=>({id:`p${i}`,title:`Produk ${i}`,highlight:`DETAIL_${i}`,priceLabel:'',category:'service'})),forbiddenWords:['termurah']};record.snapshotJson=JSON.stringify(snapshot);let calls=0;
  const {draft}=await f.create({renderImage:async input=>{calls++;assert.deepEqual(input.businessContext!.offerings,snapshot.brand.offerings);assert.equal(input.businessContext!.description,snapshot.brand.businessDescription);assert.equal(input.businessContext!.websiteUrl,snapshot.brand.websiteUrl);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(calls,4);
@@ -198,6 +225,8 @@ test('missing and foreign MP4 paths or invalid video dimensions cannot reserve q
     let calls=0;await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,reelPublisher:async()=>{calls++;return{externalPostId:'unexpected'};}}));assert.equal(calls,0);assert.equal(f.count(),0);
   }
 });
+test('Reels publication accepts35/59.9/60s and rejects over60 before quota or provider dispatch',async()=>{for(const seconds of[35,59.9,60,60.01]){const f=fixture();const{draft}=await f.create();const stored=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;stored.draft.renderedVideo.durationSeconds=seconds;stored.draft.videoDurationSeconds=seconds;let calls=0;const publish=()=>publishSocialContent(f.request(draft.id),{...f.dependencies,reelPublisher:async()=>{calls++;return{externalPostId:'confirmed'};}});if(seconds>60){await assert.rejects(publish());assert.equal(calls,0);assert.equal(f.count(),0);}else{const result=await publish();assert.equal(result.draft.status,'published');assert.equal(calls,2);assert.equal(f.count(),1);}}});
+
 test('partial Reels retry sends only the failed channel and unknown delivery blocks resend',async()=>{
   const f=fixture();const{draft}=await f.create();const sends:string[]=[];let retry=false;
   const reelPublisher:NonNullable<NonNullable<Parameters<typeof publishSocialContent>[1]>['reelPublisher']>=async p=>{sends.push(p.channel);if(p.channel==='instagram'&&!retry)throw new MetaRequestError('rejected');return{externalPostId:'confirmed'};};

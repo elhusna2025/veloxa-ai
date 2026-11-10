@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {REELS_SPEC} from '../reels-spec';
 import { forbiddenContentMatches } from '../content-policy';
 import { assertBusinessTargets, draftBusiness } from '../business-context';
 import { resolveBusinessContext } from './business-contexts';
@@ -61,7 +62,7 @@ export async function publishSocialContent(request: Request, dependencies: {
     ? !!draft.renderedMedia && typeof stored?.storagePath === 'string' && stored.storagePath.startsWith(`workspaces/${ref.id}/renders/`)
     : draft?.format === 'short_video'
       ? !!draft.renderedVideo && draft.renderedVideo.mimeType === 'video/mp4' && draft.renderedVideo.width === 720 && draft.renderedVideo.height === 1280
-        && Number.isFinite(draft.renderedVideo.durationSeconds) && draft.renderedVideo.durationSeconds >= 19.85 && draft.renderedVideo.durationSeconds <= 30.15
+        && Number.isFinite(draft.renderedVideo.durationSeconds) && draft.renderedVideo.durationSeconds >= REELS_SPEC.minDurationSeconds - 0.15 && draft.renderedVideo.durationSeconds <= REELS_SPEC.maxDurationSeconds
         && draft.renderedVideo.voiceDisclosure === REELS_VOICE_DISCLOSURE && draft.caption.includes(REELS_VOICE_DISCLOSURE)
         && typeof stored?.videoStoragePath === 'string' && stored.videoStoragePath.startsWith(`workspaces/${ref.id}/renders/`) && stored.videoStoragePath.endsWith('.mp4')
         && (() => { try { return new URL(draft.renderedVideo.url).protocol === 'https:'; } catch { return false; } })()

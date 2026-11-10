@@ -1,6 +1,6 @@
 # Petunjuk proyek Veloxa
 
-Sebelum membuat atau mengubah UI, baca [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md). File tersebut merupakan acuan desain yang disepakati pengguna dan disimpan bersama kode proyek.
+Sebelum membuat atau mengubah UI, baca [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md). Untuk hasil post, carousel, dan Reels, baca juga [CONTENT_DESIGN_SYSTEM.md](CONTENT_DESIGN_SYSTEM.md). File tersebut merupakan acuan desain yang disepakati pengguna dan disimpan bersama kode proyek.
 
 - Gunakan komponen bersama untuk kebutuhan yang sama, termasuk pilihan tujuan konten dan dropdown. Jangan membuat ulang popup `<select>` native untuk pilihan workspace.
 - Pertahankan urutan Beranda, Profil & aset, Content Studio, Jadwal konten, Meta Ads.

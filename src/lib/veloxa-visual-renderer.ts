@@ -7,6 +7,7 @@
  */
 
 import { BRAND_PRESETS } from './veloxa-engine';
+import { CONTENT_TYPOGRAPHY } from './content-typography';
 import type { BrandProfile, ContentDraft } from './veloxa-types';
 
 function escapeXml(str: string): string {
@@ -30,12 +31,13 @@ function wrapTextLines(text: string, maxCharsPerLine: number, maxLines: number):
     } else {
       if (current) lines.push(current);
       current = word;
-      if (lines.length >= maxLines - 1) break;
+      if (lines.length >= maxLines) throw new Error('Teks visual terlalu panjang. Ringkas judul atau isi sebelum merender.');
     }
   }
   if (current && lines.length < maxLines) {
     lines.push(current);
   }
+  if (words.some(word => word.length > maxCharsPerLine)) throw new Error('Kata visual terlalu panjang untuk area teks.');
   return lines;
 }
 
@@ -60,31 +62,28 @@ export function buildRenderedVisualSvg(params: {
     draft.slides?.[slideIndex]?.badgeText ||
     (isVertical916 ? 'REELS · TIKTOK · YT SHORTS 9:16' : 'CAROUSEL · FEED 4:5');
 
-  const headlineText =
-    draft.slides?.[slideIndex]?.headline ||
-    draft.videoScenes?.[0]?.textOverlay ||
-    draft.title;
-
-  const bodyText =
-    draft.slides?.[slideIndex]?.body ||
-    draft.videoScenes?.[1]?.voiceover ||
-    draft.caption;
-
-  const headlineLines = wrapTextLines(headlineText, 26, 3);
-  const bodyLines = wrapTextLines(bodyText, 42, 4);
+  const headlineText = isVertical916
+    ? draft.videoScenes?.[slideIndex]?.textOverlay || draft.title
+    : draft.slides?.[slideIndex]?.headline || draft.title;
+  // A Reels narration/caption belongs in audio/caption, never in the visual body.
+  const bodyText = isVertical916 ? '' : draft.slides?.[slideIndex]?.body || draft.hook || draft.caption;
+  const headlineSize = isVertical916 ? CONTENT_TYPOGRAPHY.reelsTitle.min : CONTENT_TYPOGRAPHY.feedTitle.min;
+  const headlineGap = Math.ceil(headlineSize * (1 + CONTENT_TYPOGRAPHY.lineGapRatio));
+  const headlineLines = wrapTextLines(headlineText, isVertical916 ? 22 : 26, 3);
+  const bodyLines = bodyText ? wrapTextLines(bodyText, 34, 5) : [];
 
   const headlineSvg = headlineLines
     .map(
       (line, idx) =>
-        `<text x="96" y="${520 + idx * 82}" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="64" font-weight="800" fill="#171717">${escapeXml(line)}</text>`,
+        `<text x="96" y="${520 + idx * headlineGap}" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="${headlineSize}" font-weight="800" fill="#171717">${escapeXml(line)}</text>`,
     )
     .join('\n');
 
-  const bodyStartY = 520 + headlineLines.length * 82 + 48;
+  const bodyStartY = 520 + headlineLines.length * headlineGap + 48;
   const bodySvg = bodyLines
     .map(
       (line, idx) =>
-        `<text x="96" y="${bodyStartY + idx * 52}" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="36" font-weight="500" fill="#525252">${escapeXml(line)}</text>`,
+        `<text x="96" y="${bodyStartY + idx * 60}" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="${CONTENT_TYPOGRAPHY.body.min}" font-weight="500" fill="#525252">${escapeXml(line)}</text>`,
     )
     .join('\n');
 
@@ -119,7 +118,7 @@ export function buildRenderedVisualSvg(params: {
 
   <!-- Bottom CTA Banner -->
   <rect x="96" y="${ctaY}" width="${width - 192}" height="116" rx="32" fill="#EC749B"/>
-  <text x="${width / 2}" y="${ctaY + 70}" text-anchor="middle" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="32" font-weight="800" fill="#FFFFFF">${escapeXml(brand.defaultCta.slice(0, 48))}</text>
+  <text x="${width / 2}" y="${ctaY + 70}" text-anchor="middle" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="${CONTENT_TYPOGRAPHY.cta.min}" font-weight="800" fill="#FFFFFF">${escapeXml(brand.defaultCta.trim().length <= 36 ? brand.defaultCta.trim() : 'Pelajari selengkapnya')}</text>
 </svg>`;
 }
 
@@ -128,8 +127,8 @@ export function buildRenderedVisualSvgDataUrl(params: {
   draft: ContentDraft;
   slideIndex?: number;
 }): string {
-  const svg = buildRenderedVisualSvg(params);
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  // Legacy display fallback must not crash the Studio when old copy exceeds the new readable bounds.
+  try { const svg = buildRenderedVisualSvg(params); return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`; } catch { return ''; }
 }
 
 export function downloadDraftPosterSvg(draft: ContentDraft, brand: BrandProfile): void {

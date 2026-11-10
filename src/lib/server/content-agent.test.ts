@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {REELS_SPEC,estimateReelsDuration} from '../reels-spec';
 import { test } from 'node:test';
 import { createContentAgentGenerator, type ContentAgentParams } from './content-agent';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
@@ -98,7 +99,7 @@ test('memakai agen tersimpan dan merender salinan AI, bukan scaffold atau prompt
       offerings: [],
       format: 'single_post',
       customTopic: 'USER_PROMPT_SENTINEL instruksi yang tidak boleh tampil sebagai judul',
-      extraInstructions: 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan. Teks visual ditata secara terpisah dari foto AI. Buat judul konkret maksimal 8 kata, hook dan isi per slide ringkas maksimal 18 kata. Jangan menaruh seluruh narasi Reels di textOverlay; gunakan overlay singkat. CTA visual harus singkat; URL tetap berasal dari website bisnis tersimpan.',
+      extraInstructions: 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan. Teks visual memakai ukuran minimum agar terbaca di layar ponsel. Judul maksimal 8 kata dan 64 karakter; isi pendukung satu gagasan maksimal 18 kata dan 125 karakter; overlay Reels maksimal 7 kata dan 48 karakter. Letakkan penjelasan lebih panjang di caption atau voiceover. Pertahankan fakta, angka penting, dan makna saat meringkas; jangan memotong kata atau kalimat. CTA visual singkat; URL berasal dari website bisnis tersimpan.',
     }),
     stream: true,
   });
@@ -250,9 +251,9 @@ test('short_video memetakan empat adegan dari skrip AI tanpa placeholder dan mem
   const brief = JSON.parse(String(calls.request?.input));
 
   assert.match(brief.extraInstructions, /Instagram dan Facebook/);
-  assert.match(brief.extraInstructions, /20–30 detik/);
+  assert.match(brief.extraInstructions, /20–60 detik/);
   assert.match(brief.extraInstructions, /tepat 4 adegan/);
-  assert.match(brief.extraInstructions, /40–65 kata Bahasa Indonesia/);
+  assert.match(brief.extraInstructions, /40–130 kata Bahasa Indonesia/);
   assert.deepEqual(result.draft.videoScenes, videoScript.scenes.map((scene, index) => ({
     sceneNumber: index + 1,
     timeRange: scene.time,
@@ -261,12 +262,14 @@ test('short_video memetakan empat adegan dari skrip AI tanpa placeholder dan mem
     textOverlay: scene.textOverlay,
   })));
   assert.equal(result.draft.videoScenes?.length, 4);
-  assert.equal(result.draft.videoDurationSeconds, 30);
+  assert.equal(result.draft.videoDurationSeconds, estimateReelsDuration(videoScript.scenes.map(s=>s.voiceover).join(' ')));
   assert.equal(result.draft.voiceoverModel, 'gpt-realtime-2.1-mini');
   assert.equal(result.draft.renderedVideo, undefined);
   assert.ok(result.draft.targetChannels.every((channel) => channel === 'instagram' || channel === 'facebook'));
   assert.ok(result.draft.channelStatuses.every((status) => status.channel === 'instagram' || status.channel === 'facebook'));
 });
+
+test('Reels accepts a longer100/130-word story and rejects131 before images or voice',async()=>{for(const words of[100,130,131]){const parts=Array.from({length:4},(_,i)=>Array.from({length:Math.floor(words/4)+(i<words%4?1:0)},()=> 'kata').join(' '));const script={opening:parts[0],closing:parts[3],scenes:parts.map((voiceover,i)=>({time:`${i*15}–${(i+1)*15}`,visual:'Guru menjelaskan pelajaran',voiceover,textOverlay:`Pesan ${i+1}`}))};const{client,calls}=mockClient({...generatedCopy,videoScript:script});const params={...makeParams(),format:'short_video' as const};const run=createContentAgentGenerator(client as never,agentId)(params);if(words>REELS_SPEC.maxVoiceWords)await assert.rejects(run,{code:'invalid_content_agent_response'});else{const result=await run;assert.equal(result.draft.videoScenes?.map(s=>s.voiceover).join(' ').split(' ').length,words);assert.equal(result.draft.videoDurationSeconds,estimateReelsDuration(parts.join(' ')));assert.ok(result.draft.videoDurationSeconds!>30);assert.match(JSON.parse(String(calls.request!.input)).extraInstructions,/20–60 detik/);}}});
 
 test('short_video menolak skrip malformed dengan error aman dan tanpa fallback placeholder', async () => {
   const malformedOutputs: Array<{ label: string; output: unknown }> = [
@@ -276,7 +279,7 @@ test('short_video menolak skrip malformed dengan error aman dan tanpa fallback p
     { label: 'voiceover tanpa kata lisan', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene) => ({ ...scene, voiceover: '- - -' })) } } },
     { label: 'jumlah adegan kurang', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.slice(0, 3) } } },
     { label: 'jumlah adegan berlebih', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: [...videoScript.scenes, videoScript.scenes[0]] } } },
-    { label: 'voiceover melampaui batas karakter', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, voiceover: 'x'.repeat(181) } : scene) } } },
+    { label: 'voiceover melampaui batas karakter', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, voiceover: 'x'.repeat(REELS_SPEC.maxSceneVoiceChars+1) } : scene) } } },
     { label: 'overlay kosong', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, textOverlay: ' ' } : scene) } } },
     { label: 'visual melampaui batas karakter', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene, index) => index === 0 ? { ...scene, visual: 'x'.repeat(1001) } : scene) } } },
     { label: 'jumlah kata di bawah batas', output: { ...generatedCopy, videoScript: { ...videoScript, scenes: videoScript.scenes.map((scene) => ({ ...scene, voiceover: 'Satu' })) } } },

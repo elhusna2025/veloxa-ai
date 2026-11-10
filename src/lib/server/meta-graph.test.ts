@@ -98,7 +98,9 @@ test('request guards reject missing authentication, oversized JSON, and path inj
 test('rendered post is a real JPEG with dimensions accepted by Instagram', async () => {
   const brand = BRAND_PRESETS.cafe_fnb;
   const draft = generateBrandContentDraft({ brand, format: 'single_post', source: 'manual_studio', vaultAssets: [], connections: [], planId: 'free_trial' });
-  const svg = buildRenderedVisualSvg({ brand, draft });
+  const shortVisualDraft = { ...draft, slides: undefined, title: 'Pilihan menu Kopi Senja', hook: 'Kenali pilihan menu melalui akun resmi Kopi Senja.' };
+  const svg = buildRenderedVisualSvg({ brand, draft: shortVisualDraft });
+  assert.throws(() => buildRenderedVisualSvg({ brand, draft: { ...shortVisualDraft, hook: 'Fakta penting 123 '.repeat(30) } }), /Teks visual terlalu panjang/);
   assert.equal(svg.includes('Kualitas AI'), false);
   const bytes = await sharp(Buffer.from(svg)).jpeg().toBuffer();
   const metadata = await sharp(bytes).metadata();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { generateReelsVoiceover, REELS_VOICE_MODEL } from './reels-voice';
+import { REELS_SPEC } from '../reels-spec';
 
 const script = 'Pernah penasaran kenapa langkah kecil bisa membuat hari terasa lebih ringan? Mulai saja dengan memilih satu kebiasaan sederhana yang cocok untukmu. Tak perlu langsung sempurna, beri dirimu waktu untuk mencoba dan menemukan ritme yang nyaman. Pelan-pelan, perubahan baik bisa tumbuh. Semoga tips ini membantu, ya.';
 
@@ -37,7 +38,32 @@ test('memvalidasi panjang dan jumlah kata sebelum membuka koneksi', async () => 
     (error: unknown) => (error as { status?: number; code?: string }).status === 400 && (error as { code?: string }).code === 'invalid_reels_script',
   );
   assert.equal(started, false);
-  await assert.rejects(generateReelsVoiceover(`${script} ${'kata '.repeat(30)}`, { createConnection: () => new MockConnection() as never }), { code: 'invalid_reels_script' });
+  await assert.rejects(generateReelsVoiceover('kata '.repeat(REELS_SPEC.maxVoiceWords + 1), { createConnection: () => { started = true; return new MockConnection() as never; } }), { code: 'invalid_reels_script' });
+  await assert.rejects(generateReelsVoiceover(`${'x'.repeat(REELS_SPEC.maxScriptChars + 1)} ${'kata '.repeat(39)}`, { createConnection: () => { started = true; return new MockConnection() as never; } }), { code: 'invalid_reels_script' });
+  assert.equal(started, false);
+});
+
+test('accepts 100 and 130 words with unchanged voice/model and rejects cumulative audio above 90s', async () => {
+  for (const words of [100, REELS_SPEC.maxVoiceWords]) {
+    const { connection, createConnection } = mock();
+    const result = generateReelsVoiceover('kata '.repeat(words).trim(), { createConnection });
+    emitCompletion(connection);
+    assert.equal((await result).model, REELS_VOICE_MODEL);
+    assert.equal(connection.closeCount, 1);
+  }
+  const maximum = mock();
+  const maximumResult = generateReelsVoiceover(script, { createConnection: maximum.createConnection });
+  emitCompletion(maximum.connection, Buffer.alloc(REELS_SPEC.maxSourceAudioSeconds * 48_000));
+  assert.equal((await maximumResult).pcm.length, REELS_SPEC.maxSourceAudioSeconds * 48_000);
+  const { connection, createConnection } = mock();
+  const result = generateReelsVoiceover(script, { createConnection });
+  connection.emit('session.created', {});
+  const half = Buffer.alloc(REELS_SPEC.maxSourceAudioSeconds * 24_000);
+  connection.emit('response.output_audio.delta', makeAudioEvent(half));
+  connection.emit('response.output_audio.delta', makeAudioEvent(half));
+  connection.emit('response.output_audio.delta', makeAudioEvent(Buffer.alloc(2)));
+  await assert.rejects(result, { code: 'reels_voice_unavailable' });
+  assert.equal(connection.closeCount, 1);
 });
 
 test('mengirim naskah dengan konfigurasi suara naratif dan menggabungkan audio serta transkrip', async () => {
@@ -54,6 +80,8 @@ test('mengirim naskah dengan konfigurasi suara naratif dan menggabungkan audio s
   assert.deepEqual(audio.output, { format: { type: 'audio/pcm', rate: 24000 }, voice: 'marin' });
   assert.match(String(response.instructions), /hangat|ramah/);
   assert.match(String(response.instructions), /intonasi|jeda/);
+  assert.match(String(response.instructions), /20–60 detik/);
+  assert.doesNotMatch(String(response.instructions), /25–30/);
   assert.deepEqual(response.input, [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: script }] }]);
 
   connection.emit('response.output_audio.delta', makeAudioEvent(Buffer.from([1, 0])));
@@ -81,7 +109,7 @@ test('menolak audio malformed, kosong, terlalu besar, dan respons gagal dengan e
       connection.emit('response.output_audio_transcript.delta', { delta: 'Ada transkrip.' });
       connection.emit('response.done', { response: { status: 'completed' } });
     }
-    if (scenario === 'oversized') connection.emit('response.output_audio.delta', makeAudioEvent(Buffer.alloc(45 * 48_000 + 2)));
+    if (scenario === 'oversized') connection.emit('response.output_audio.delta', makeAudioEvent(Buffer.alloc(REELS_SPEC.maxSourceAudioSeconds * 48_000 + 2)));
     if (scenario === 'failed') connection.emit('error', new Error('secret-token provider response'));
     await assert.rejects(result, (error: unknown) => {
       assert.equal((error as { status?: number }).status, 503);

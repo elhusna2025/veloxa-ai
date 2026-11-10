@@ -69,7 +69,7 @@ Aturan Wajib:
 1. Prioritaskan pemakaian foto/video dokumentasi asli user dari Laci 2 (real_asset) bila tersedia.
 2. Ikuti Style DNA dari Laci 1 (style_reference).
 3. Jika ada Event Campaign aktif (H-30 Teaser, H-14 Early Bird, H-3 Last Call, Hari-H), selaraskan pesan utama dan CTA dengan fase hitung mundur event.
-4. Untuk format short_video (9:16), susun 4 adegan dengan durasi total 24–30 detik yang cocok ditayangkan serentak ke Instagram Reels, Facebook Reels, TikTok, dan YouTube Shorts.`,
+4. Untuk format short_video (9:16), susun 4 adegan dengan durasi total 20–60 detik sesuai panjang pesan yang cocok ditayangkan serentak ke Instagram Reels, Facebook Reels, TikTok, dan YouTube Shorts.`,
     toolsEnabled: ['brand_vault_retriever', 'gpt_image_1_renderer', 'gpt_4o_mini_tts_voiceover'],
   },
   qualityGateCritic: {

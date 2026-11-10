@@ -64,6 +64,14 @@ Urutan workspace: **Beranda → Profil & aset → Content Studio → Jadwal kont
 
 Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. Pergantian bisnis tidak membuang perubahan yang belum disimpan atau menerapkan hasil AI ke bisnis lain.
 
+## Arahan visual dengan bantuan AI
+
+- AI membaca gambar aktual yang dipilih sesuai urutan Ref dan peran pengguna; nama foto bukan satu-satunya sumber.
+- Usulan menampilkan pengamatan gambar, arahan, dan keterbatasan. Teks manual tidak ditimpa sebelum pengguna menekan Gunakan arahan ini. Batal mempertahankan teks.
+- Perubahan bisnis, profil, urutan/aset/peran, format, topik, produk, tujuan, atau teks membatalkan usulan lama. Jangan menerapkan respons terlambat.
+- Selama analisis, tampilkan tahap nyata dan cegah permintaan/generasi ganda. Bantuan arahan tidak membuat draf atau menerbitkan konten.
+- Tipografi hasil konten mengacu pada [CONTENT_DESIGN_SYSTEM.md](CONTENT_DESIGN_SYSTEM.md), terpisah dari ukuran UI aplikasi.
+
 ## Pratinjau dan status proses
 
 - Post tunggal menggunakan pratinjau besar dengan rasio utuh. Carousel dapat digeser dan memiliki panah, nomor slide, serta thumbnail. Reels memiliki video/audio controls.

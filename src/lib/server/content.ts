@@ -14,7 +14,7 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { composeSocialVisual, shortVisualCta, visualWebsite } from './content-compositor';
+import { composeSocialVisual, preflightSocialVisualText, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -133,6 +133,19 @@ export async function createSocialContent(request: Request, dependencies: {
     draft.visualText=[brand.businessName,visualWebsite(brand.websiteUrl),...ctas.map(shortVisualCta)];
   }
   if(forbiddenContentMatches(draft,brand.forbiddenWords).length)throw new GenerationStageError(new ApiError(409,'Teks visual memuat kata yang dihindari dalam profil bisnis. Periksa panduan konten dan CTA sebelum membuat ulang.','content_policy_violation'),'compositing');
+  // Check the entire batch before any paid image or voice request starts. Captions and
+  // Reels narration are not printed as body text and must not be judged by feed bounds.
+  const visualPlan: Parameters<typeof generateSocialPostImage>[0][]=[];
+  if(input.format==='short_video'){
+    if(!draft.videoScenes||draft.videoScenes.length!==4)throw new ApiError(502,'Naskah Reels belum lengkap.','invalid_content_agent_response');
+    visualPlan.push(...draft.videoScenes.map((scene,index)=>({businessName:brand.businessName,title:scene.textOverlay,hook:scene.voiceover,cta:index===3?brand.defaultCta||'Simpan tips ini':`${index+1}/4`,aspectRatio:'9:16' as const,visualDirection:scene.visualDirection,...imageContextParams,...paletteParams,...referenceImageParams})));
+  }else if(input.format==='carousel'){
+    if(!draft.slides||draft.slides.length!==5)throw new ApiError(502,'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.','invalid_content_agent_response');
+    visualPlan.push(...draft.slides.map((slide,index)=>({businessName:brand.businessName,title:slide.headline,hook:slide.body,cta:index===4?brand.defaultCta||'Simpan':`${index+1}/5 · Geser untuk lanjut`,visualDirection:slide.visualDirection,...imageContextParams,...paletteParams,...referenceImageParams})));
+  }else if(!input.sourceAssetId){
+    visualPlan.push({businessName:brand.businessName,title:draft.title,hook:draft.hook,cta:brand.defaultCta||'Selengkapnya',...imageContextParams,...paletteParams,...referenceImageParams});
+  }
+  try{for(const params of visualPlan)await preflightSocialVisualText({...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
   const renderVisual:typeof generateSocialPostImage=async params=>{
     const scene=await(dependencies.renderImage||generateSocialPostImage)({...params,sceneOnly:true});
     if(stage!=='compositing')progress('compositing');
@@ -147,7 +160,7 @@ export async function createSocialContent(request: Request, dependencies: {
     const renderImage = renderVisual;
     progress('media');
     const results = await Promise.allSettled([
-      Promise.allSettled(draft.videoScenes.map((scene, index) => renderImage({ businessName: brand.businessName, title: scene.textOverlay, hook: scene.voiceover, cta: index === 3 ? brand.defaultCta || 'Simpan tips ini' : `${index + 1}/4`, aspectRatio: '9:16', visualDirection: scene.visualDirection, ...imageContextParams, ...paletteParams, ...referenceImageParams }))).then(images => { const failed=images.find(image=>image.status==='rejected');if(failed?.status==='rejected')throw failed.reason; return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
+      Promise.allSettled(visualPlan.map(params=>renderImage(params))).then(images => { const failed=images.find(image=>image.status==='rejected');if(failed?.status==='rejected')throw failed.reason; return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
       (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes.map(scene => scene.voiceover).join(' ')),
     ] as const);
     if(results[0].status==='rejected'&&results[0].reason instanceof GenerationStageError)throw results[0].reason;
@@ -169,16 +182,7 @@ export async function createSocialContent(request: Request, dependencies: {
     if (!draft.slides || draft.slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
     const renderImage = renderVisual;
     progress('images');
-    const results = await Promise.allSettled(draft.slides.map(async (slide, index) => renderImage({
-      businessName: brand.businessName,
-      title: slide.headline,
-      hook: slide.body,
-      cta: index === 4 ? brand.defaultCta || 'Simpan' : `${index + 1}/5 · Geser untuk lanjut`,
-      ...imageContextParams,
-      ...paletteParams,
-      ...referenceImageParams,
-      visualDirection: slide.visualDirection,
-    })));
+    const results = await Promise.allSettled(visualPlan.map(params=>renderImage(params)));
     const failed=results.find(result=>result.status==='rejected');
     if(failed?.status==='rejected'){if(failed.reason instanceof GenerationStageError)throw failed.reason;throw new GenerationStageError(new ApiError(502,'Gambar carousel belum dapat dibuat. Silakan coba lagi.','carousel_image_unavailable'),'images');}
     const slideBytes = results.map(result => result.status === 'fulfilled' ? result.value : Buffer.alloc(0));
@@ -202,15 +206,7 @@ export async function createSocialContent(request: Request, dependencies: {
     draft.usedRealAssetIds = [input.sourceAssetId];
     bytes = await base.jpeg({ quality: 92 }).toBuffer();
     } else {
-      bytes = await renderVisual({
-        businessName: brand.businessName,
-        title: draft.title,
-        hook: draft.hook,
-        cta: brand.defaultCta || 'Selengkapnya',
-        ...imageContextParams,
-        ...paletteParams,
-        ...referenceImageParams,
-      });
+      bytes = await renderVisual(visualPlan[0]);
     }
     progress('saving');
     media = await savePublicJpeg(workspaceId, 'renders', bytes, dependencies.storage);
