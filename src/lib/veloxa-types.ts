@@ -184,6 +184,7 @@ export interface OrganicPerformanceMetrics {
 
 export interface ContentDraft {
   referenceRoles?: import('./content-reference-roles').ContentReferenceRoles;
+  visualText?: string[];
   id: string;
   profileContext?: { fingerprint: string; snapshotRevision: number };
   workspaceId: string;

@@ -282,6 +282,20 @@ test('bad or ambiguous roles cannot consume generation quota or invoke providers
  for(const role of ['foreign','invalid','duplicate-logo','duplicate-screen']){const f=fixture();const ids=await seedReferences(f,3);const roles=role==='foreign'?{'123e4567-e89b-42d3-a456-426614174099':'logo'}:role==='invalid'?{[ids[0]]:'not-a-role'}:{[ids[0]]:role==='duplicate-logo'?'logo':'screenshot',[ids[1]]:role==='duplicate-logo'?'logo':'screenshot'};await assert.rejects(f.create({referenceAssetIds:ids,referenceRoles:roles as never}));assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);assert.equal(f.renderCalls(),0);}
 });
 
+test('legacy photo renderer records its visible brand and CTA text for generation and publishing policy',async()=>{
+ for(const mode of ['generation','publish']){const f=fixture();await seedPhoto(f);const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand.defaultCta='Termurah';snapshot.brand.forbiddenWords=mode==='generation'?['termurah']:[];record.snapshotJson=JSON.stringify(snapshot);
+  if(mode==='generation'){await assert.rejects(f.create({sourceAssetId:photoId}),(error:any)=>error.code==='content_policy_violation'&&error.stage==='compositing');assert.equal(f.renderCalls(),0);assert.equal([...f.blobs.keys()].filter(key=>key.includes('/renders/')).length,0);}
+  else{const{draft}=await f.create({sourceAssetId:photoId});assert.ok(draft.visualText?.includes('Termurah'));snapshot.brand.forbiddenWords=['termurah'];record.snapshotJson=JSON.stringify(snapshot);let calls=0;await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async()=>{calls++;return{externalPostId:'should-not-send'};}}),(error:any)=>error.code==='content_policy_violation');assert.equal(calls,0);assert.equal(f.count(),0);}
+ }
+});
+
+test('derived CTA text obeys generation and current publishing policies before image calls or delivery',async()=>{
+ for(const mode of ['generation','publish']){const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand.defaultCta='Hubungi tim untuk informasi lebih lengkap mengenai sistem bisnis kami';snapshot.brand.forbiddenWords=mode==='generation'?['pelajari']:[];record.snapshotJson=JSON.stringify(snapshot);
+  if(mode==='generation'){await assert.rejects(f.create(),(error:any)=>error.code==='content_policy_violation'&&error.stage==='compositing');assert.equal(f.renderCalls(),0);}
+  else{const{draft}=await f.create();assert.ok(draft.visualText?.includes('Pelajari selengkapnya'));snapshot.brand.forbiddenWords=['pelajari'];record.snapshotJson=JSON.stringify(snapshot);let calls=0;await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher:async()=>{calls++;return{externalPostId:'should-not-send'};}}),(error:any)=>error.code==='content_policy_violation');assert.equal(calls,0);assert.equal(f.count(),0);}
+ }
+});
+
 test('reference loading uses a bounded Storage range and rejects oversize before buffering full objects',async()=>{
  const f=fixture();const ids=await seedReferences(f,1);const seen:any[]=[];const length=5*1024*1024;
  const storage={file:()=>({download:async(options:{start:number;end:number})=>{seen.push(options);return[Buffer.alloc(Math.min(length,options.end-options.start+1))];}})};

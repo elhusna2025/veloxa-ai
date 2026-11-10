@@ -11,7 +11,8 @@ import { GenerationStageError } from './content-generation-stream';
 import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
-import { composeSocialVisual } from './content-compositor';
+import { forbiddenContentMatches } from '../content-policy';
+import { composeSocialVisual, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -109,6 +110,13 @@ export async function createSocialContent(request: Request, dependencies: {
   draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
   if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }
   draft.publishTargets = selected.docs.map(doc => doc.data() as MetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => ({ channel: connection.channel, accountId: connection.accountId, accountName: connection.accountName, handle: connection.handle }));
+  if(input.sourceAssetId){
+    draft.visualText=[brand.businessName,brand.businessName.slice(0,2).toUpperCase(),brand.city,brand.defaultCta.slice(0,48),draft.slides?.[0]?.badgeText||'CAROUSEL · FEED 4:5'];
+  }else{
+    const ctas=input.format==='carousel'?Array.from({length:5},(_,index)=>index===4?brand.defaultCta||'Simpan':`${index+1}/5 · Geser untuk lanjut`):input.format==='short_video'?Array.from({length:4},(_,index)=>index===3?brand.defaultCta||'Simpan tips ini':`${index+1}/4`):[brand.defaultCta||'Selengkapnya'];
+    draft.visualText=[brand.businessName,visualWebsite(brand.websiteUrl),...ctas.map(shortVisualCta)];
+  }
+  if(forbiddenContentMatches(draft,brand.forbiddenWords).length)throw new GenerationStageError(new ApiError(409,'Teks visual memuat kata yang dihindari dalam profil bisnis. Periksa panduan konten dan CTA sebelum membuat ulang.','content_policy_violation'),'compositing');
   const renderVisual:typeof generateSocialPostImage=async params=>{
     const scene=await(dependencies.renderImage||generateSocialPostImage)({...params,sceneOnly:true});
     if(stage!=='compositing')progress('compositing');

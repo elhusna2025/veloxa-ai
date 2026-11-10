@@ -5,6 +5,15 @@ import { composeSocialVisual, compositionLayout, shortVisualCta, visualWebsite }
 import { resolveReferenceRoles } from '../content-reference-roles';
 const params={businessName:'Berez ERP',title:'Penjualan & Stok Lebih Terpantau',hook:'Kelola transaksi dan persediaan dalam satu sistem.',cta:'Kenali Berez ERP',websiteUrl:'https://berez.dafinicode.com/',brandPalette:['#0061AD','#FFFFFF']};
 async function pixelSource(width:number,height:number){const data=Buffer.alloc(width*height*3);for(let i=0;i<data.length;i++)data[i]=(i*29+47)%256;return sharp(data,{raw:{width,height,channels:3}}).png().toBuffer();}
+
+test('bundled font renders readable Latin copy without any installed system fonts',async()=>{
+ const{mkdtemp,writeFile,rm,mkdir}=await import('node:fs/promises');const{tmpdir}=await import('node:os');const path=await import('node:path');const{execFile}=await import('node:child_process');const{promisify}=await import('node:util');const dir=await mkdtemp(path.join(tmpdir(),'veloxa-isolated-font-'));
+ try{await mkdir(path.join(dir,'empty'));const config=path.join(dir,'fonts.conf');await writeFile(config,`<?xml version="1.0"?><fontconfig><dir>${dir}/empty</dir><cachedir>${dir}/cache</cachedir></fontconfig>`);
+  const script=`import sharp from 'sharp';import assert from 'node:assert/strict';import{composeSocialVisual,compositionLayout}from './src/lib/server/content-compositor.ts';const scene=await sharp({create:{width:1080,height:1350,channels:3,background:'#bacbd7'}}).jpeg().toBuffer();const output=await composeSocialVisual(scene,${JSON.stringify(params)});const box=compositionLayout(false,false).title;const rendered=await sharp(output).extract(box).trim({background:'#FFFFFF'}).png().toBuffer({resolveWithObject:true});assert.ok(rendered.info.width>600,'Latin headline must not degrade into narrow missing-glyph boxes');assert.ok(rendered.info.height>55,'Latin headline must retain its intended font size');`;
+  await promisify(execFile)(process.execPath,['--import','tsx','--input-type=module','-e',script],{cwd:process.cwd(),env:{...process.env,FONTCONFIG_FILE:config,FONTCONFIG_PATH:dir},timeout:30000});
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('explicit roles reject foreign keys, invalid roles and duplicate protected materials; never infer names',()=>{
  assert.deepEqual(resolveReferenceRoles(['a','b']),{a:'visual',b:'visual'});
  for(const roles of [{foreign:'logo'},{a:'unknown'},{a:'logo',b:'logo'},{a:'screenshot',b:'screenshot'}])assert.throws(()=>resolveReferenceRoles(['a','b'],roles as never));

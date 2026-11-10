@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
   serverExternalPackages: ['@ffmpeg-installer/ffmpeg', 'ffprobe-static', 'openai', 'ws'],
   outputFileTracingIncludes: {
-    '/api/veloxa/content': ['./node_modules/@ffmpeg-installer/ffmpeg/index.js', './node_modules/@ffmpeg-installer/ffmpeg/package.json', './node_modules/@ffmpeg-installer/ffmpeg/lib/verify-file.js', `./node_modules/@ffmpeg-installer/${process.platform}-${process.arch}/ffmpeg`, `./node_modules/@ffmpeg-installer/${process.platform}-${process.arch}/package.json`, './node_modules/ffprobe-static/index.js', './node_modules/ffprobe-static/package.json', `./node_modules/ffprobe-static/bin/${process.platform}/${process.arch}/ffprobe`],
+    '/api/veloxa/content': ['./node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf', './node_modules/@ffmpeg-installer/ffmpeg/index.js', './node_modules/@ffmpeg-installer/ffmpeg/package.json', './node_modules/@ffmpeg-installer/ffmpeg/lib/verify-file.js', `./node_modules/@ffmpeg-installer/${process.platform}-${process.arch}/ffmpeg`, `./node_modules/@ffmpeg-installer/${process.platform}-${process.arch}/package.json`, './node_modules/ffprobe-static/index.js', './node_modules/ffprobe-static/package.json', `./node_modules/ffprobe-static/bin/${process.platform}/${process.arch}/ffprobe`],
   },
   trailingSlash: true,
   images: {

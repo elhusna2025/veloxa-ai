@@ -1,4 +1,7 @@
 import sharp, { type OverlayOptions } from 'sharp';
+import path from 'node:path';
+// Next ships this licensed Latin font; trace it into the runtime instead of relying on OS fonts.
+const visualFontFile=path.join(process.cwd(),'node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf');
 import { ApiError } from './http';
 export interface OriginalVisualAsset { id: string; role: 'logo' | 'screenshot'; bytes: Buffer }
 export interface VisualCompositionParams {
@@ -9,14 +12,14 @@ export interface VisualCompositionParams {
 interface Rect { left: number; top: number; width: number; height: number }
 export function compositionLayout(vertical: boolean, screenshot: boolean) {
  const width=1080, height=vertical?1920:1350, offset=vertical?160:0;
- return {width,height,brand:{left:48,top:32+offset,width:984,height:96},title:{left:48,top:164+offset,width:984,height:154},subtitle:{left:48,top:338+offset,width:984,height:104},hero:{left:0,top:470+offset,width,height:vertical?850:694},screen:{left:48,top:vertical?1092:772,width:vertical?984:760,height:vertical?420:392},footer:{left:48,top:vertical?1574:1200,width:984,height:vertical?142:112}};
+ return {width,height,brand:{left:48,top:32+offset,width:984,height:96},title:{left:48,top:164+offset,width:984,height:154},subtitle:{left:48,top:338+offset,width:984,height:104},hero:{left:screenshot?460:0,top:470+offset,width:screenshot?620:width,height:vertical?850:694},screen:{left:48,top:vertical?1092:772,width:700,height:vertical?420:392},footer:{left:48,top:vertical?1574:1200,width:984,height:vertical?142:112}};
 }
 function escapeMarkup(value: string) { return value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;'); }
 function invalid(): never {throw new ApiError(422,'Teks atau aset visual belum dapat ditata dengan jelas. Ringkas judul atau penjelasan, lalu coba lagi.','visual_composition_invalid');}
 async function fitText(text: string, width: number, height: number, max: number, min: number, color: string, bold=false) {
  if (!text.trim()) return null;
  for(let size=max;size>=min;size-=2){
-  const rendered=await sharp({text:{text:`<span foreground="${color}">${escapeMarkup(text)}</span>`,font:`sans ${bold?'bold ':''}${size}`,width,rgba:true,wrap:'word-char',spacing:5}}).png().toBuffer({resolveWithObject:true});
+  const rendered=await sharp({text:{text:`<span foreground="${color}">${escapeMarkup(text)}</span>`,font:`Noto Sans ${bold?'bold ':''}${size}`,fontfile:visualFontFile,width,rgba:true,wrap:'word-char',spacing:5}}).png().toBuffer({resolveWithObject:true});
   if(rendered.info.height<=height&&rendered.info.width<=width)return rendered.data;
  }
  return invalid();
