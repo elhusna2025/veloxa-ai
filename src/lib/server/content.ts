@@ -3,6 +3,7 @@ import { assetBusiness, assertBusinessTargets } from '../business-context';
 import { resolveBusinessContext } from './business-contexts';
 import { buildVisualBusinessContext } from '../content-business-context';
 import { profileFingerprint } from '../profile-fingerprint';
+import { carouselPlanSchema, validateCarouselPlan } from '../carousel-plan';
 import { resolveContentSource } from '../content-source';
 import sharp from 'sharp';
 import { z } from 'zod';
@@ -63,7 +64,7 @@ export async function uploadBrandPhoto(request: Request) {
   return persistWorkspacePhoto(ref, workspaceId, user.uid, bytes, requestedTitle || file.name.replace(/\.[^.]+$/, '').slice(0, 160),undefined,context.id,kind);
 }
 
-export const contentInput = z.object({ operationId:z.string().uuid().optional(), sourceMode:z.enum(['manual','offerings']).optional(),offeringIds:z.array(z.string().min(1).max(180)).max(30).optional(),contentIntent:z.enum(['auto','education','introduction','promotion']).optional(), workspaceId: z.string(), businessId:z.string().optional(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional() });
+export const contentInput = z.object({ operationId:z.string().uuid().optional(), sourceMode:z.enum(['manual','offerings']).optional(),offeringIds:z.array(z.string().min(1).max(180)).max(30).optional(),contentIntent:z.enum(['auto','education','introduction','promotion']).optional(), workspaceId: z.string(), businessId:z.string().optional(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional(), carouselPlan: carouselPlanSchema.optional() });
 
 export async function createSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
@@ -81,6 +82,17 @@ export async function createSocialContent(request: Request, dependencies: {
   progress('validation');
   const input = contentInput.parse(await readJson(request));
   let referenceRoles;try{referenceRoles=resolveReferenceRoles(input.referenceAssetIds||[],input.referenceRoles);}catch(error){throw new ApiError(400,error instanceof Error?error.message:'Peran referensi tidak valid.');}
+  const carouselPlan = input.carouselPlan;
+  if (carouselPlan) {
+    if (input.format !== 'carousel' || dependencies.source === 'autonomous_agent' || !input.topic) {
+      throw new ApiError(400, 'Rencana slide memerlukan topik dan format carousel di Studio.');
+    }
+    try {
+      validateCarouselPlan(carouselPlan, input.referenceAssetIds || [], referenceRoles);
+    } catch (error) {
+      throw new ApiError(400, (error as Error).message);
+    }
+  }
   if (input.sourceAssetId && input.referenceAssetIds?.length) throw new ApiError(400, 'Pilih salah satu jenis sumber visual.');
   if (input.format !== 'single_post' && input.sourceAssetId) throw new ApiError(400, 'Foto Brand Vault belum didukung untuk carousel dan Reels.');
   const { ref, workspaceId, workspace, user } = await (dependencies.authorize || requireWorkspace)(request, input.workspaceId);
@@ -124,13 +136,21 @@ export async function createSocialContent(request: Request, dependencies: {
   // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
-  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
+  const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), ...(carouselPlan ? { carouselPlan } : {}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
+  if (carouselPlan) {
+    draft.slides = carouselPlan.map(({headline, body, visualDirection}, index) => ({
+      headline, body, visualDirection, slideNumber: index + 1, badgeText: `${index + 1}/5`,
+    }));
+  }
   draft.referenceRoles=referenceRoles;
   if(source.metadata)draft.contentSource=source.metadata;
   if(input.businessId!==undefined||contexts.length>1||context.revision>0)draft.businessId=context.id;
   draft.profileContext={fingerprint,snapshotRevision:typeof workspace.snapshotRevision==='number'?workspace.snapshotRevision:0};
-  if (references.length) { draft.usedRealAssetIds = references.map(item => item.id); draft.referenceInstruction = input.referenceInstruction || topic; }
+  if (references.length) {
+    draft.usedRealAssetIds = references.filter(item => !carouselPlan || referenceRoles[item.id] !== 'visual' || carouselPlan.some(slide => slide.assetIds.includes(item.id))).map(item => item.id);
+  }
+  if (references.length || carouselPlan || (editorialCarousel && input.referenceInstruction)) draft.referenceInstruction = input.referenceInstruction || topic;
   const targetBindings=selectedAccounts.map(toAccountTarget);
   draft.publishTargets=targetBindings;
   draft.targetChannels=[...new Set(targetBindings.map(target=>target.channel))];
@@ -158,14 +178,23 @@ export async function createSocialContent(request: Request, dependencies: {
     }
     const refNumbers = (direction: string) => new Set(Array.from(direction.matchAll(/\bref\s*(\d+)\b/gi), match => Number(match[1])));
     visualPlan.push(...slides.map((slide, index) => {
-      const slideBrief = slideBriefs.get(index + 1) || '';
-      const requested = refNumbers(slideBrief);
-      const mentioned = requested.size ? requested : refNumbers(slide.visualDirection);
-      const matching = screenshotReferences.filter(item => mentioned.has(references.indexOf(item) + 1));
-      const screens = mentioned.size || !screenshotReferences.length
-        ? matching
-        : [screenshotReferences[index % screenshotReferences.length]];
-      const attached = visualReferences.filter(item => item.category !== 'screenshot' || screens.includes(item));
+      const plannedSlide = carouselPlan?.[index];
+      let slideBrief = slideBriefs.get(index + 1) || '';
+      let attached: typeof visualReferences;
+      let screens: typeof screenshotReferences;
+      if (plannedSlide) {
+        attached = visualReferences.filter(item => plannedSlide.assetIds.includes(item.id));
+        screens = attached.filter(item => item.category === 'screenshot');
+        slideBrief = attached.length ? `Gunakan acuan visual pada slide ini: ${attached.map(labelReference).join('; ')}.` : '';
+      } else {
+        const requested = refNumbers(slideBrief);
+        const mentioned = requested.size ? requested : refNumbers(slide.visualDirection);
+        const matching = screenshotReferences.filter(item => mentioned.has(references.indexOf(item) + 1));
+        screens = mentioned.size || !screenshotReferences.length
+          ? matching
+          : [screenshotReferences[index % screenshotReferences.length]];
+        attached = visualReferences.filter(item => item.category !== 'screenshot' || screens.includes(item));
+      }
       const finalSlide = index === slides.length - 1;
       const cta = finalSlide ? brand.defaultCta || 'Simpan' : '';
       return {
@@ -180,7 +209,7 @@ export async function createSocialContent(request: Request, dependencies: {
         visualDirection: slide.visualDirection,
         ...imageContextParams,
         ...paletteParams,
-        ...(references.length ? {
+        ...(references.length || carouselPlan || (editorialCarousel && input.referenceInstruction) ? {
           referenceInstruction: brief,
           ...(slideBrief ? {slideReferenceDirection: slideBrief} : {}),
           ...(attached.length ? {referenceImages: attached.map(item => item.bytes),sceneReferenceLabels: attached.map(labelReference)} : {}),

@@ -99,11 +99,12 @@ function fixture() {
     source?: 'autonomous_agent';
     referenceAssetIds?: string[];
     referenceInstruction?: string;
+    carouselPlan?: import('../carousel-plan').CarouselPlan;
     referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: SocialPostImageParams) => Promise<Buffer>;
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction, carouselPlan: options.carouselPlan }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source:options.source,
     generate: async input => {
       generateCalls++;
@@ -147,6 +148,36 @@ test('blend rewrites an unfinished AI suggestion once before returning the compl
  assert.equal(f.generationCount(), 0);
  assert.equal(f.database.values.has(`${f.ref.path}/reference_blend_jobs/primary`), false);
 });
+const reviewedSlides = Array.from({ length: 5 }, (_, index) => ({
+ headline: `Judul pilihan ${index + 1}`, body: 'Satu pesan yang sudah ditinjau.', visualDirection: `Adegan pilihan ${index + 1}`,
+}));
+
+test('carousel planning works with actual reference images or no references, without draft or quota writes', async () => {
+ const {analyzeReferenceBlend} = await import('./reference-blend');
+ for (const withReferences of [false, true]) {
+  const f = await blendFixture();
+  const input = withReferences ? {} : {referenceAssetIds: [], referenceRoles: {}};
+  const before = structuredClone([...f.database.values]);
+  const proposal = await analyzeReferenceBlend(f.blendRequest(input), {
+   authorize: f.authorize as never,
+   storage: f.dependencies.storage,
+   suggest: async (brief, options) => {
+    assert.equal(options.carouselPlan, true);
+    assert.equal(brief.references.length, Number(withReferences));
+    if (withReferences) assert.deepEqual(brief.references[0].bytes, f.blobs.get(f.photo.storagePath));
+    return {
+     topic: 'Topik usulan', visualDirection: 'Suasana kafe terang',
+     slides: reviewedSlides.map((slide, index) => ({...slide, refNumbers: withReferences && index === 2 ? [1] : []})),
+    };
+   },
+  }, true);
+  assert.deepEqual(proposal.slides.map(slide => slide.assetIds), [[], [], withReferences ? [photoId] : [], [], []]);
+  assert.equal(proposal.topic, 'Topik usulan');
+  assert.deepEqual([...f.database.values], before);
+  assert.equal(f.generationCount(), 0);
+ }
+});
+
 test('blend rejects stale/foreign/trashed/duplicate/missing or unassigned refs before AI',async()=>{const{analyzeReferenceBlend}=await import('./reference-blend');for(const invalid of['profile','business','trash','duplicate','missing','roles','workspace','offering']as const){const f=await blendFixture();let calls=0;const extra:any={};if(invalid==='profile')extra.expectedProfileFingerprint='0'.repeat(64);if(invalid==='business')f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.asset.businessId='b_foreign';if(invalid==='trash')f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.trashedAt=1;if(invalid==='duplicate')extra.referenceAssetIds=[photoId,photoId];if(invalid==='missing')f.database.values.delete(`${f.ref.path}/server_assets/${photoId}`);if(invalid==='roles')extra.referenceRoles={};if(invalid==='workspace')extra.workspaceId='foreign-workspace';if(invalid==='offering'){extra.sourceMode='offerings';extra.offeringIds=['foreign'];}await assert.rejects(analyzeReferenceBlend(f.blendRequest(extra),{authorize:f.authorize as never,storage:f.dependencies.storage,suggest:async()=>{calls++;return blendAnswer;}}));assert.equal(calls,0);assert.equal([...f.database.values.keys()].some(k=>k.includes('/reference_blend_jobs/')),false);}});
 test('blend discards response after profile/metadata/storage/membership changes and releases lease',async()=>{const{analyzeReferenceBlend}=await import('./reference-blend');for(const mutation of['profile','metadata','storage','membership','trash','malformed']as const){const f=await blendFixture();await assert.rejects(analyzeReferenceBlend(f.blendRequest(),{authorize:f.authorize as never,storage:f.dependencies.storage,suggest:async()=>{const record=f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!;if(mutation==='metadata')record.asset.metadataRevision=1;if(mutation==='storage')record.storagePath=record.storagePath.replace(photoId,'123e4567-e89b-42d3-a456-426614174001');if(mutation==='trash')record.trashedAt=1;if(mutation==='membership')f.database.values.get(f.ref.path)!.ownerUid='another-owner';if(mutation==='profile'){const ws=f.database.values.get(f.ref.path)!;const snap=JSON.parse(ws.snapshotJson);snap.brand.businessName='Changed';ws.snapshotJson=JSON.stringify(snap);}return mutation==='malformed'?{...blendAnswer,instruction:'Does not cover any Ref'}:blendAnswer;}}));assert.equal(f.database.values.has(`${f.ref.path}/reference_blend_jobs/primary`),false);assert.equal(f.generationCount(),0);assert.equal(f.count(),0);}});
 test('blend prevents concurrent analysis for same business and cleans provider failures',async()=>{const{analyzeReferenceBlend}=await import('./reference-blend');const f=await blendFixture();let calls=0,release!:()=>void;const gate=new Promise<void>(r=>release=r);const deps={authorize:f.authorize as never,storage:f.dependencies.storage,suggest:async()=>{calls++;await gate;return blendAnswer;}};const first=analyzeReferenceBlend(f.blendRequest(),deps);while(!calls)await new Promise(r=>setImmediate(r));await assert.rejects(analyzeReferenceBlend(f.blendRequest(),deps),/masih berjalan/);release();await first;assert.equal(calls,1);await assert.rejects(analyzeReferenceBlend(f.blendRequest(),{...deps,suggest:async()=>{throw new Error('provider failed');}}));assert.equal(f.database.values.has(`${f.ref.path}/reference_blend_jobs/primary`),false);});
@@ -420,6 +451,49 @@ test('carousel routes actual screenshot bytes per slide, keeps shared photos and
   assert.equal(seen[2].screenshotReferenceLabels, undefined);
   assert.equal(seen[0].slideReferenceDirection,'Pakai Ref 3.');
   assert.deepEqual(draft.usedRealAssetIds, ids);
+});
+
+test('reviewed carousel plan drives final copy and actual image attachments for each slide', async () => {
+ const f = fixture();
+ const ids = await seedReferences(f, 3);
+ f.database.values.get(`${f.ref.path}/server_assets/${ids[1]}`)!.asset.category = 'screenshot';
+ const referenceRoles = {[ids[0]]:'visual', [ids[1]]:'visual', [ids[2]]:'logo'} as const;
+ const carouselPlan = reviewedSlides.map((slide, index) => ({
+  ...slide, assetIds: index === 0 ? [ids[1]] : index === 1 ? [ids[0]] : [],
+ }));
+ const invalidPlan = carouselPlan.map(slide => ({...slide, assetIds: [ids[2]]}));
+ await assert.rejects(f.create({format:'carousel', carouselPlan:invalidPlan, referenceAssetIds:ids, referenceRoles}), /slide 1/);
+ assert.equal(f.generationCount(), 0);
+ const seen: SocialPostImageParams[] = [];
+ const topic = 'Fokus yang dipilih pengguna';
+ const {draft} = await f.create({
+  format: 'carousel', topic, carouselPlan, referenceAssetIds: ids, referenceRoles,
+  referenceInstruction: 'Gunakan pencahayaan alami.',
+  generate: async input => {
+   assert.equal(input.customTopic, topic);
+   assert.deepEqual(input.carouselPlan, carouselPlan);
+   return {draft:shortVisualDraft(input), engineMode:'deterministic_local'};
+  },
+  renderImage: async input => {
+   seen.push(input);
+   return sharp({create:{width:1080,height:1350,channels:3,background:'#fff'}}).jpeg().toBuffer();
+  },
+ });
+ assert.deepEqual(draft.slides?.map(({headline,body,visualDirection})=>({headline,body,visualDirection})), reviewedSlides);
+ assert.equal(seen.length, 5);
+ for (const [index, input] of seen.entries()) {
+  assert.equal(input.sceneOnly, false);
+  assert.equal(input.hasOriginalLogo, true);
+  assert.equal(input.title, reviewedSlides[index].headline);
+  assert.equal(input.hook, reviewedSlides[index].body);
+  assert.equal(input.visualDirection, reviewedSlides[index].visualDirection);
+  assert.equal(input.referenceInstruction, 'Gunakan pencahayaan alami.');
+  const expected = carouselPlan[index].assetIds.map(id=>f.blobs.get(`workspaces/${f.ref.id}/vault/${id}.jpg`));
+  assert.deepEqual(input.referenceImages ?? [], expected);
+ }
+ assert.match(seen[0].slideReferenceDirection ?? '', /Ref 2/);
+ assert.equal(seen[2].slideReferenceDirection, undefined);
+ assert.equal(f.count(), 0);
 });
 
 test('protected originals stay out of AI scene requests and are composited into every post/carousel',async()=>{

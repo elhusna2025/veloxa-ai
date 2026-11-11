@@ -70,6 +70,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Usulan menampilkan pengamatan gambar, arahan, dan keterbatasan. Teks manual tidak ditimpa sebelum pengguna menekan Gunakan arahan ini. Batal mempertahankan teks.
 - Perubahan bisnis, profil, urutan/aset/peran, format, topik, produk, tujuan, atau teks membatalkan usulan lama. Jangan menerapkan respons terlambat.
 - Selama analisis, tampilkan tahap nyata dan cegah permintaan/generasi ganda. Bantuan arahan tidak membuat draf atau menerbitkan konten.
+- Di Studio untuk carousel, tempatkan topik dan arahan visual opsional setelah referensi. Tawarkan satu usulan AI berisi topik, arahan bersama, dan lima slide berurutan. Pengguna menerapkan usulan sebelum mengedit judul, isi, adegan, dan acuan setiap slide. Aset asli bersama tetap terlihat terpisah dari acuan per slide.
 - Tipografi hasil konten mengacu pada [CONTENT_DESIGN_SYSTEM.md](CONTENT_DESIGN_SYSTEM.md), terpisah dari ukuran UI aplikasi.
 
 ## Pratinjau dan status proses
