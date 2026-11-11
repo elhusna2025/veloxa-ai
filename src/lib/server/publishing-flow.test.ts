@@ -96,6 +96,7 @@ function fixture() {
     selectedConnectionIds?:string[];
     businessId?:string;
     sourceAssetId?: string;
+    source?: 'autonomous_agent';
     referenceAssetIds?: string[];
     referenceInstruction?: string;
     referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
@@ -103,7 +104,7 @@ function fixture() {
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: SocialPostImageParams) => Promise<Buffer>;
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
-    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
+    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source:options.source,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -425,7 +426,7 @@ test('protected originals stay out of AI scene requests and are composited into 
  for(const format of ['single_post','carousel'] as const){
   const f=fixture();const ids=await seedReferences(f,3);let calls=0;
   const roles={[ids[0]]:'visual',[ids[1]]:'screenshot',[ids[2]]:'logo'} as const;
-  const {draft}=await f.create({format,referenceAssetIds:ids,referenceRoles:roles,renderImage:async(input:any)=>{calls++;assert.equal(input.sceneOnly,true);assert.deepEqual(input.referenceImages,[f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[0]}.jpg`)]);assert.deepEqual(input.sceneReferenceLabels,['Ref 1: Reference 1']);return sharp({create:{width:1080,height:1350,channels:3,background:'#102030'}}).jpeg().toBuffer();}});
+  const {draft}=await f.create({format,referenceAssetIds:ids,referenceRoles:roles,renderImage:async(input:any)=>{calls++;assert.equal(input.sceneOnly,format==='single_post');if(format==='carousel')assert.equal(input.hasOriginalLogo,true);assert.deepEqual(input.referenceImages,[f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[0]}.jpg`)]);assert.deepEqual(input.sceneReferenceLabels,['Ref 1: Reference 1']);return sharp({create:{width:1080,height:1350,channels:3,background:'#102030'}}).jpeg().toBuffer();}});
   assert.deepEqual(draft.referenceRoles,roles);assert.equal(calls,format==='carousel'?5:1);assert.deepEqual(draft.usedRealAssetIds,ids);
   const record=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;const paths=record.storagePaths||[record.storagePath];for(const path of paths){const meta=await sharp(f.blobs.get(path)!).metadata();assert.equal(meta.width,1080);assert.equal(meta.height,1350);}
  }
@@ -500,12 +501,13 @@ test('carousel generation renders and stores five ordered slides while consuming
   const snapshot = JSON.parse(workspace.snapshotJson);
   snapshot.brand.defaultCta = '';
   f.database.write(f.ref, { snapshotJson: JSON.stringify(snapshot) });
-  const rendered: { title: string; hook: string; cta: string }[] = [];
+  const rendered: SocialPostImageParams[] = [];
+  const providerArtwork = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#9DBC7C' } }).jpeg().toBuffer();
   const result = await f.create({
     format: 'carousel',
     renderImage: async params => {
-      rendered.push({ title: params.title, hook: params.hook, cta: params.cta });
-      return sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+      rendered.push(params);
+      return providerArtwork;
     },
   });
   const record = f.database.values.get(`${f.ref.path}/social_drafts/${result.draft.id}`)!;
@@ -513,6 +515,10 @@ test('carousel generation renders and stores five ordered slides while consuming
   assert.deepEqual(rendered.map(item => item.title), Array.from({ length: 5 }, (_, index) => `Headline ${index + 1}`));
   assert.deepEqual(rendered.map(item => item.hook), Array.from({ length: 5 }, (_, index) => `Body ${index + 1}`));
   assert.deepEqual(rendered.slice(0, 4).map(item => item.cta), ['', '', '', '']);
+  assert.ok(rendered.every(item => item.sceneOnly === false));
+  assert.ok(rendered.slice(0,4).every(item => item.website === undefined));
+  const expected = await sharp(providerArtwork).jpeg({quality:94}).toBuffer();
+  for(const path of record.storagePaths) assert.deepEqual(f.blobs.get(path),expected);
   assert.ok(result.draft.visualText?.every(text => !text.includes('Geser untuk lanjut')));
   assert.equal(rendered[4].cta, 'Simpan');
   assert.equal(result.draft.renderedSlides?.length, 5);
@@ -524,6 +530,22 @@ test('carousel generation renders and stores five ordered slides while consuming
   assert.equal('storagePath' in result.draft, false);
   assert.equal(f.generationCount(), 1);
   assert.equal(f.generateCalls(), 1);
+});
+
+test('autonomous carousel uses scene-only images and renders text before unattended publication', async () => {
+  const f = fixture();
+  const scene = await sharp({create:{width:1080,height:1350,channels:3,background:'#82A0B2'}}).jpeg().toBuffer();
+  const {draft} = await f.create({
+    format:'carousel',
+    source:'autonomous_agent',
+    renderImage:async params=>{
+      assert.equal(params.sceneOnly,true);
+      return scene;
+    },
+  });
+  const {storagePaths}=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
+  const pixel=await sharp(f.blobs.get(storagePaths[0])!).extract({left:16,top:1300,width:1,height:1}).raw().toBuffer();
+  assert.ok(pixel[0]>235 && pixel[1]>235 && pixel[2]>235);
 });
 
 test('carousel rejects a source asset before generation or quota use', async () => {

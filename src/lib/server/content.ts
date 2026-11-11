@@ -14,7 +14,7 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { composeSocialVisual, preflightSocialVisualText, shortVisualCta, visualWebsite } from './content-compositor';
+import { composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -109,6 +109,9 @@ export async function createSocialContent(request: Request, dependencies: {
   if (input.referenceAssetIds?.length) progress('references');
   const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage,context.id);
   const carousel = input.format === 'carousel';
+  // Studio lets the user review model-rendered copy. Scheduled posts can
+  // publish unattended, so their copy is always rendered by the compositor.
+  const editorialCarousel = carousel && dependencies.source !== 'autonomous_agent';
   const labelReference = (item: typeof references[number]) => `Ref ${references.indexOf(item) + 1}: ${item.title}`;
   const visualReferences = references.filter(item => referenceRoles[item.id] === 'visual');
   const screenshotReferences = visualReferences.filter(item => item.category === 'screenshot');
@@ -163,11 +166,15 @@ export async function createSocialContent(request: Request, dependencies: {
         ? matching
         : [screenshotReferences[index % screenshotReferences.length]];
       const attached = visualReferences.filter(item => item.category !== 'screenshot' || screens.includes(item));
+      const finalSlide = index === slides.length - 1;
+      const cta = finalSlide ? brand.defaultCta || 'Simpan' : '';
       return {
         businessName: brand.businessName,
         title: slide.headline,
         hook: slide.body,
-        cta: index === slides.length - 1 ? brand.defaultCta || 'Simpan' : '',
+        cta: editorialCarousel ? shortVisualCta(cta) : cta,
+        ...(editorialCarousel && finalSlide ? {website:visualWebsite(brand.websiteUrl)} : {}),
+        ...(editorialCarousel && originalAssets.some(asset=>asset.role==='logo') ? {hasOriginalLogo:true} : {}),
         carouselSlide: true,
         hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
         visualDirection: slide.visualDirection,
@@ -186,9 +193,13 @@ export async function createSocialContent(request: Request, dependencies: {
   }
   try{for(const params of visualPlan)await preflightSocialVisualText({...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
   const renderVisual:typeof generateSocialPostImage=async params=>{
-    const scene=await(dependencies.renderImage||generateSocialPostImage)({...params,sceneOnly:true});
+    const scene=await(dependencies.renderImage||generateSocialPostImage)({...params,sceneOnly:!editorialCarousel});
     if(stage!=='compositing')progress('compositing');
-    let composed:Buffer;try{composed=await composeSocialVisual(scene,{...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
+    let composed:Buffer;
+    try{
+     if (editorialCarousel) return await finishEditorialCarousel(scene,originalAssets);
+     composed=await composeSocialVisual(scene,{...params,websiteUrl:brand.websiteUrl,originalAssets});
+    }catch(error){throw new GenerationStageError(error,'compositing');}
     return sharp(composed).resize(params.aspectRatio==='9:16'?720:1080,params.aspectRatio==='9:16'?1280:1350).jpeg({quality:94}).toBuffer();
   };
   let media: Awaited<ReturnType<typeof savePublicJpeg>>;

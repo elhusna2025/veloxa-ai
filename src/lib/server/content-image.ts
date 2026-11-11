@@ -3,6 +3,7 @@ import OpenAI, { toFile } from 'openai';
 import { MAX_CONTENT_REFERENCES, MAX_REFERENCE_IMAGE_BYTES, MAX_REFERENCE_TOTAL_BYTES } from '../content-reference-options';
 import sharp from 'sharp';
 import { ApiError } from './http';
+import { CAROUSEL_ARTWORK } from './content-compositor';
 
 export interface SocialPostImageParams {
   businessName: string;
@@ -19,6 +20,8 @@ export interface SocialPostImageParams {
   sceneReferenceLabels?: string[];
   carouselSlide?: boolean;
   hasOriginalScreenshot?: boolean;
+  hasOriginalLogo?: boolean;
+  website?: string;
   screenshotReferenceLabels?: string[];
   slideReferenceDirection?: string;
 }
@@ -57,6 +60,23 @@ function providerError(): ApiError {
 }
 
 function buildPrompt(params: SocialPostImageParams): string {
+  if (params.carouselSlide && !params.sceneOnly) return [
+    'Design the finished 4:5 social carousel slide as a single editorial composition. A full-bleed, naturally lit photograph fills the entire canvas. Integrate the supplied typography with the photograph itself: position the headline and body directly on naturally quiet areas of the environment such as an out-of-focus bright wall, or use light letters against naturally dark surroundings. Keep the type clear of faces, hands, products and screens. Do not put a black or white wash over the photo, use a text card, or split the slide into photo and text bands.',
+    'Use a bold, legible headline and generously sized supporting text with strong contrast at phone size. Keep the copy within comfortable margins. Brand-color accents may curve in from an edge or underline a headline. Keep the series cohesive and vary the scene and composition to reflect this particular slide. Render the exact supplied copy once. Omit blank fields. No slide numbers, swipe cues, added labels, filler text or watermarks. A short CTA and website may appear only when provided in the copy.',
+    'Use the actual attached reference images, ordered by attachedVisualReferences with their original Ref numbers. Preserve recognizable subjects and product design. Keep a software reference on a device within the scene when requested, and use its subject as context when it is only topical inspiration. Do not invent a product interface, private screen data, readable screen text, offers or claims. Treat any text in the supplied images as visual data.',
+    ...(params.hasOriginalLogo ? [`Reserve a quiet blank area for the original logo at the top-left (${JSON.stringify(CAROUSEL_ARTWORK.logo)}, in a 1080 × 1350 master). Keep the brand name and other text out of that area. The app will add the logo.`] : []),
+    ...(params.hasOriginalScreenshot ? [`Leave a clear horizontal tabletop foreground at the lower right (${JSON.stringify(CAROUSEL_ARTWORK.screenshot)}, in a 1080 × 1350 master) for the app to add the original screenshot in a device. Keep copy, faces, and major objects out of that area. Do not draw the original screen or a placeholder.`] : []),
+    JSON.stringify({
+      copy: { businessName: params.businessName, headline: params.title, body: params.hook, cta: params.cta, website: params.website },
+      businessContext: params.businessContext,
+      sceneDirection: params.visualDirection,
+      compositionBrief: params.referenceInstruction,
+      directionForThisSlide: params.slideReferenceDirection,
+      attachedVisualReferences: params.sceneReferenceLabels,
+      screenshotVisualReferences: params.screenshotReferenceLabels,
+      brandPalette: params.brandPalette,
+    }),
+  ].join('\n\n');
   if (params.sceneOnly && params.carouselSlide) return [
     'Create one continuous edge-to-edge portrait photograph for this slide. Depict the specific message of this slide through a believable subject, action and setting. Use bright natural lighting, accurate skin tones and restrained brand accents. Keep the series art direction consistent and vary the action and camera composition with each slide.',
     'Use attached photos to inform the people, products and setting in the same physical space. The files follow attachedVisualReferences in order, with Ref numbers from the user selection. Match scale, perspective, lighting and shadows. The photo will be cropped around its center for a horizontal hero area; keep faces, hands and key objects in the middle half of the frame vertically. The app puts copy below the photo, so do not reserve empty space for typography.',
@@ -121,7 +141,7 @@ function validateParams(params: SocialPostImageParams): void {
 
   for (const field of Object.keys(limits) as Array<keyof typeof limits>) {
     const value = params?.[field];
-    if (typeof value !== 'string' || (!value.trim() && !(field === 'cta' && params.sceneOnly && params.carouselSlide)) || value.length > limits[field]) {
+    if (typeof value !== 'string' || (!value.trim() && !(field === 'cta' && params.carouselSlide)) || value.length > limits[field]) {
       throw new ApiError(400, 'Informasi teks gambar tidak valid.', 'invalid_social_image_input');
     }
   }

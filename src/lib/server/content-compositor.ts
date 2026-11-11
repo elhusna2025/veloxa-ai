@@ -12,6 +12,32 @@ export interface VisualCompositionParams {
  originalAssets?: OriginalVisualAsset[];
 }
 interface Rect { left: number; top: number; width: number; height: number }
+export const CAROUSEL_ARTWORK = {
+ logo: {left: 64, top: 56, width: 168, height: 90},
+ screenshot: {left: 500, top: 866, width: 520, height: 224},
+} satisfies Record<OriginalVisualAsset['role'], Rect>;
+
+async function placeOriginalAsset(asset: OriginalVisualAsset, box: Rect, deviceFrame: boolean): Promise<OverlayOptions[]> {
+ const fitted = await sharp(asset.bytes,{limitInputPixels:30_000_000}).rotate().resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});
+ const left = box.left + Math.floor((box.width - fitted.info.width) / 2);
+ const top = box.top + Math.floor((box.height - fitted.info.height) / 2);
+ const image = {input:fitted.data,left,top};
+ if (!deviceFrame) return [image];
+ const width = fitted.info.width + 48;
+ const screenHeight = fitted.info.height + 24;
+ const height = screenHeight + 18;
+ const frame = Buffer.from(`<svg width="${width}" height="${height}"><rect x="12" width="${width-24}" height="${screenHeight}" rx="14" fill="#172331"/><path d="M0 ${screenHeight-2} H${width} V${screenHeight+6} Q${width-6} ${height-2} ${width-24} ${height-2} H24 Q6 ${height-2} 0 ${screenHeight+6} Z" fill="#8694A3"/></svg>`);
+ return [{input:frame,left:left-24,top:top-12}, image];
+}
+
+export async function finishEditorialCarousel(artwork: Buffer, assets: OriginalVisualAsset[]): Promise<Buffer> {
+ const image = sharp(artwork,{limitInputPixels:30_000_000}).rotate().resize(1080,1350,{fit:'cover'});
+ if (assets.length) {
+  const overlays = await Promise.all(assets.map(asset => placeOriginalAsset(asset,CAROUSEL_ARTWORK[asset.role],asset.role==='screenshot')));
+  image.composite(overlays.flat());
+ }
+ return image.jpeg({quality:94}).toBuffer();
+}
 export function compositionLayout(vertical: boolean, screenshot: boolean) {
  const width=1080, height=vertical?1920:1350;
  return {width,height,brand:{left:48,top:vertical?224:48,width:984,height:96},title:{left:48,top:vertical?360:184,width:vertical?640:680,height:vertical?340:252},subtitle:{left:48,top:470,width:680,height:228},hero:{left:0,top:0,width,height},screen:{left:48,top:vertical?1040:780,width:640,height:vertical?336:320},footer:{left:48,top:vertical?1448:1148,width:760,height:152}};
@@ -95,6 +121,7 @@ export async function composeSocialVisual(scene: Buffer, params: VisualCompositi
  const {headerBrand,headline,supporting,supportingTop,cta,site,heroHeight}=text;
  const hero=await sharp(scene,{limitInputPixels:30_000_000}).rotate().resize(layout.hero.width,heroHeight,{fit:'cover',position:params.carouselSlide?'centre':'north'}).png().toBuffer();
  layers.push({input:hero,left:0,top:0});
+ // The Studio carousel bypasses this compositor and uses finishEditorialCarousel.
  if (params.carouselSlide) {
   const accent = Buffer.from(`<svg width="96" height="7"><rect width="96" height="7" rx="3.5" fill="${primary}"/></svg>`);
   layers.push({input:accent,left:64,top:heroHeight+32});
@@ -117,17 +144,7 @@ export async function composeSocialVisual(scene: Buffer, params: VisualCompositi
  if(headline)layers.push({input:headline.data,left:layout.title.left,top:layout.title.top});
  if(supporting)layers.push({input:supporting.data,left:layout.subtitle.left,top:supportingTop});
  async function original(asset: OriginalVisualAsset, box: Rect) {
-  const fitted=await sharp(asset.bytes,{limitInputPixels:30_000_000}).rotate().resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});
-  const left = box.left + Math.floor((box.width - fitted.info.width) / 2);
-  const top = box.top + Math.floor((box.height - fitted.info.height) / 2);
-  if (params.carouselSlide && asset.role === 'screenshot') {
-   const width = fitted.info.width + 48;
-   const screenHeight = fitted.info.height + 24;
-   const height = screenHeight + 18;
-   const frame = Buffer.from(`<svg width="${width}" height="${height}"><rect x="12" width="${width-24}" height="${screenHeight}" rx="14" fill="#172331"/><path d="M0 ${screenHeight-2} H${width} V${screenHeight+6} Q${width-6} ${height-2} ${width-24} ${height-2} H24 Q6 ${height-2} 0 ${screenHeight+6} Z" fill="#8694A3"/></svg>`);
-   layers.push({ input: frame, left: left - 24, top: top - 12 });
-  }
-  layers.push({input:fitted.data,left,top});
+  layers.push(...await placeOriginalAsset(asset,box,!!params.carouselSlide&&asset.role==='screenshot'));
  }
  if(screen&&!params.carouselSlide){const frame=Buffer.from(`<svg width="${layout.screen.width+24}" height="${layout.screen.height+24}"><rect width="100%" height="100%" rx="12" fill="#FFFFFF" stroke="#D5DFE5" stroke-width="2"/></svg>`);layers.push({input:frame,left:layout.screen.left-12,top:layout.screen.top-12});}
  if(screen)await original(screen,layout.screen);

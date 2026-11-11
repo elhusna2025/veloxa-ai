@@ -31,6 +31,23 @@ test('carousel sends real screenshot pixels to the image editor and leaves the h
  assert.equal(called,true);
 });
 
+test('editorial carousel requests integrated exact copy, actual Ref bytes and no slide badges', async () => {
+ const jpeg = await createJpegFixture();
+ const edit = async (request: any) => {
+  assert.equal(request.model,'gpt-image-2.6-sunburst');
+  assert.match(request.prompt,/single editorial composition/);
+  assert.match(request.prompt,/Do not put a black or white wash/);
+  assert.match(request.prompt,/No slide numbers, swipe cues/);
+  assert.match(request.prompt,/"headline":"Catat Transaksi"/);
+  assert.match(request.prompt,/"cta":""/);
+  assert.match(request.prompt,/Ref 3: Dashboard Berez/);
+  assert.match(request.prompt,/Reserve a quiet blank area for the original logo/);
+  assert.deepEqual(Buffer.from(await request.image[0].arrayBuffer()),jpeg);
+  return {data:[{b64_json:jpeg.toString('base64')}]};
+ };
+ await generateSocialPostImage({businessName:'Berez ERP',title:'Catat Transaksi',hook:'Pantau penjualan dan pembelian.',cta:'',carouselSlide:true,hasOriginalLogo:true,referenceImages:[jpeg],sceneReferenceLabels:['Ref 3: Dashboard Berez'],screenshotReferenceLabels:['Ref 3: Dashboard Berez']},{imageClient:{images:{edit,generate:async()=>{throw Error('Image editing required');}}}});
+});
+
 const params = {
   businessName: 'Kedai Senja',
   title: 'Ruang untuk jeda',

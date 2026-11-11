@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { composeSocialVisual, compositionLayout, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
+import { CAROUSEL_ARTWORK, composeSocialVisual, finishEditorialCarousel, compositionLayout, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
 import { resolveReferenceRoles } from '../content-reference-roles';
 const params={businessName:'Berez ERP',title:'Penjualan & Stok Lebih Terpantau',hook:'Kelola transaksi dan persediaan dalam satu sistem.',cta:'Kenali Berez ERP',websiteUrl:'https://berez.dafinicode.com/',brandPalette:['#0061AD','#FFFFFF']};
 async function pixelSource(width:number,height:number){const data=Buffer.alloc(width*height*3);for(let i=0;i<data.length;i++)data[i]=(i*29+47)%256;return sharp(data,{raw:{width,height,channels:3}}).png().toBuffer();}
@@ -62,6 +62,22 @@ test('carousel keeps copy below the photograph, preserves the selected screensho
  const footerBottom=finalCopy.supportingTop+finalCopy.supporting!.height+26+finalCopy.cta.height+12+finalCopy.site.height;
  assert.ok(footerBottom<=1300);
  assert.deepEqual(await pixels(last,80,finalCopy.heroHeight+35),Buffer.from([0,97,173]));
+});
+
+test('editorial carousel overlays only the requested original assets and preserves the full composition',async()=>{
+ const artwork=await sharp({create:{width:1080,height:1350,channels:3,background:'#8AAA76'}}).png().toBuffer();
+ const logo=await sharp({create:{width:160,height:80,channels:3,background:'#005CAD'}}).png().toBuffer();
+ const screenshot=await sharp({create:{width:320,height:180,channels:3,background:'#B2E0F3'}}).png().toBuffer();
+ const output=await finishEditorialCarousel(artwork,[{id:'logo',role:'logo',bytes:logo},{id:'screen',role:'screenshot',bytes:screenshot}]);
+ const pixel=async(image:Buffer,left:number,top:number)=>sharp(image).extract({left,top,width:1,height:1}).removeAlpha().raw().toBuffer();
+ const base=await finishEditorialCarousel(artwork,[]);
+ for(const [x,y] of [[550,80],[90,550],[600,1230],[1050,1320]])assert.deepEqual(await pixel(output,x,y),await pixel(base,x,y));
+ for(const [role,input] of [['logo',logo],['screenshot',screenshot]] as const){
+  const rect=CAROUSEL_ARTWORK[role];
+  const actual=await pixel(output,rect.left+rect.width/2,rect.top+rect.height/2);
+  const expected=await pixel(input,0,0);
+  assert.ok(actual.every((value,index)=>Math.abs(value-expected[index])<=4));
+ }
 });
 
 test('protected screenshots fit proportionally with every edge preserved and text markup escaped',async()=>{
