@@ -40,13 +40,15 @@ async function run() {
       await page.getByTestId('veloxa-sales-landing-page').waitFor();
       await page.screenshot({ path: path.join(artifacts, 'landing-desktop.png') });
       await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId('veloxa-mobile-welcome').waitFor();
+      await page.locator('#veloxa-landing-title').waitFor({ state: 'hidden' });
       await page.screenshot({ path: path.join(artifacts, 'landing-mobile.png') });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
     });
     await check('a forged administrator localStorage record cannot open a workspace', async () => {
       await page.evaluate(() => localStorage.setItem('veloxa_prod_auth_session_v2', JSON.stringify({ uid: 'forged-admin', email: 'sosrospg@gmail.com', isSuperAdmin: true, role: 'admin', onboardingCompleted: true })));
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.getByTestId('veloxa-sales-landing-page').waitFor();
+      await page.getByTestId('veloxa-mobile-welcome').waitFor();
       assert.equal(await page.getByText('Super Admin Control Center', { exact: true }).isVisible(), false);
     });
     await check('wrong password remains on login and never triggers registration', async () => {
@@ -62,16 +64,33 @@ async function run() {
       assert.ok(authRequests.every(value => !value.includes('signUp')));
       await page.screenshot({ path: path.join(artifacts, 'login-error-mobile.png') });
     });
-    await check('failed registration does not silently log in an existing account', async () => {
+    await check('registration requires consent and matching passwords before contacting Firebase', async () => {
       mode = 'register'; authRequests.length = 0;
       await page.goto(`${base}/register/`, { waitUntil: 'domcontentloaded' });
       await page.locator('[data-client-ready=true]').waitFor();
       await page.getByTestId('register-name-input').fill('Browser Test');
       await page.getByTestId('register-email-input').fill('browser-test@example.test');
       await page.getByTestId('register-password-input').fill('valid-length-password');
-      await page.getByTestId('register-legal-checkbox').check();
-      await page.getByTestId('register-submit-btn').click();
-      await page.locator('main [role=alert]').waitFor();
+      const confirmation = page.getByTestId('register-confirm-password-input');
+      const consent = page.getByTestId('register-legal-checkbox');
+      const submit = page.getByTestId('register-submit-btn');
+      const google = page.getByTestId('register-google-oauth-btn');
+      const alert = page.locator('main [role=alert]');
+      await confirmation.fill('different-password');
+      assert.equal(await submit.isDisabled(), true);
+      assert.equal(await google.isDisabled(), true);
+      await consent.check();
+      assert.equal(await google.isEnabled(), true);
+      await submit.click();
+      await alert.filter({ hasText: 'Kata sandi tidak cocok' }).waitFor();
+      assert.equal(await confirmation.evaluate(input => input === document.activeElement), true);
+      assert.deepEqual(authRequests, []);
+      await confirmation.fill('valid-length-password');
+      await consent.uncheck();
+      assert.equal(await submit.isDisabled(), true);
+      await consent.check();
+      await submit.click();
+      await alert.filter({ hasText: 'Email ini sudah terdaftar' }).waitFor();
       assert.match(page.url(), /\/register\/?$/);
       assert.ok(authRequests.some(value => value.includes('signUp')));
       assert.ok(authRequests.every(value => !value.includes('signInWithPassword')));

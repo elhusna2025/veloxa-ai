@@ -1,4 +1,6 @@
 'use client';
+import { useWorkspaceCopy } from '@/lib/veloxa-workspace-copy';
+import { workspaceCatalog } from '@/lib/workspace-catalog';
 
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
@@ -35,6 +37,8 @@ interface Props {
 const inputClass = 'mt-1.5 block min-h-11 w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-base leading-relaxed';
 
 export function CarouselPlanAssistant(props: Props) {
+ const {t}=useWorkspaceCopy(workspaceCatalog);
+
   const [stage, setStage] = useState<BlendStage | null>(null);
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ proposal: CarouselPlanProposal; key: string } | null>(null);
@@ -116,57 +120,55 @@ export function CarouselPlanAssistant(props: Props) {
     props.onEdit(props.plan?.map((slide, position) => position === index ? { ...slide, ...change } : slide));
   }
 
-  return <section className="mt-5 rounded-lg border border-neutral-200 bg-neutral-50 p-4 sm:p-5" aria-label="Rencana carousel">
+  return <section className="mt-5 rounded-lg border border-neutral-200 bg-neutral-50 p-4 sm:p-5" aria-label={t("Rencana carousel")}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h3 className="text-base font-semibold">Rencana carousel</h3>
-        <p className="mt-1 text-sm text-neutral-600">AI merangkai profil bisnis, topik, dan referensi menjadi lima slide.</p>
+        <h3 className="text-base font-semibold">{t("Rencana carousel")}</h3>
+        <p className="mt-1 text-sm text-neutral-600">{t("AI merangkai profil bisnis, topik, dan referensi menjadi lima slide.")}</p>
       </div>
       <button type="button" className="veloxa-button-secondary" disabled={props.disabled || !!stage}
         aria-busy={!!stage} onClick={() => void suggest()}>
-        {stage ? <Loader2 size={17} aria-hidden="true" className="animate-spin motion-reduce:animate-none"/> : <Sparkles size={17} aria-hidden="true"/>}
-        Susun rencana dengan AI
-      </button>
+        {stage ? <Loader2 size={17} aria-hidden="true" className="animate-spin motion-reduce:animate-none"/> : <Sparkles size={17} aria-hidden="true"/>}{t("Susun rencana dengan AI")} </button>
     </div>
-    {stage && <p role="status" className="mt-3 text-sm text-neutral-700">{stage === 'analysis' ? 'Menyusun topik dan isi slide' : BLEND_STAGES[stage]}…</p>}
-    {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+    {stage && <p role="status" className="mt-3 text-sm text-neutral-700">{stage === 'analysis' ? t("Menyusun topik dan isi slide") : BLEND_STAGES[stage]}…</p>}
+    {error && <p role="alert" className="mt-3 text-sm text-red-700">{t(error)}</p>}
     {slides && <div className="mt-5 space-y-4">
       {proposal ? <div className="rounded-lg border border-neutral-200 bg-white p-4">
-        <h4 ref={reviewHeading} tabIndex={-1} className="font-semibold">Usulan AI · {proposal.topic}</h4>
+        <h4 ref={reviewHeading} tabIndex={-1} className="font-semibold">{t("Usulan AI ·")} {proposal.topic}</h4>
         <p className="mt-1 text-sm leading-relaxed text-neutral-600">{proposal.visualDirection}</p>
-      </div> : <p ref={appliedNotice} tabIndex={-1} role="status" className="text-sm text-emerald-800">Rencana diterapkan. Buka slide untuk mengedit isi atau mengganti acuan.</p>}
-      {!!sharedRefs.length && <p className="text-sm text-neutral-600">Aset asli di semua slide · {sharedRefs.map(ref => `Ref ${ref.number} · ${ref.title}`).join(', ')}</p>}
+      </div> : <p ref={appliedNotice} tabIndex={-1} role="status" className="text-sm text-emerald-800">{t("Rencana diterapkan. Buka slide untuk mengedit isi atau mengganti acuan.")}</p>}
+      {!!sharedRefs.length && <p className="text-sm text-neutral-600">{t("Aset asli di semua slide ·")} {sharedRefs.map(ref => `Ref ${ref.number} · ${ref.title}`).join(', ')}</p>}
       <ol className="grid gap-3 xl:grid-cols-2">
         {slides.map((slide, index) => {
           const assigned = visualRefs.filter(ref => slide.assetIds.includes(ref.id));
           const referenceLabels = assigned.map(ref => `Ref ${ref.number} · ${ref.title}`).join(', ');
           return <li key={index} className="min-w-0 rounded-lg border border-neutral-200 bg-white">
             {previewing ? <div className="space-y-2 p-4">
-              <p className="text-sm font-semibold text-[#a92e5d]">Slide {index + 1}</p>
+              <p className="text-sm font-semibold text-[#a92e5d]">{t("Slide")} {index + 1}</p>
               <h5 className="break-words text-base font-semibold">{slide.headline}</h5>
               <p className="break-words text-base">{slide.body}</p>
               <p className="break-words text-sm leading-relaxed text-neutral-600">{slide.visualDirection}</p>
               {referenceLabels && <p className="break-words text-sm font-medium text-[#a92e5d]">{referenceLabels}</p>}
             </div> : <details>
               <summary className="min-h-11 cursor-pointer break-words p-4 text-sm">
-                <span className="ml-1 font-semibold text-[#a92e5d]">Slide {index + 1}</span>
-                <span className="ml-2 text-base font-medium">{slide.headline || 'Judul belum diisi'}</span>
+                <span className="ml-1 font-semibold text-[#a92e5d]">{t("Slide")} {index + 1}</span>
+                <span className="ml-2 text-base font-medium">{slide.headline || t("Judul belum diisi")}</span>
                 {referenceLabels && <span className="ml-4 mt-1 block text-neutral-600">{referenceLabels}</span>}
               </summary>
               <fieldset aria-label={`Edit slide ${index + 1}`} disabled={props.disabled || !!stage}
                 className="min-w-0 space-y-3 border-t border-neutral-100 p-4">
-                <label className="block text-sm font-medium">Judul<input className={inputClass} maxLength={carouselSlideLimits.headline}
+                <label className="block text-sm font-medium">{t("Judul")}<input className={inputClass} maxLength={carouselSlideLimits.headline}
                   value={slide.headline} onChange={event => editSlide(index, { headline: event.target.value })}/></label>
-                <label className="block text-sm font-medium">Isi<textarea className={inputClass} rows={2} maxLength={carouselSlideLimits.body}
+                <label className="block text-sm font-medium">{t("Isi")}<textarea className={inputClass} rows={2} maxLength={carouselSlideLimits.body}
                   value={slide.body} onChange={event => editSlide(index, { body: event.target.value })}/></label>
-                <label className="block text-sm font-medium">Arahan adegan<textarea className={inputClass} rows={2} maxLength={carouselSlideLimits.visualDirection}
+                <label className="block text-sm font-medium">{t("Arahan adegan")}<textarea className={inputClass} rows={2} maxLength={carouselSlideLimits.visualDirection}
                   value={slide.visualDirection} onChange={event => editSlide(index, { visualDirection: event.target.value })}/></label>
                 {!!visualRefs.length && <fieldset className="min-w-0">
-                  <legend className="text-sm font-medium">Acuan visual slide ini</legend>
+                  <legend className="text-sm font-medium">{t("Acuan visual slide ini")}</legend>
                   {visualRefs.map(ref => <label key={ref.id} className="flex min-h-11 items-center gap-2 text-sm">
                     <input type="checkbox" className="h-5 w-5 shrink-0 accent-[#a92e5d]" checked={slide.assetIds.includes(ref.id)}
                       onChange={event => editSlide(index, { assetIds: event.target.checked ? [...slide.assetIds, ref.id] : slide.assetIds.filter(id => id !== ref.id) })}/>
-                    <span className="min-w-0 break-words">Ref {ref.number} · {ref.title}</span>
+                    <span className="min-w-0 break-words">{t("Ref")} {ref.number} · {ref.title}</span>
                   </label>)}
                 </fieldset>}
               </fieldset>
@@ -179,11 +181,9 @@ export function CarouselPlanAssistant(props: Props) {
           <button type="button" className="veloxa-button-primary" disabled={props.disabled} onClick={() => {
             props.onApply(proposal);
             setResult(null);
-          }}>Gunakan rencana ini</button>
-          <button type="button" className="veloxa-button-secondary" onClick={() => setResult(null)}>Tutup usulan</button>
-        </> : <button type="button" className="veloxa-button-secondary" disabled={props.disabled || !!stage} onClick={() => props.onEdit()}>
-          Lepas rencana slide
-        </button>}
+          }}>{t("Gunakan rencana ini")}</button>
+          <button type="button" className="veloxa-button-secondary" onClick={() => setResult(null)}>{t("Tutup usulan")}</button>
+        </> : <button type="button" className="veloxa-button-secondary" disabled={props.disabled || !!stage} onClick={() => props.onEdit()}>{t("Lepas rencana slide")} </button>}
       </div>
     </div>}
   </section>;

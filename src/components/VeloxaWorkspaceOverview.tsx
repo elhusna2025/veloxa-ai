@@ -1,34 +1,136 @@
 'use client';
 
 import React from 'react';
-import { ArrowRight, Check, CircleHelp, FileText, Image as ImageIcon, Layers, Link2, Play, Plus } from 'lucide-react';
-import type { VeloxaExecutiveDashboardOverviewProps } from './VeloxaExecutiveDashboardOverview';
-import type { ContentDraft, ContentFormat, SocialChannelId } from '@/lib/veloxa-types';
+import { ArrowRight, Check, CircleHelp, FileText, Image as ImageIcon, Layers, Link2, Play, Send, Sparkles, Ticket } from 'lucide-react';
+import type { BrandProfile, ChannelConnectionState, ContentDraft, ContentFormat } from '@/lib/veloxa-types';
+import { firstPostProgress } from '@/lib/first-post-guide';
+import { useWorkspaceCopy } from '@/lib/veloxa-workspace-copy';
+import { workspaceCatalog } from '@/lib/workspace-catalog';
+import { VeloxaFirstPostGuide } from './VeloxaFirstPostGuide';
 
-const channelLabels: Record<SocialChannelId,string> = { instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok', youtube_shorts: 'YouTube Shorts' };
-const draftLabels: Record<ContentDraft['status'],string> = { draft:'Draf', repairing:'Diproses', approved:'Siap ditinjau', scheduled:'Dijadwalkan', published:'Terbit', publishing:'Sedang mengirim', publish_queued:'Siap dilanjutkan', publish_failed:'Gagal terbit', partially_published:'Sebagian terbit', needs_attention:'Perlu diperiksa' };
+const channels = { instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok', youtube_shorts: 'YouTube Shorts' };
+const draftLabels: Record<ContentDraft['status'], string> = {
+  draft: 'Draf', repairing: 'Diproses', approved: 'Siap ditinjau', scheduled: 'Dijadwalkan',
+  published: 'Terbit', publishing: 'Sedang mengirim', publish_queued: 'Siap dilanjutkan',
+  publish_failed: 'Gagal terbit', partially_published: 'Sebagian terbit', needs_attention: 'Perlu diperiksa',
+};
+const needsAttention = (draft: ContentDraft) => ['publish_failed', 'partially_published', 'needs_attention'].includes(draft.status);
 const formats = [
- {id:'single_post', label:'Post tunggal', description:'Satu visual, satu pesan yang kuat.', meta:'Gambar 4:5', icon:ImageIcon},
- {id:'carousel', label:'Carousel', description:'Ceritakan ide dalam beberapa slide.', meta:'5 slide · 4:5', icon:Layers},
- {id:'short_video', label:'Reels', description:'Video singkat dengan narasi suara.', meta:'Video 9:16', icon:Play},
+  { id: 'single_post', label: 'Post tunggal', detail: 'Satu gambar', ratio: '4:5', icon: ImageIcon },
+  { id: 'carousel', label: 'Carousel', detail: 'Lima slide', ratio: '4:5', icon: Layers },
+  { id: 'short_video', label: 'Reels', detail: 'Video vertikal', ratio: '9:16', icon: Play },
 ] as const;
-export function VeloxaWorkspaceOverview(props: VeloxaExecutiveDashboardOverviewProps & {onCreateContent: (format:ContentFormat)=>void; onEditProfile:()=>void; connectionsVerified:boolean}) {
- const connected = props.connections.filter(item=>item.connected);
- const published = props.drafts.filter(item=>item.status==='published').length;
- const inProgress = props.drafts.filter(item=>item.status!=='published').length;
- const hasFailures = props.drafts.some(item=>['publish_failed','partially_published','needs_attention'].includes(item.status));
- return <div className="space-y-8" data-testid="workspace-clean-overview">
-  <section className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-medium text-[#a92e5d]">Ruang kreatif Anda</p><h2 className="mt-2 text-3xl font-semibold leading-tight tracking-tight text-neutral-950 sm:text-4xl">Mulai dari ide Anda.</h2><p className="mt-3 max-w-2xl text-base leading-relaxed text-neutral-500">Pilih format, buat konten, lalu tinjau sebelum dibagikan.</p></div></section>
-  <section aria-label="Ringkasan workspace" className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[
-   {label:'Akun terhubung',value:props.connectionsVerified?connected.length:(connected.length||'—'),note:props.connectionsVerified?'Akun yang siap digunakan':'Status tersimpan · belum diperbarui'},
-   {label:'Belum terbit',value:inProgress,note:hasFailures?'Ada publikasi yang perlu diperiksa':'Draf dan konten yang belum selesai'},
-   {label:'Konten terbit',value:published,note:'Publikasi yang berhasil'},
-   {label:'Kuota terpakai',value:`${props.postsUsedThisMonth} / ${props.currentPlan.monthlyPostQuota}`,note:'Sesuai paket saat ini'},
-  ].map(item=><article key={item.label} className="veloxa-panel p-4 sm:p-5"><p className="text-sm text-neutral-500">{item.label}</p><p className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950">{item.value}</p><p className="mt-2 hidden text-sm leading-relaxed text-neutral-500 sm:block">{item.note}</p></article>)}</section>
-  <section aria-label="Pilih format konten"><div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-neutral-950">Apa yang ingin Anda buat?</h2><span className="hidden text-sm text-neutral-500 sm:inline">Mulai dari sebuah ide</span></div><div className="grid gap-4 md:grid-cols-3">{formats.map(format=><button type="button" key={format.id} onClick={()=>props.onCreateContent(format.id)} className="group veloxa-panel p-4 text-left transition-colors hover:border-neutral-400 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#b43b69] md:p-5"><div className="flex items-center gap-4 md:block"><div className="flex shrink-0 items-start justify-between md:mb-6"><span className="grid h-11 w-11 place-items-center rounded-lg bg-[#f8edf2] text-[#a92e5d]"><format.icon size={22} strokeWidth={1.6}/></span><ArrowRight size={18} className="hidden text-neutral-400 transition-transform group-hover:translate-x-1 md:block"/></div><div><h3 className="text-lg font-semibold text-neutral-950">{format.label}</h3><p className="mt-1 text-base leading-relaxed text-neutral-500 md:mt-2">{format.description}</p><p className="mt-5 hidden text-sm text-neutral-400 md:block">{format.meta}</p></div><ArrowRight size={17} className="ml-auto shrink-0 text-neutral-400 md:hidden"/></div></button>)}</div></section>
-  <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
-   <section className="veloxa-panel overflow-hidden" aria-label="Konten terbaru"><div className="flex items-center justify-between gap-3 border-b border-neutral-100 p-5"><h2 className="text-lg font-semibold">Konten terbaru</h2><button type="button" onClick={()=>props.onNavigateTab('studio')} className="inline-flex items-center gap-1.5 text-sm font-medium text-neutral-600 hover:text-neutral-950">Buka Studio<ArrowRight size={15}/></button></div>{props.drafts.length?<ul className="divide-y divide-neutral-100">{props.drafts.slice(0,5).map(draft=><li key={draft.id}><button type="button" onClick={()=>props.onNavigateTab('studio')} className="flex w-full items-center gap-3 p-5 text-left hover:bg-neutral-50"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-neutral-100 text-neutral-500"><FileText size={20}/></span><span className="min-w-0 flex-1"><span className="block break-words text-base font-medium text-neutral-900">{draft.title}</span><span className="mt-1 block text-sm text-neutral-500">{draft.format==='short_video'?'Reels':draft.format==='carousel'?'Carousel':'Post tunggal'}</span></span><span className={`max-w-[110px] rounded-md px-2.5 py-1.5 text-xs font-medium ${draft.status==='published'?'bg-emerald-50 text-emerald-800':['publish_failed','partially_published','needs_attention'].includes(draft.status)?'bg-amber-50 text-amber-900':'bg-neutral-100 text-neutral-600'}`}>{draftLabels[draft.status]}</span></button></li>)}</ul>:<div className="px-6 py-12 text-center"><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl border border-neutral-200 text-neutral-400"><FileText size={23}/></span><h3 className="mt-4 text-lg font-medium">Belum ada konten</h3><p className="mx-auto mt-2 max-w-sm text-base leading-relaxed text-neutral-500">Mulai dengan post tunggal, carousel, atau Reels. Draf Anda akan muncul di sini.</p><button type="button" onClick={()=>props.onCreateContent('single_post')} className="veloxa-button-secondary mt-6"><Plus size={17}/>Buat draf pertama</button></div>}</section>
-   <section className="veloxa-panel p-5" aria-label="Akun sosial"><div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">Akun sosial</h2><Link2 size={18} className="text-neutral-400"/></div><p className="mt-2 text-sm leading-relaxed text-neutral-500">Pastikan akun tujuan sudah terhubung sebelum menerbitkan.</p>{connected.length?<ul className="mt-5 space-y-4">{connected.slice(0,4).map(account=><li key={account.connectionId||account.channel} className="flex items-start gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-neutral-200 text-sm font-medium">{channelLabels[account.channel].slice(0,2)}</span><div className="min-w-0 flex-1"><p className="break-words text-sm font-medium text-neutral-900">{account.channel==='facebook'?account.accountName:account.handle||account.accountName}</p><p className="mt-1 text-sm text-neutral-500">{channelLabels[account.channel]}</p></div><span aria-label={props.connectionsVerified?'Terhubung':'Status tersimpan, belum diperbarui'} className={`mt-1 ${props.connectionsVerified?'text-emerald-700':'text-amber-600'}`}>{props.connectionsVerified?<Check size={17}/>:<CircleHelp size={17}/>}</span></li>)}</ul>:<div className="mt-5 rounded-lg bg-neutral-50 p-4 text-sm leading-relaxed text-neutral-500">{props.connectionsVerified?'Belum ada akun terhubung. Instagram dapat dihubungkan tanpa Facebook Page.':'Status akun sosial belum dapat diperiksa. Muat ulang halaman untuk mencoba lagi.'}</div>}<button type="button" onClick={()=>props.onOpenOAuthConfigModal(connected[0]?.channel==='facebook'?'facebook':'instagram')} className="veloxa-button-secondary mt-6 w-full">Kelola akun sosial{connected.length>4?` (${connected.length})`:''}<ArrowRight size={16}/></button><div className="mt-6 border-t border-neutral-100 pt-5"><p className="text-sm font-medium">Profil bisnis</p><p className="mt-1 break-words text-sm text-neutral-500">{props.brand.businessName}</p><button type="button" onClick={props.onEditProfile} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-[#a92e5d]">Perbarui profil<ArrowRight size={14}/></button></div></section>
-  </div>
- </div>;
+
+interface Props {
+  brand: BrandProfile;
+  postsUsed: number;
+  quota: number;
+  connections: ChannelConnectionState[];
+  connectionsVerified: boolean;
+  drafts: ContentDraft[];
+  onStudio: () => void;
+  onCreateContent: (format: ContentFormat) => void;
+  onEditProfile: () => void;
+  onConnections: () => void;
+  firstPost?: {
+    historyReady: boolean;
+    canAssignAccount: boolean;
+    disabled: boolean;
+    onConnect: () => void;
+    onAssign: () => void;
+    onCollection: () => void;
+    onReview: (draftId: string) => void;
+  };
+}
+
+export function VeloxaWorkspaceOverview(props: Props) {
+  const { t, locale } = useWorkspaceCopy(workspaceCatalog);
+  const number = new Intl.NumberFormat(locale);
+  const connected = props.connections.filter(item => item.connected);
+  const published = props.drafts.filter(item => item.status === 'published').length;
+  const hasFailures = props.drafts.some(needsAttention);
+  const firstPost = props.firstPost;
+  const progress = props.connectionsVerified && firstPost
+    ? firstPostProgress(props.brand, connected, props.drafts, firstPost.historyReady)
+    : null;
+  const metrics = [
+    { icon: Link2, label: 'Akun terhubung', value: props.connectionsVerified || connected.length ? number.format(connected.length) : '—', note: !props.connectionsVerified ? 'Status akun belum diperbarui' : '' },
+    { icon: FileText, label: 'Belum terbit', value: number.format(props.drafts.length - published), note: hasFailures ? 'Ada publikasi yang perlu diperiksa' : '' },
+    { icon: Send, label: 'Konten terbit', value: number.format(published) },
+    { icon: Ticket, label: 'Kuota publikasi', value: `${number.format(props.postsUsed)} / ${number.format(props.quota)}` },
+  ];
+
+  return <div className="ws-overview-overview" data-testid="workspace-clean-overview">
+    {firstPost && progress && (!progress.hasAccount || (firstPost.historyReady && !progress.hasPublished)) ? (
+      <VeloxaFirstPostGuide
+        progress={progress}
+        canAssignAccount={firstPost.canAssignAccount}
+        hasDrafts={props.drafts.length > 0}
+        disabled={firstPost.disabled}
+        onConnect={firstPost.onConnect}
+        onAssign={firstPost.onAssign}
+        onProfile={props.onEditProfile}
+        onDraft={() => props.onCreateContent('single_post')}
+        onCollection={firstPost.onCollection}
+        onReview={firstPost.onReview}
+      />
+    ) : <section className="ws-overview-hero" aria-labelledby="overview-create-title">
+      <div className="ws-overview-hero-copy">
+        <p className="ws-overview-eyebrow"><Sparkles size={15} aria-hidden="true"/>{t('Mulai membuat')}</p>
+        <h2 id="overview-create-title">{t('Buat konten baru')}</h2>
+        <p className="ws-overview-lede">{t('Buat post, carousel, atau Reels untuk bisnis Anda.')}</p>
+        <button type="button" className="ws-overview-hero-button" onClick={props.onStudio}>{t('Buka Content Studio')}<ArrowRight size={16} aria-hidden="true" className="ws-overview-arrow"/></button>
+      </div>
+      <div className="ws-overview-art" aria-hidden="true">
+        <span className="ws-overview-orbit"/>
+        <span className="ws-overview-art-back"><Layers/></span>
+        <span className="ws-overview-art-front"><ImageIcon/><i/><i/></span>
+        <span className="ws-overview-art-play"><Play fill="currentColor"/></span>
+        <Sparkles className="ws-overview-art-sparkle"/>
+      </div>
+    </section>}
+
+    <section aria-labelledby="overview-formats-title">
+      <h2 id="overview-formats-title" className="ws-overview-section-title">{t('Pilih format')}</h2>
+      <div className="ws-overview-formats">{formats.map((format, index) => <button key={format.id} type="button" onClick={() => props.onCreateContent(format.id)} className="ws-overview-format" data-variation={index}>
+        <span className="ws-overview-format-icon"><format.icon size={20} strokeWidth={1.75} aria-hidden="true"/></span>
+        <span className="ws-overview-format-text"><strong>{t(format.label)}</strong><span>{t(format.detail)} · <bdi>{format.ratio}</bdi></span></span>
+        <ArrowRight size={16} aria-hidden="true" className="ws-overview-arrow"/>
+      </button>)}</div>
+    </section>
+
+    <section aria-labelledby="overview-summary-title">
+      <h2 id="overview-summary-title" className="ws-overview-section-title">{t('Ringkasan bisnis')}</h2>
+      <div className="ws-overview-metrics">{metrics.map(metric => <article key={metric.label} className="ws-overview-metric">
+        <p><metric.icon size={16} strokeWidth={1.75} aria-hidden="true"/>{t(metric.label)}</p>
+        <strong><bdi>{metric.value}</bdi></strong>
+        {metric.note && <span>{t(metric.note)}</span>}
+      </article>)}</div>
+    </section>
+
+    <div className="ws-overview-details">
+      <section className="ws-overview-card" aria-labelledby="overview-recent-title">
+        <div className="ws-overview-card-header"><h2 id="overview-recent-title">{t('Konten terbaru')}</h2><button type="button" onClick={props.onStudio} className="ws-overview-text-button">{t('Buka Studio')} <ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow"/></button></div>
+        {props.drafts.length ? <ul className="ws-overview-rows">{props.drafts.slice(0, 5).map(draft => {
+          const format = formats.find(item => item.id === draft.format) || formats[0];
+          return <li key={draft.id}><div className="ws-overview-draft-row">
+            <span className="ws-overview-row-icon"><format.icon size={18} aria-hidden="true"/></span>
+            <span className="ws-overview-row-text"><strong dir="auto">{draft.title}</strong><small>{t(format.label)}</small></span>
+            <span className="ws-overview-badge" data-state={draft.status === 'published' ? 'success' : needsAttention(draft) ? 'attention' : undefined}>{t(draftLabels[draft.status])}</span>
+          </div></li>;
+        })}</ul> : <div className="ws-overview-empty"><span className="ws-overview-row-icon"><FileText size={19} aria-hidden="true"/></span><strong>{t('Belum ada konten')}</strong><p>{t('Draf dan publikasi bisnis ini akan muncul di sini.')}</p></div>}
+      </section>
+
+      <section className="ws-overview-card" aria-labelledby="overview-social-title">
+        <div className="ws-overview-card-header"><h2 id="overview-social-title">{t('Akun sosial')}</h2><Link2 size={18} className="ws-overview-subtle-icon" aria-hidden="true"/></div>
+        {connected.length ? <ul className="ws-overview-rows">{connected.slice(0, 4).map(account => <li key={account.connectionId || account.channel} className="ws-overview-draft-row">
+          <span className="ws-overview-row-icon" aria-hidden="true">{channels[account.channel].slice(0, 2)}</span>
+          <span className="ws-overview-row-text"><strong dir="auto">{account.channel === 'facebook' ? account.accountName : account.handle || account.accountName}</strong><small>{channels[account.channel]}</small></span>
+          <span className={props.connectionsVerified ? 'ws-overview-success' : 'ws-overview-attention'} role="img" aria-label={t(props.connectionsVerified ? 'Terhubung' : 'Status tersimpan, belum diperbarui')}>{props.connectionsVerified ? <Check size={17}/> : <CircleHelp size={17}/>}</span>
+        </li>)}</ul> : <p className="ws-overview-social-empty">{t(props.connectionsVerified ? 'Belum ada akun terhubung.' : 'Status akun sosial belum dapat diperiksa.')}</p>}
+        <div className="ws-overview-card-actions"><button type="button" className="ws-overview-text-button" onClick={props.onConnections}>{t('Kelola akun sosial')}{connected.length > 4 && <> ({number.format(connected.length)})</>}<ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow"/></button></div>
+        <div className="ws-overview-profile-row"><div><strong>{t('Profil bisnis')}</strong><p dir="auto">{props.brand.businessName}</p></div><button type="button" onClick={props.onEditProfile} className="ws-overview-text-button">{t('Perbarui profil')} <ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow"/></button></div>
+      </section>
+    </div>
+  </div>;
 }

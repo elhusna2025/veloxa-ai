@@ -1,0 +1,49 @@
+.frame {
+  --ws-ink: #241421;
+  --ws-muted: #65505f;
+  --ws-action: #682943;
+  --ws-rose: #f2afc8;
+  --ws-soft: #faeff4;
+  --ws-paper: #fff7ee;
+  --ws-border: #ebdfe6;
+  --ws-surface: #faf8fa;
+  background: var(--ws-surface);
+  color: var(--ws-ink);
+}
+.frame :where(button, a, input, textarea):focus-visible { outline: 2px solid var(--ws-action); outline-offset: 3px; }
+.frame :global(.veloxa-button-primary) { background: var(--ws-action); border-color: var(--ws-action); }
+.frame :global(.veloxa-button-primary):hover:not(:disabled) { background: #502035; border-color: #502035; }
+.frame :global(.veloxa-button-secondary) { border-color: var(--ws-border); color: var(--ws-action); }
+.frame :global(.veloxa-button-secondary):hover:not(:disabled) { background: var(--ws-soft); border-color: #dfbdcd; }
+.frame :global(.veloxa-panel) { border-color: var(--ws-border); }
+.sidebar { inset-inline-start: 0; border-inline-end: 1px solid var(--ws-border); overflow-y: auto; }
+.logo { background: var(--ws-action); color: white; }
+.navItem { color: var(--ws-muted); text-align: start; }
+.navItem:hover { background: var(--ws-surface); color: var(--ws-ink); }
+.navItem[aria-current='page'] { background: var(--ws-soft); color: var(--ws-action); }
+.header { border-bottom: 1px solid var(--ws-border); padding-block: 12px; }
+.headerTitle { font-size: 21px; font-weight: 700; line-height: 1.2; letter-spacing: -.025em; }
+.iconButton { border: 1px solid var(--ws-border); color: var(--ws-action); }
+.iconButton:hover { background: var(--ws-soft); }
+.language { flex-shrink: 0; }
+.language button { border-color: var(--ws-border); color: var(--ws-action); font-size: 14px; padding-inline: 8px; }
+.mobileNav { border-color: var(--ws-border); background: #fffffff7; box-shadow: 0 -3px 16px #3011250a; }
+.mobileNav button { min-height: 48px; color: var(--ws-muted); }
+.mobileNav button[aria-current='page'] { background: var(--ws-soft); color: var(--ws-action); }
+.mobileNav button span { max-inline-size: 100%; }
+.sectionIntro { position: relative; overflow: hidden; background: linear-gradient(105deg, white 45%, var(--ws-soft)); }
+.sectionIntro :where(h2,h3) { color: var(--ws-ink); }
+.switcher { border-color: var(--ws-border); box-shadow: 0 2px 6px #30112506; }
+.switcherMark { background: var(--ws-soft); color: var(--ws-action); }
+.plan { border-color: var(--ws-border); background: var(--ws-surface); }
+@media (min-width: 640px) {
+  .header { padding-block: 18px; }
+  .headerTitle { font-size: 26px; }
+}
+@media (min-width: 1024px) {
+  .main { padding-inline-start: 15rem; }
+}
+.frame :global(.veloxa-workspace) :where(p, h1, h2, h3, h4, legend, label) { overflow-wrap: anywhere; }
+.sectionIntro:dir(rtl) { background: linear-gradient(255deg, white 45%, var(--ws-soft)); }
+.sectionIntro :where(h2,h3) { text-wrap: balance; }
+.sidebar :where(p, nav) { flex-shrink: 0; }

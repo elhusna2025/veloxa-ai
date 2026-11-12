@@ -1,0 +1,87 @@
+.document, .recovery {
+  width: 100%;
+  margin-inline: auto;
+  padding: clamp(32px, 7svh, 72px) max(24px, env(safe-area-inset-right, 0px))
+    48px max(24px, env(safe-area-inset-left, 0px));
+}
+
+.document { max-width: 920px; }
+.recovery { max-width: 488px; }
+.onboarding { width: min(100%, 568px); margin-inline: auto; }
+
+.documentNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+  margin-block: 18px 6px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.documentNav a, .footer a, .back {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  color: var(--plum);
+  font-weight: 650;
+}
+
+.documentNav a[aria-current='page'] { border-bottom: 2px solid var(--plum); }
+.documentNav a:hover, .footer a:hover, .back:hover { text-decoration: underline; text-underline-offset: 4px; }
+
+.sections > section {
+  display: grid;
+  gap: 12px;
+  padding-block: 24px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sections h2, .contact h2, .recoverySuccess h2 {
+  font-size: clamp(1.25rem, 4vw, 1.5rem);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -.02em;
+}
+
+.sections p, .sections li, .contact p, .recoverySuccess p {
+  color: var(--muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.sections ul { display: grid; gap: 8px; padding-inline-start: 21px; list-style: disc; }
+.sections li::marker { color: var(--plum); }
+
+.contact, .recoverySuccess {
+  display: grid;
+  gap: 10px;
+  margin-block-start: 28px;
+  padding: 20px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+}
+
+.contact .action { width: fit-content; max-width: 100%; margin-block-start: 5px; overflow-wrap: anywhere; }
+.recovery form { margin-block-start: 24px; }
+.recovery .back { margin-block-start: 12px; }
+.recoverySuccess { margin-block-end: 12px; }
+.recoverySuccess > svg { color: var(--plum); }
+
+.footer {
+  width: 100%;
+  margin-block-start: auto;
+  padding: 12px max(24px, env(safe-area-inset-right, 0px))
+    calc(12px + env(safe-area-inset-bottom, 0px)) max(24px, env(safe-area-inset-left, 0px));
+  border-top: 1px solid #eee7ea;
+}
+
+.footer nav {
+  display: flex;
+  width: min(100%, 872px);
+  flex-wrap: wrap;
+  gap: 0 20px;
+  margin-inline: auto;
+  font-size: .875rem;
+}
+
+.footer a[aria-current='page'] { text-decoration: underline; text-underline-offset: 4px; }

@@ -7,6 +7,7 @@ import type {ContentIntent,ContentSourceMode} from '@/lib/content-source';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
 import { VeloxaBusinessSwitcher } from '@/components/VeloxaBusinessSwitcher';
+import { isPublishingAccount } from '@/lib/first-post-guide';
 import { VeloxaBusinessSchedule } from '@/components/VeloxaBusinessSchedule';
 import { VeloxaBusinessAds } from '@/components/VeloxaBusinessAds';
 import { acceptServerWorkspaceRevision } from '@/lib/veloxa-firestore-repo';
@@ -94,7 +95,10 @@ import { veloxaApi } from '@/lib/veloxa-api-client';
 import { VeloxaPublicLanding } from '@/components/VeloxaPublicLanding';
 import { VeloxaPublicHeader } from '@/components/VeloxaPublicHeader';
 import { VeloxaWorkspaceOverview } from '@/components/VeloxaWorkspaceOverview';
-import { VeloxaWorkspaceShell } from '@/components/VeloxaWorkspaceShell';
+import { VeloxaWorkspaceShell, WORKSPACE_NAVIGATION } from '@/components/VeloxaWorkspaceShell';
+import workspaceStyles from '@/components/VeloxaWorkspace.module.css';
+import { WorkspaceLanguage, workspaceTranslator } from '@/lib/veloxa-workspace-copy';
+import { workspaceCatalog } from '@/lib/workspace-catalog';
 import type {
   AutonomyConfig,
   BrandProfile,
@@ -189,6 +193,7 @@ export default function VeloxaAiPlatformPage() {
   const [activeBusinessId,setActiveBusinessId]=useState(PRIMARY_BUSINESS);
   const [businessesReady,setBusinessesReady]=useState(false);
   const [businessError,setBusinessError]=useState('');
+  const [managingBusiness, setManagingBusiness] = useState(false);
   const [businessSaving,setBusinessSaving]=useState(false);
   const [profileDirty,setProfileDirty]=useState(false);
   const [profileBusy,setProfileBusy]=useState(false);
@@ -209,6 +214,7 @@ export default function VeloxaAiPlatformPage() {
   const [autonomyConfig, setAutonomyConfig] = useState<AutonomyConfig>(INITIAL_AUTONOMY_CONFIG);
   const [eventCampaigns, setEventCampaigns] = useState<EventCampaign[]>([]);
   const [drafts, setDrafts] = useState<ContentDraft[]>([]);
+  const [contentHistoryReady, setContentHistoryReady] = useState(false);
   const [metaAdCampaigns, setMetaAdCampaigns] = useState<MetaAdCampaignPlan[]>([]);
 
   // Studio form state
@@ -225,6 +231,7 @@ export default function VeloxaAiPlatformPage() {
   const [publishingDraftId, setPublishingDraftId] = useState<string | null>(null);
   const [publishReviewDraftId, setPublishReviewDraftId] = useState<string | null>(null);
   const [reviewOAuthAccounts, setReviewOAuthAccounts] = useState(false);
+  const [startAddingSocialAccount, setStartAddingSocialAccount] = useState(false);
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [referenceInstruction, setReferenceInstruction] = useState('');
   const [referenceRoles, setReferenceRoles] = useState<ContentReferenceRoles>({});
@@ -232,6 +239,13 @@ export default function VeloxaAiPlatformPage() {
   const [studioTopic, setStudioTopic] = useState<string>('');
   useEffect(()=>{setStudioOfferingIds(previous=>previous.filter(id=>brand.offerings.some(item=>item.id===id)));},[brand.offerings]);
   const [studioFilter, setStudioFilter] = useState<'all' | 'draft' | 'published' | 'attention'>('all');
+  const studioCollectionHeading = useRef<HTMLHeadingElement>(null);
+  const focusStudioCollection = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'studio' || !focusStudioCollection.current) return;
+    focusStudioCollection.current = false;
+    studioCollectionHeading.current?.focus();
+  }, [activeTab]);
 
   // Event campaign creator state
   const [newCampaignName, setNewCampaignName] = useState<string>('');
@@ -396,6 +410,7 @@ export default function VeloxaAiPlatformPage() {
         const content = contentResult.value;
         setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
         setPostsUsedThisMonth(content.quotaUsed); setGenerationQuota(content.generationQuota || null);
+        setContentHistoryReady(true);
       } else resourceIssues.push('Koleksi konten belum dapat diperbarui.');
       if (businessResult.status==='fulfilled'){setBusinesses(businessResult.value.businesses);try{const saved=sessionStorage.getItem(`veloxa:business:${user.uid}:${targetWsId}`);if(saved&&businessResult.value.businesses.some(item=>item.id===saved))setActiveBusinessId(saved);}catch{ /* Storage is optional. */ }setBusinessesReady(true);setBusinessError('');}else{setBusinessesReady(false);setBusinessError('Daftar bisnis belum dapat dimuat.');resourceIssues.push('Muat ulang daftar bisnis sebelum membuat konten.');}
       if (mediaResult.status === 'fulfilled') setWorkspaceAssets(previous=>[...previous.filter(asset=>assetBusiness(asset)!==PRIMARY_BUSINESS),...mediaResult.value.assets]);
@@ -426,7 +441,7 @@ export default function VeloxaAiPlatformPage() {
 
     if (pendingReg) {
       setStatusBanner(
-        `Selamat datang di Veloxa AI! Workspace "${pendingReg.businessName}" (${pendingReg.city}) telah tersimpan ke Cloud Firestore.`,
+        'Profil bisnis sudah tersimpan. Selamat datang di Veloxa!',
       );
     }
 
@@ -436,12 +451,14 @@ export default function VeloxaAiPlatformPage() {
       const epoch = ++hydrationEpoch.current;
       setIsWorkspaceLoading(!!fbUser);
       setAuthUser(fbUser);setBusinessesReady(false);setBusinesses([]);setActiveBusinessId(PRIMARY_BUSINESS);setProfileDirty(false);setProfileBusy(false);
+      setContentHistoryReady(false);
+      setManagingBusiness(false);
       setActiveRole(fbUser?.isSuperAdmin ? 'admin' : 'user');
       if (fbUser) void hydrateForAuthenticatedUser(fbUser, epoch).catch(error => {
-        if (active && epoch === hydrationEpoch.current) setStatusBanner(error instanceof Error ? error.message : 'Workspace belum dapat dimuat.');
+        if (active && epoch === hydrationEpoch.current) setStatusBanner('Workspace belum dapat dimuat.');
       }).finally(() => { if (active && epoch === hydrationEpoch.current) setIsWorkspaceLoading(false); });
       else hasHydratedCloudWorkspaceRef.current = null;
-    }, error => setStatusBanner(error instanceof Error ? error.message : 'Sesi belum dapat diverifikasi.'));
+    }, () => setStatusBanner('Sesi belum dapat diverifikasi.'));
 
     return () => { active = false; hydrationEpoch.current++; unsubAuth(); };
   }, [router]);
@@ -469,7 +486,7 @@ export default function VeloxaAiPlatformPage() {
       { forceCloudPush: true },
     ).then((res) => {
       setLocalTelemetry(res.telemetry);
-      if(res.conflict && res.error) setStatusBanner(res.error);
+      if(res.conflict) setStatusBanner('Perubahan belum tersinkron. Periksa koneksi, lalu coba lagi.');
     });
   }, [
     authUser,
@@ -516,8 +533,8 @@ export default function VeloxaAiPlatformPage() {
     setLocalTelemetry(res.telemetry);
     setStatusBanner(
       res.syncedToFirestore
-        ? `Snapshot Local-First (${res.telemetry.lastPayloadHash}) berhasil disinkronkan ke Cloud Firestore (veloxa-ai-saas)!`
-        : res.error || `Perubahan baru tersimpan di perangkat ini dan belum tersinkron ke cloud. Periksa koneksi sebelum melanjutkan.`,
+        ? 'Data berhasil disinkronkan.'
+        : 'Perubahan belum tersinkron. Periksa koneksi, lalu coba lagi.',
     );
   };
 
@@ -528,6 +545,11 @@ export default function VeloxaAiPlatformPage() {
   };
 
   const navigateWorkspace=(tab:UserTabId)=>{if(profileDirty&&['brand_vault','autonomy'].includes(activeTab)&&tab!==activeTab){setStatusBanner('Simpan atau batalkan perubahan sebelum berpindah halaman.');return;}setActiveTab(tab);};
+  const openStudioWithFormat = (format: ContentFormat) => {
+    setStudioFormat(format);
+    setStudioFilter('all');
+    navigateWorkspace('studio');
+  };
   const businessLocked=isWorkspaceLoading||isCreatingContent||Boolean(publishingDraftId)||businessSaving||profileDirty||profileBusy;
   const selectBusiness=(id:string)=>{if(businessLocked||!businessesReady||!businesses.some(item=>item.id===id))return;hydrationEpoch.current++;try{sessionStorage.setItem(`veloxa:business:${authUser?.uid}:${workspaceBrand.workspaceId}`,id);}catch{ /* Storage is optional. */ }setActiveBusinessId(id);setStatusBanner('');};
   const reloadBusinesses=async()=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(workspaceBrand.workspaceId)}`);if(epoch!==hydrationEpoch.current)return;setBusinesses(result.businesses);setBusinessesReady(true);setBusinessError('');};
@@ -551,7 +573,7 @@ export default function VeloxaAiPlatformPage() {
   };
   const handleAssetMetadata=async(asset:BrandVaultAsset,kind:import('@/lib/asset-kind').AssetKindMetadata)=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media/category',{method:'PATCH',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,assetId:asset.id,expectedRevision:asset.metadataRevision||0,...kind})});if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri.');setWorkspaceAssets(previous=>previous.map(item=>item.id===asset.id?result.asset:item));return result.asset;};
   const handleAssetState = async (assetId:string,action:'trash'|'restore')=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{asset:BrandVaultAsset}>('/api/veloxa/media',{method:'PATCH',body:JSON.stringify({workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,assetId,action})});if(epoch!==hydrationEpoch.current)throw new Error('Bisnis berubah. Buka kembali galeri.');setWorkspaceAssets(previous=>previous.map(asset=>asset.id===assetId?result.asset:asset));if(action==='trash')setSelectedReferenceIds(previous=>previous.filter(id=>id!==assetId));};
-  useEffect(()=>{let active=true;const epoch=hydrationEpoch.current;if(authUser&&businessesReady)void handleReloadBrandPhotos().catch(error=>{if(active&&epoch===hydrationEpoch.current)setStatusBanner(error instanceof Error?error.message:'Galeri belum dapat dimuat.');});return()=>{active=false;};},[authUser?.uid,activeBusinessId,businessesReady]);
+  useEffect(()=>{let active=true;const epoch=hydrationEpoch.current;if(authUser&&businessesReady)void handleReloadBrandPhotos().catch(error=>{if(active&&epoch===hydrationEpoch.current)setStatusBanner('Galeri foto belum dapat dimuat. Coba Muat ulang di Profil & aset.');});return()=>{active=false;};},[authUser?.uid,activeBusinessId,businessesReady]);
 
   const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => setEditingChannel(channel);
   const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
@@ -673,13 +695,13 @@ export default function VeloxaAiPlatformPage() {
   const handleSaveBusinessEvent=async(name:string,date:string,highlight:string,connectionIds:string[])=>{
     if(!businessesReady||!name.trim()||name.trim().length>120||highlight.length>500||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||!connectionIds.length||connectionIds.some(id=>!activeBusiness.connectionIds.includes(id)))throw new Error('Periksa nama, tanggal, dan akun rencana event.');
     const epoch=hydrationEpoch.current;const created:EventCampaign={id:'camp_'+crypto.randomUUID(),workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,connectionIds:[...new Set(connectionIds)],name:name.trim(),eventDateIso:date,location:brand.city,ticketOrPromoHighlight:highlight.trim(),targetRegistrationsOrSales:0,currentConversions:0,status:'Scheduled',currentPhase:computeEventCampaignPhase(date).phase,autoInjectIntoDailyAutonomy:false};const next=[created,...eventCampaigns];setBusinessSaving(true);
-    try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns:next,drafts,metaAdCampaigns,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error(result.error||'Rencana event belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setEventCampaigns(next);}finally{setBusinessSaving(false);}
+    try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns:next,drafts,metaAdCampaigns,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error('Rencana event belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setEventCampaigns(next);}finally{setBusinessSaving(false);}
   };
 
   const handleDesignMetaAdsWithAi=(draft?:ContentDraft)=>{if(draft&&draftBusiness(draft)!==activeBusinessId){setStatusBanner('Pilih bisnis asal konten sebelum merancang iklan.');return;}setAdsSourceDraft(draft);setActiveTab('meta_ads');};
   const handleSaveBusinessAdPlan=async(plan:MetaAdCampaignPlan)=>{
     if(!businessesReady||plan.businessId!==activeBusinessId||!plan.destinationAccounts?.length||plan.destinationAccounts.some(target=>!activeBusiness.connectionIds.includes(target.connectionId)))throw new Error('Rancangan dan akun tujuan tidak sesuai bisnis aktif.');
-    const epoch=hydrationEpoch.current;const next=[plan,...metaAdCampaigns];setBusinessSaving(true);try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns,drafts,metaAdCampaigns:next,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error(result.error||'Rancangan belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setMetaAdCampaigns(next);setLocalTelemetry(result.telemetry);}finally{setBusinessSaving(false);}
+    const epoch=hydrationEpoch.current;const next=[plan,...metaAdCampaigns];setBusinessSaving(true);try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns,drafts,metaAdCampaigns:next,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error('Rancangan belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setMetaAdCampaigns(next);setLocalTelemetry(result.telemetry);}finally{setBusinessSaving(false);}
   };
 
   const handleToggleMetaCampaignRun = async (_campaignId: string) => {
@@ -704,23 +726,28 @@ export default function VeloxaAiPlatformPage() {
   const studioDrafts = businessDrafts.filter(draft => studioFilter === 'all' || (studioFilter === 'published' ? draft.status === 'published' : studioFilter === 'attention' ? ['publish_failed', 'partially_published', 'needs_attention'].includes(draft.status) : !['published', 'publish_failed', 'partially_published', 'needs_attention'].includes(draft.status)));
   const organicWinnerDraft = businessDrafts.find((d) => d.organicMetrics?.isOrganicWinner);
   const i18nCopy = VELOXA_I18N_COPY[locale];
+  const t = workspaceTranslator(locale, workspaceCatalog);
+  const workspaceLanguage = VELOXA_LOCALES.find(item => item.code === locale)!;
 
   const isUserWorkspaceView = Boolean(
     authUser && !(authUser.isSuperAdmin && activeRole === 'admin'),
   );
 
   return (
+    <WorkspaceLanguage locale={locale}>
     <div
-      className={`min-h-dvh pb-28 text-neutral-900 ${
-        isUserWorkspaceView ? 'bg-[#F8F9FC]' : 'bg-white'
+      lang={isUserWorkspaceView ? locale : undefined}
+      dir={isUserWorkspaceView ? workspaceLanguage.dir : undefined}
+      className={`min-h-dvh text-neutral-900 ${
+        isUserWorkspaceView ? `pb-24 lg:pb-0 ${workspaceStyles.frame}` : authUser ? 'pb-28 bg-white' : 'bg-[#fbf7f2]'
       }`}
     >
-      {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-medium text-neutral-800">Menyiapkan workspace Anda…</p></div></div>}
+      {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-medium text-neutral-800">{t('Menyiapkan workspace Anda…')}</p></div></div>}
       {/* Top Global Header — Ditampilkan pada Landing Page, Super Admin, & Mobile (<1024px). Pada Desktop User Workspace, Header menyatu di sisi kanan Sidebar Pink */}
       <header
-        className={`sticky top-0 z-30 border-b border-neutral-200/80 bg-white/95 text-neutral-900 backdrop-blur ${
-          isUserWorkspaceView ? 'hidden' : ''
-        }`}
+        className={`sticky top-0 z-30 border-b backdrop-blur ${
+          authUser ? 'border-neutral-200/80 bg-white/95 text-neutral-900' : 'border-[#eab1d026] bg-[#180f1c]/95'
+        } ${isUserWorkspaceView ? 'hidden' : ''}`}
       >
         {!authUser ? <VeloxaPublicHeader locale={locale} onLocale={handleSelectLocale} /> : (
         <div
@@ -846,9 +873,9 @@ export default function VeloxaAiPlatformPage() {
       {/* Main Content Container — Flush Full-Width untuk User Sidemenu, atau 1480px untuk Landing/Super Admin */}
       <main
         className={
-          authUser && !(authUser.isSuperAdmin && activeRole === 'admin')
-            ? 'w-full'
-            : 'mx-auto max-w-[1480px] px-4 py-6 sm:px-8 lg:px-12'
+          authUser?.isSuperAdmin && activeRole === 'admin'
+            ? 'mx-auto max-w-[1480px] px-4 py-6 sm:px-8 lg:px-12'
+            : 'w-full'
         }
       >
         <div>
@@ -856,17 +883,7 @@ export default function VeloxaAiPlatformPage() {
             /* ======================================================================
                KONDISI 1 (BELUM LOGIN): ULTRA-LUXURY GLOBAL MULTI-LANGUAGE LANDING PAGE
                ====================================================================== */
-            <VeloxaPublicLanding
-              locale={locale}
-              onSelectLocale={handleSelectLocale}
-              onOpenOnboarding={(defaultPlanId) => {
-                if (defaultPlanId) {
-                  setOnboardPlanId(defaultPlanId);
-                }
-                router.push('/register');
-              }}
-              onOpenAuthModal={() => router.push('/login')}
-            />
+            <VeloxaPublicLanding locale={locale} />
           ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
             /* ======================================================================
                KONDISI 2 (LOGIN SEBAGAI SUPER ADMIN sosrospg@gmail.com):
@@ -935,7 +952,7 @@ export default function VeloxaAiPlatformPage() {
               </div>
 
               {/* Subscription Pricing Tiers Overview */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+              <section className="veloxa-panel p-4 sm:p-6">
                 <h2 className="text-lg font-semibold text-neutral-900">
                   Katalog Paket Langganan Veloxa AI (Rp500rb – Rp1,5 Juta)
                 </h2>
@@ -977,7 +994,7 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Accessible Sticky Responsive Tenant Table (modern-web-guidance responsive-table) */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+              <section className="veloxa-panel p-4 sm:p-6">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h2 id="tenant-table-caption" className="text-lg font-semibold text-neutral-900">
@@ -1086,7 +1103,7 @@ export default function VeloxaAiPlatformPage() {
               </section>
 
               {/* Central API & OAuth Vault (1 App Developer for All Users) */}
-              <section className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6">
+              <section className="veloxa-panel p-4 sm:p-6">
                 <div className="flex items-center gap-2">
                   <Lock className="h-5 w-5 text-[#a92e5d]" />
                   <h2 className="text-lg font-semibold text-neutral-900">
@@ -1138,43 +1155,50 @@ export default function VeloxaAiPlatformPage() {
                ====================================================================== */
             <VeloxaWorkspaceShell
               activeTab={activeTab} brandName={brand.businessName} planName={currentPlan.name}
-              email={authUser.email} displayName={authUser.displayName || brand.businessName}
+              email={authUser.email}
               used={postsUsedThisMonth} quota={currentPlan.monthlyPostQuota} locale={locale}
               onNavigate={navigateWorkspace} onCreate={() => navigateWorkspace('studio')}
-              onConnections={() => handleOpenOAuthConfigModal(connections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
+              onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
               onBilling={() => { setSelectedCheckoutPlanId(activePlanId); billingDialogRef.current?.showModal(); }}
               onAccount={() => authDialogRef.current?.showModal()} onSignOut={handleRequestSignOutClick}
               onSync={() => void handleForceCloudSync()} onLocale={handleSelectLocale}
               isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => setActiveRole('admin')}
-              status={statusBanner || undefined}
+              status={statusBanner === 'Profil bisnis sudah tersimpan. Selamat datang di Veloxa!' && activeTab !== 'overview' ? undefined : statusBanner || undefined}
+              onDismissStatus={() => setStatusBanner('')}
               presetControls={authUser.isSuperAdmin ? <VeloxaSelect aria-label="Pilih Inspeksi Brand" value={selectedPresetKey} onValueChange={event => handleSelectBrandPreset(event as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom')} className="mt-3 w-full rounded-lg border p-2 text-base"><option value="running_event">Nusantara Run</option><option value="cafe_fnb">Kopi Senja</option><option value="clinic_beauty">GlowDerm</option><option value="custom">Brand aktif</option></VeloxaSelect> : undefined}
             >
-              <VeloxaBusinessSwitcher businesses={businesses} activeId={activeBusinessId} accounts={connections} locked={businessLocked} ready={businessesReady} error={businessError} onSelect={selectBusiness} onCreate={createNewBusiness} onAssign={connectionIds=>saveBusinessChanges({connectionIds})} onReload={reloadBusinesses}/>
+              <VeloxaBusinessSwitcher businesses={businesses} activeId={activeBusinessId} accounts={connections} locked={businessLocked} ready={businessesReady} error={businessError} managing={managingBusiness} onManaging={setManagingBusiness} onSelect={selectBusiness} onCreate={createNewBusiness} onAssign={connectionIds=>saveBusinessChanges({connectionIds})} onReload={reloadBusinesses}/>
               {/* ====================================================================
                  TAB 1: EXECUTIVE ANALYTICS OVERVIEW, CHARTS & 4-CHANNEL COMMAND HUB
                  ==================================================================== */}
               {activeTab === 'overview' && (
                 <VeloxaWorkspaceOverview
-                  connectionsVerified={connectionsVerified}
-                  onEditProfile={() => setActiveTab('brand_vault')}
-                  onCreateContent={(format) => { setStudioFormat(format); setActiveTab('studio'); }}
                   brand={brand}
-                  currentPlan={currentPlan}
-                  postsUsedThisMonth={postsUsedThisMonth}
+                  postsUsed={postsUsedThisMonth}
+                  quota={currentPlan.monthlyPostQuota}
                   connections={activeConnections}
-                  metaAccount={metaAccount}
-                  autonomyConfig={autonomyConfig}
+                  connectionsVerified={connectionsVerified && businessesReady}
                   drafts={businessDrafts}
-                  metaAdCampaigns={businessAdPlans}
-                  organicWinnerDraft={organicWinnerDraft}
-                  onNavigateTab={(tab) => setActiveTab(tab)}
-                  onToggleChannel={handleToggleChannel}
-                  onOpenOAuthConfigModal={handleOpenOAuthConfigModal}
-                  onPublishDraftNow={handlePublishDraftNow}
-                  onDesignMetaAdsWithAi={handleDesignMetaAdsWithAi}
-                  onOpenBillingModal={() => {
-                    setSelectedCheckoutPlanId(activePlanId);
-                    billingDialogRef.current?.showModal();
+                  onEditProfile={() => navigateWorkspace('brand_vault')}
+                  onStudio={() => navigateWorkspace('studio')}
+                  onCreateContent={openStudioWithFormat}
+                  onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
+                  firstPost={{
+                    historyReady: contentHistoryReady,
+                    canAssignAccount: connections.some(account => isPublishingAccount(account) &&
+                      !businesses.some(business => business.connectionIds.includes(account.connectionId!))),
+                    disabled: businessLocked,
+                    onConnect: () => {
+                      setStartAddingSocialAccount(true);
+                      handleOpenOAuthConfigModal('instagram');
+                    },
+                    onAssign: () => setManagingBusiness(true),
+                    onCollection: () => {
+                      setStudioFilter('all');
+                      focusStudioCollection.current = true;
+                      navigateWorkspace('studio');
+                    },
+                    onReview: handlePublishDraftNow,
                   }}
                 />
               )}
@@ -1183,7 +1207,10 @@ export default function VeloxaAiPlatformPage() {
                  TAB 2: BRAND BRAIN & DUAL ASSET VAULT (REFERENSI GAYA vs FOTO ASLI)
                  ==================================================================== */}
               {activeTab === 'brand_vault' && (
-                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} accounts={activeConnections} accountsReady={connectionsVerified&&businessesReady} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onMetadata={handleAssetMetadata} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos} />
+                <VeloxaBrandWorkspace key={brand.workspaceId+':'+activeBusinessId} onDirtyChange={setProfileDirty} onBusyChange={setProfileBusy} brand={brand} accounts={activeConnections} accountsReady={connectionsVerified&&businessesReady} assets={vaultAssets} onSave={handleSaveBrandProfile} onUpload={handleUploadBrandPhoto} onMetadata={handleAssetMetadata} onAssetState={handleAssetState} onReload={handleReloadBrandPhotos}
+                  onFirstDraft={contentHistoryReady && !businessDrafts.length && connectionsVerified && businessesReady && activeConnections.some(isPublishingAccount)
+                    ? () => openStudioWithFormat('single_post') : undefined}
+                />
               )}
 
               {/* ====================================================================
@@ -1193,32 +1220,31 @@ export default function VeloxaAiPlatformPage() {
                 <div className="space-y-6">
                   <VeloxaStudioComposer key={`${brand.workspaceId}:${activeBusinessId}`} brand={brand} onAssistantBusyChange={setBusinessSaving} onResume={()=>void handleGenerateStudioDraft('manual_studio',undefined,true)} sourceMode={studioSourceMode} onSourceMode={setStudioSourceMode} offerings={brand.offerings} offeringIds={studioOfferingIds} onOfferings={setStudioOfferingIds} contentIntent={studioContentIntent} onIntent={setStudioContentIntent} accounts={activeConnections} accountsVerified={connectionsVerified&&businessesReady} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={plan => void handleGenerateStudioDraft('manual_studio',undefined,false,plan)} />
 
-                  <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-xl font-semibold">Koleksi konten <span className="ml-1 text-base font-normal text-neutral-400">{businessDrafts.length}</span></h2><div role="group" aria-label="Filter konten" className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{item.label}</button>)}</div></div>
-                  {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{businessDrafts.length ? 'Belum ada konten pada filter ini.' : 'Draf pertama Anda dimulai dari sini.'}</p><p className="mt-2 text-base text-neutral-500">{businessDrafts.length ? 'Pilih filter lain untuk melihat koleksi konten.' : 'Pilih format dan tulis ide pada formulir di atas.'}</p></div>}
+                  <div className="flex flex-wrap items-center justify-between gap-4"><h2 ref={studioCollectionHeading} tabIndex={-1} className="text-xl font-semibold">{t("Koleksi konten")} <span className="ml-1 text-base font-normal text-neutral-400">{businessDrafts.length}</span></h2><div role="group" aria-label={t("Filter konten")} className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{t(item.label)}</button>)}</div></div>
+                  {studioDrafts.length === 0 && <div className="veloxa-panel px-6 py-12 text-center"><p className="text-lg font-medium">{businessDrafts.length ? t("Belum ada konten pada filter ini.") : t("Draf pertama Anda dimulai dari sini.")}</p><p className="mt-2 text-base text-neutral-500">{businessDrafts.length ? t("Pilih filter lain untuk melihat koleksi konten.") : t("Pilih format dan tulis ide pada formulir di atas.")}</p></div>}
 
                   {/* Generated Drafts List */}
                   <div className="space-y-4">
                     {studioDrafts.map((draft) => (
                       <article
                         key={draft.id}
-                        className="veloxa-luxury-card veloxa-dashboard-panel rounded-xl border border-neutral-200/90 bg-white p-6"
+                        className="veloxa-panel p-4 sm:p-6"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 pb-4">
                           <div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-sm font-semibold text-[#a92e5d]">
-                                {draft.status === 'published' ? '✓ Sudah Tayang' : draft.status === 'needs_attention' ? 'Perlu diperiksa di Meta' : draft.status === 'partially_published' ? 'Sebagian kanal berhasil' : draft.status === 'publish_failed' ? 'Publikasi gagal' : draft.status === 'publish_queued' ? 'Publikasi siap dilanjutkan' : draft.status === 'publishing' ? 'Sedang mengirim' : 'Draf — tinjau sebelum terbit'}
+                                {draft.status === 'published' ? t("✓ Sudah Tayang") : draft.status === 'needs_attention' ? t("Perlu diperiksa di Meta") : draft.status === 'partially_published' ? t("Sebagian kanal berhasil") : draft.status === 'publish_failed' ? t("Publikasi gagal") : draft.status === 'publish_queued' ? t("Publikasi siap dilanjutkan") : draft.status === 'publishing' ? t("Sedang mengirim") : t("Draf — tinjau sebelum terbit")}
                               </span>
                               <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-sm font-medium text-neutral-700">
                                 {draft.format === 'short_video'
                                   ? `Video 9:16 (${draft.videoDurationSeconds || 28} dtk)`
                                   : draft.format === 'carousel'
                                     ? `Carousel (${draft.renderedSlides?.length || draft.slides?.length || 0} slide)`
-                                    : 'Post Tunggal'}
+                                    : t("Post Tunggal")}
                               </span>
                               {draft.usedRealAssetIds.length > 0 && (
-                                <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-sm font-medium text-neutral-700">
-                                  Referensi visual: {draft.usedRealAssetIds.length} foto
+                                <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-sm font-medium text-neutral-700">{t("Referensi visual:")} {draft.usedRealAssetIds.length} foto
                                 </span>
                               )}
                             </div>
@@ -1231,10 +1257,10 @@ export default function VeloxaAiPlatformPage() {
                                 type="button"
                                 disabled={!!publishingDraftId || !draft.qualityReview.passed || ['needs_attention', 'publishing'].includes(draft.status) || (draft.format === 'short_video' ? !draft.renderedVideo : draft.format === 'carousel' ? draft.renderedSlides?.length !== 5 : !draft.renderedMedia)}
                                 onClick={() => handlePublishDraftNow(draft.id)}
-                                className="rounded-xl bg-[#bd416e] px-4 py-2 text-sm font-semibold text-white shadow-2xs hover:bg-[#a92e5d]"
+                                className="veloxa-button-primary"
                               >
                                 <Send className="mr-1.5 inline h-3.5 w-3.5" />
-                                {draft.status === 'publish_queued' ? 'Tinjau & lanjutkan publikasi' : draft.status === 'partially_published' ? 'Tinjau akun yang gagal' : 'Tinjau & terbitkan'}
+                                {draft.status === 'publish_queued' ? t("Tinjau & lanjutkan publikasi") : draft.status === 'partially_published' ? t("Tinjau akun yang gagal") : t("Tinjau & terbitkan")}
                               </button>
                             )}
                             <button
@@ -1255,7 +1281,7 @@ export default function VeloxaAiPlatformPage() {
                               className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                             >
                               <Download className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />
-                              {draft.format === 'short_video' ? 'Buka Video MP4' : 'Buka gambar'}
+                              {draft.format === 'short_video' ? t("Buka Video MP4") : t("Buka gambar")}
                             </button>
                             {draft.format !== 'short_video' && (
                             <button
@@ -1266,8 +1292,8 @@ export default function VeloxaAiPlatformPage() {
                             >
                               <Volume2 className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />
                               {playingVoiceoverDraftId === draft.id
-                                ? 'Hentikan pembacaan teks'
-                                : 'Dengarkan caption'}
+                                ? t("Hentikan pembacaan teks")
+                                : t("Dengarkan caption")}
                             </button>
                             )}
                             <button
@@ -1275,9 +1301,7 @@ export default function VeloxaAiPlatformPage() {
                               onClick={() => handleDesignMetaAdsWithAi(draft)}
                               className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
                             >
-                              <Megaphone className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />
-                              Rancang iklan
-                            </button>
+                              <Megaphone className="mr-1.5 inline h-3.5 w-3.5 text-[#a92e5d]" />{t("Rancang iklan")} </button>
                           </div>
                         </div>
 
@@ -1287,12 +1311,12 @@ export default function VeloxaAiPlatformPage() {
                             <StudioMediaPreview draft={draft} fallbackUrl={buildRenderedVisualSvgDataUrl({ brand, draft, slideIndex: 0 })} />
                           </div>
                           <div className="space-y-3">
-                            {draft.contentSource?.mode==='offerings'&&<p className="rounded-lg border border-pink-100 bg-pink-50/50 p-3 text-sm text-neutral-700"><strong>Fokus produk:</strong> {draft.contentSource.offeringTitles.join(' · ')}</p>}
-                            <details className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600"><summary className="cursor-pointer font-medium text-neutral-800">Pemeriksaan kualitas · {draft.qualityReview.score}/100</summary><p className="mt-3 leading-relaxed">{draft.qualityReview.summary}</p><p className="mt-2">{draft.qualityReview.issues.length} masalah · {draft.qualityReview.repairAttempts} perbaikan</p></details>
+                            {draft.contentSource?.mode==='offerings'&&<p className="rounded-lg border border-pink-100 bg-pink-50/50 p-3 text-sm text-neutral-700"><strong>{t("Fokus produk:")}</strong> {draft.contentSource.offeringTitles.join(' · ')}</p>}
+                            <details className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600"><summary className="cursor-pointer font-medium text-neutral-800">{t("Pemeriksaan kualitas ·")} {draft.qualityReview.score}/100</summary><p className="mt-3 leading-relaxed">{draft.qualityReview.summary}</p><p className="mt-2">{draft.qualityReview.issues.length} {t("masalah ·")} {draft.qualityReview.repairAttempts} perbaikan</p></details>
 
                             {/* Multi-Channel Distribution Badges */}
                             <div className="flex flex-wrap items-center gap-2 text-sm">
-                              <span className="font-medium text-neutral-500">Tujuan publikasi:</span>
+                              <span className="font-medium text-neutral-500">{t("Tujuan publikasi:")}</span>
                               {draft.channelStatuses.map((cs) => (
                                 <span
                                   key={cs.connectionId||cs.channel}
@@ -1300,22 +1324,22 @@ export default function VeloxaAiPlatformPage() {
                                 >
                                   {CHANNEL_META[cs.channel].shortLabel} {cs.channel==='facebook'?cs.accountName||cs.handle||'':cs.handle||cs.accountName||''}:{' '}
                                   <span className="text-[#a92e5d]">
-                                    {cs.status === 'published' ? '✓ Sudah Tayang' : cs.status === 'failed' ? 'Gagal dikirim' : cs.status === 'unknown' ? 'Perlu diperiksa' : 'Belum diterbitkan'}
-                                    {cs.permalink && <a href={cs.permalink} target="_blank" rel="noopener noreferrer" className="ml-2 underline">Lihat posting ↗</a>}
+                                    {cs.status === 'published' ? t("✓ Sudah Tayang") : cs.status === 'failed' ? t("Gagal dikirim") : cs.status === 'unknown' ? t("Perlu diperiksa") : t("Belum diterbitkan")}
+                                    {cs.permalink && <a href={cs.permalink} target="_blank" rel="noopener noreferrer" className="ml-2 underline">{t("Lihat posting ↗")}</a>}
                                     {cs.note && <span className="ml-2 text-red-700">{cs.note}</span>}
                                   </span>
                                 </span>
                               ))}
                             </div>
                             <p className="whitespace-pre-line rounded-xl border border-neutral-100 bg-white p-3 text-sm text-neutral-600">
-                              <strong className="text-neutral-900">Caption:</strong> {[draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n')}
+                              <strong className="text-neutral-900">{t("Caption:")}</strong> {[draft.caption, draft.hashtags.join(' ')].filter(Boolean).join('\n\n')}
                             </p>
                           </div>
                         </div>
 
                         {/* Storyboard / Slides Preview — Clean White Cards */}
                         {draft.videoScenes && (
-                          <details className="mt-5 border-t border-neutral-100 pt-4"><summary className="cursor-pointer text-sm font-medium text-neutral-600">Lihat naskah & storyboard</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <details className="mt-5 border-t border-neutral-100 pt-4"><summary className="cursor-pointer text-sm font-medium text-neutral-600">{t("Lihat naskah & storyboard")}</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {draft.videoScenes.map((scene) => (
                               <div
                                 key={scene.sceneNumber}
@@ -1323,18 +1347,17 @@ export default function VeloxaAiPlatformPage() {
                               >
                                 <div>
                                   <div className="flex items-center justify-between text-xs font-medium text-[#a92e5d]">
-                                    <span>ADEGAN {scene.sceneNumber}</span>
+                                    <span>{t("ADEGAN")} {scene.sceneNumber}</span>
                                     <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600">
                                       {scene.timeRange}
                                     </span>
                                   </div>
                                   <p className="mt-2 font-semibold text-neutral-900">{scene.textOverlay}</p>
                                   <p className="mt-2 text-xs text-neutral-600">
-                                    <strong className="text-neutral-800">VO:</strong> &ldquo;{scene.voiceover}&rdquo;
+                                    <strong className="text-neutral-800">{t("VO:")}</strong> &ldquo;{scene.voiceover}&rdquo;
                                   </p>
                                 </div>
-                                <p className="mt-3 border-t border-neutral-100 pt-2 text-xs text-neutral-500">
-                                  Visual: {scene.visualDirection}
+                                <p className="mt-3 border-t border-neutral-100 pt-2 text-xs text-neutral-500">{t("Visual:")} {scene.visualDirection}
                                 </p>
                               </div>
                             ))}
@@ -1342,14 +1365,14 @@ export default function VeloxaAiPlatformPage() {
                         )}
 
                         {draft.slides && (
-                          <details className="mt-5 border-t border-neutral-100 pt-4"><summary className="cursor-pointer text-sm font-medium text-neutral-600">Lihat isi setiap slide</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <details className="mt-5 border-t border-neutral-100 pt-4"><summary className="cursor-pointer text-sm font-medium text-neutral-600">{t("Lihat isi setiap slide")}</summary><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {draft.slides.map((slide) => (
                               <div
                                 key={slide.slideNumber}
                                 className="rounded-xl border border-neutral-200 bg-white p-4 text-sm"
                               >
                                 <div className="flex items-center justify-between font-medium text-[#a92e5d]">
-                                  <span>SLIDE 0{slide.slideNumber}</span>
+                                  <span>{t("SLIDE 0")}{slide.slideNumber}</span>
                                   <span className="rounded border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 text-xs text-neutral-600">
                                     {slide.badgeText}
                                   </span>
@@ -1408,63 +1431,27 @@ export default function VeloxaAiPlatformPage() {
           )}
         </div>
 
-        {/* Native Mobile Bottom Bar — Otomatis Tampil di Layar HP Asli (<768px) */}
-        {!authUser ? (
+        {authUser && activeRole === 'user' && (
           <nav
-            aria-label="Mobile Quick Action Bar"
-            data-testid="mobile-public-bottom-bar"
-            className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 border-t border-neutral-200/90 bg-white/95 px-4 pt-2.5 shadow-lg backdrop-blur md:hidden"
+            aria-label={t('Navigasi utama')}
+            data-testid="mobile-workspace-bottom-nav"
+            className={`${workspaceStyles.mobileNav} veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t px-2 pt-1.5 backdrop-blur lg:hidden`}
           >
-            <Link
-              href="/login"
-              className="flex-1 rounded-xl border border-neutral-200 bg-white py-2.5 text-center text-sm font-semibold text-neutral-800"
-            >
-              {i18nCopy.headerSignIn}
-            </Link>
-            <Link
-              href="/register"
-              className="flex-[1.4] rounded-xl bg-[#bd416e] py-2.5 text-center text-sm font-semibold text-white shadow-xs"
-            >
-              {i18nCopy.headerStartFree} →
-            </Link>
+            {WORKSPACE_NAVIGATION.map(({ id, short, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                data-testid={`mobile-nav-tab-${id}`}
+                aria-current={activeTab === id ? 'page' : undefined}
+                aria-label={t(label)}
+                onClick={() => navigateWorkspace(id)}
+                className="flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-1 text-[11px] font-semibold leading-tight"
+              >
+                <Icon aria-hidden="true" size={19} strokeWidth={1.75}/>
+                <span className="truncate">{t(short)}</span>
+              </button>
+            ))}
           </nav>
-        ) : (
-          activeRole === 'user' && (
-            <nav
-              aria-label="Bottom Navigation Android dan iOS"
-              data-testid="mobile-workspace-bottom-nav"
-              className="veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t border-neutral-200/90 bg-white/95 px-2.5 pt-2 shadow-lg backdrop-blur lg:hidden"
-            >
-              {(
-                [
-                  { id: 'overview', label: i18nCopy.mobileTabs.overview, icon: LayoutDashboard },
-                  { id: 'brand_vault', label: 'Profil', icon: Camera },
-                  { id: 'studio', label: i18nCopy.mobileTabs.studio, icon: Wand2 },
-                  { id: 'autonomy', label: 'Jadwal', icon: Bot },
-                  { id: 'meta_ads', label: i18nCopy.mobileTabs.meta_ads, icon: Megaphone },
-                ] as const
-              ).map((tab) => {
-                const Icon = tab.icon;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    data-testid={`mobile-nav-tab-${tab.id}`}
-                    onClick={() => navigateWorkspace(tab.id)}
-                    className={`flex flex-col items-center gap-1 rounded-xl py-1.5 text-xs font-semibold transition ${
-                      isActive
-                        ? 'bg-pink-50/90 text-[#a92e5d] ring-1 ring-pink-200'
-                        : 'text-neutral-500 hover:text-neutral-900'
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    <span className="truncate">{tab.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          )
         )}
       </main>
 
@@ -1617,6 +1604,7 @@ export default function VeloxaAiPlatformPage() {
         ref={oauthDialogRef}
         aria-labelledby="oauth-dialog-title"
         data-testid="oauth-config-dialog"
+        onClose={() => { setReviewOAuthAccounts(false); setStartAddingSocialAccount(false); }}
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             oauthDialogRef.current?.close();
@@ -1627,10 +1615,10 @@ export default function VeloxaAiPlatformPage() {
         <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3.5">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/80 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
-              Akun sosial
+              {t("Akun sosial")}
             </span>
             <h2 id="oauth-dialog-title" className="mt-1.5 text-lg font-semibold text-neutral-900">
-              Akun sosial workspace
+              {t("Akun sosial workspace")}
             </h2>
           </div>
           <button
@@ -1638,13 +1626,13 @@ export default function VeloxaAiPlatformPage() {
             onClick={() => oauthDialogRef.current?.close()}
             className="rounded-xl border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-sm font-medium text-neutral-600 hover:border-pink-200 hover:text-[#a92e5d]"
           >
-            Tutup ✕
+            {t("Tutup")} ✕
           </button>
         </div>
 
-        <p className="mt-4 text-base text-neutral-600">Kelola semua koneksi workspace di sini. Setelah menambah akun, tautkan ke bisnis yang sesuai melalui Kelola bisnis.</p>
+        <p className="mt-4 text-base text-neutral-600">{t("Kelola koneksi workspace di sini. Setelah menambah akun, tautkan ke bisnis yang sesuai melalui Kelola bisnis.")}</p>
 
-        {authUser && <VeloxaMetaConnections key={brand.workspaceId} accountBusinessLabels={Object.fromEntries(connections.filter(account=>account.connectionId).map(account=>[account.connectionId!,businesses.find(item=>item.connectionIds.includes(account.connectionId!))?.brand.businessName||'Belum ditautkan ke bisnis']))} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} onConnections={verified => {
+        {authUser && <VeloxaMetaConnections key={brand.workspaceId} accountBusinessLabels={Object.fromEntries(connections.filter(account=>account.connectionId).map(account=>[account.connectionId!,businesses.find(item=>item.connectionIds.includes(account.connectionId!))?.brand.businessName||'Belum ditautkan ke bisnis']))} workspaceId={brand.workspaceId} initialChannel={editingChannel} reviewAccounts={reviewOAuthAccounts} startAdding={startAddingSocialAccount} onConnections={verified => {
           setConnectionsVerified(true);
           setConnections(withConnectionPlaceholders(verified,INITIAL_CHANNEL_CONNECTIONS));
         }} />}
@@ -1731,5 +1719,6 @@ export default function VeloxaAiPlatformPage() {
         <div className="space-y-5"><div className="flex items-center justify-between gap-4"><h2 id="logout-confirm-title" className="text-xl font-semibold">Keluar dari akun?</h2><button type="button" aria-label="Tutup konfirmasi keluar" onClick={() => logoutConfirmDialogRef.current?.close()} className="h-10 w-10 rounded-lg border border-neutral-200">×</button></div><p id="logout-confirm-desc" className="break-words text-base leading-relaxed text-neutral-500">Anda akan keluar dari {authUser?.email || 'akun Veloxa'}. Anda dapat masuk kembali kapan saja.</p><div className="flex flex-wrap justify-end gap-3 border-t border-neutral-100 pt-4"><button type="button" autoFocus onClick={() => logoutConfirmDialogRef.current?.close()} className="veloxa-button-secondary">Batal</button><button type="button" onClick={() => void handleConfirmSignOut()} className="veloxa-button-primary">Keluar akun</button></div></div>
       </dialog>
     </div>
+    </WorkspaceLanguage>
   );
 }

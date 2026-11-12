@@ -14,6 +14,7 @@ const isMobileExport = process.env.NEXT_OUTPUT_EXPORT === 'true';
 
 const nextConfig: NextConfig = {
   ...(isMobileExport ? { output: 'export' } : {}),
+  devIndicators: false,
   outputFileTracingRoot: process.cwd(),
   serverExternalPackages: ['@ffmpeg-installer/ffmpeg', 'ffprobe-static', 'openai', 'ws'],
   outputFileTracingIncludes: {

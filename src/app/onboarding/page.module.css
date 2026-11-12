@@ -1,0 +1,161 @@
+.progress, .body, .actions, .session, .sessionStatus {
+  padding-left: max(24px, env(safe-area-inset-left, 0px));
+  padding-right: max(24px, env(safe-area-inset-right, 0px));
+}
+
+.progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-block: 22px 0;
+}
+
+.progress li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-block: 8px 10px;
+  border-bottom: 2px solid #eee7ea;
+  color: var(--muted);
+  font-size: .875rem;
+  font-weight: 600;
+}
+
+.progress li span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: #f5eff2;
+  color: var(--plum);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.progress li[aria-current='step'] {
+  border-color: var(--plum);
+  color: var(--plum);
+}
+
+.progress li[aria-current='step'] span { background: var(--plum); color: white; }
+.progress li[data-complete='true'] { border-color: #bf8da3; }
+
+.wizard {
+  display: flex;
+  min-height: calc(100svh - 130px - env(safe-area-inset-top, 0px));
+  flex-direction: column;
+}
+
+.body {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  padding-block: 24px 28px;
+}
+
+.body .heading {
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -.02em;
+}
+
+.body .heading + p { font-size: 1rem; }
+.heading:focus { outline: none; }
+.fields, .choices, .review { display: grid; min-width: 0; gap: 16px; }
+.choices { position: relative; }
+
+.optional { border-top: 1px solid var(--rule); }
+
+.optional summary {
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  gap: 8px;
+  color: var(--plum);
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+
+.optional summary::-webkit-details-marker { display: none; }
+.optional summary span { color: var(--muted); font-size: .8125rem; font-weight: 500; }
+.optional summary svg { flex-shrink: 0; margin-inline-start: auto; }
+.optional[open] summary svg { transform: rotate(180deg); }
+.optional[open] .fields { padding-block: 4px 8px; }
+
+.choice {
+  display: grid;
+  min-height: 64px;
+  grid-template-columns: 36px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.choice:has(input:checked) { border-color: #bf8da3; background: #fcf6f8; }
+.choice input { width: 20px; height: 20px; accent-color: var(--plum); }
+.channelIcon { display: grid; height: 36px; place-items: center; border-radius: 8px; background: #f5e8ee; color: var(--plum); }
+
+.review dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  padding-block: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.review dt { color: var(--muted); }
+.review dd { font-weight: 650; text-align: end; overflow-wrap: anywhere; }
+
+.plan {
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: #fcf6f8;
+}
+
+.plan h2 { color: var(--plum); font-size: 1.125rem; font-weight: 700; }
+.plan p { margin-block-start: 4px; color: var(--muted); }
+
+.actions {
+  position: sticky;
+  z-index: 1;
+  inset-block-end: 0;
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 12px;
+  margin-block-start: auto;
+  padding-block: 12px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #eee7ea;
+  background: var(--paper);
+}
+
+.actions:has(button + button) { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+.actions:dir(rtl) .arrow { transform: scaleX(-1); }
+.savingStatus { inset-inline-start: 24px; }
+.dashboardLink { display: inline-flex; min-height: 44px; width: fit-content; align-items: center; color: var(--plum); text-decoration: underline; text-underline-offset: 3px; }
+
+.session, .sessionStatus { margin-block: 36px; }
+.session { display: grid; gap: 12px; }
+.session h1 { font-size: 1.5rem; font-weight: 700; }
+.sessionStatus { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+
+@media (height < 540px), (width >= 768px) {
+  .actions { position: relative; }
+  .wizard { min-height: 0; }
+}
+
+@media (width >= 768px) {
+  .progress { padding-block-start: 44px; }
+  .body { padding-block: 32px; }
+  .body .heading { font-size: 1.625rem; }
+  .actions { padding-block-start: 16px; }
+}

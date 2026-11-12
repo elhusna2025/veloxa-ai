@@ -96,42 +96,42 @@ export function saveVeloxaLocale(locale: VeloxaLocale): void {
 export function getPlanLocalizedPrice(
   planId: SubscriptionPlanId,
   locale: VeloxaLocale,
-): { amountFormatted: string; periodLabel: string } {
+): { amount: number; amountFormatted: string; periodLabel: string } {
   const prices: Record<
     SubscriptionPlanId,
-    Record<VeloxaLocale, { amountFormatted: string; periodLabel: string }>
+    Record<VeloxaLocale, { amount: number; amountFormatted: string; periodLabel: string }>
   > = {
     free_trial: {
-      id: { amountFormatted: 'Rp0 (Gratis)', periodLabel: '/7 hari' },
-      en: { amountFormatted: '$0 (Free)', periodLabel: '/7 days' },
-      es: { amountFormatted: '$0 (Gratis)', periodLabel: '/7 días' },
-      ar: { amountFormatted: '$0 (مجاناً)', periodLabel: '/7 أيام' },
-      ja: { amountFormatted: '¥0 (無料)', periodLabel: '/7日間' },
-      ko: { amountFormatted: '₩0 (무료)', periodLabel: '/7일' },
+      id: { amount: 0, amountFormatted: 'Rp0 (Gratis)', periodLabel: '/7 hari' },
+      en: { amount: 0, amountFormatted: '$0 (Free)', periodLabel: '/7 days' },
+      es: { amount: 0, amountFormatted: '$0 (Gratis)', periodLabel: '/7 días' },
+      ar: { amount: 0, amountFormatted: '$0 (مجاناً)', periodLabel: '/7 أيام' },
+      ja: { amount: 0, amountFormatted: '¥0 (無料)', periodLabel: '/7日間' },
+      ko: { amount: 0, amountFormatted: '₩0 (무료)', periodLabel: '/7일' },
     },
     starter_500k: {
-      id: { amountFormatted: 'Rp500.000', periodLabel: '/bulan' },
-      en: { amountFormatted: '$35', periodLabel: '/month' },
-      es: { amountFormatted: '$35', periodLabel: '/mes' },
-      ar: { amountFormatted: '$35', periodLabel: '/شهر' },
-      ja: { amountFormatted: '¥5,500', periodLabel: '/月' },
-      ko: { amountFormatted: '₩49,000', periodLabel: '/월' },
+      id: { amount: 500000, amountFormatted: 'Rp500.000', periodLabel: '/bulan' },
+      en: { amount: 35, amountFormatted: '$35', periodLabel: '/month' },
+      es: { amount: 35, amountFormatted: '$35', periodLabel: '/mes' },
+      ar: { amount: 35, amountFormatted: '$35', periodLabel: '/شهر' },
+      ja: { amount: 5500, amountFormatted: '¥5,500', periodLabel: '/月' },
+      ko: { amount: 49000, amountFormatted: '₩49,000', periodLabel: '/월' },
     },
     growth_1000k: {
-      id: { amountFormatted: 'Rp1.000.000', periodLabel: '/bulan' },
-      en: { amountFormatted: '$69', periodLabel: '/month' },
-      es: { amountFormatted: '$69', periodLabel: '/mes' },
-      ar: { amountFormatted: '$69', periodLabel: '/شهر' },
-      ja: { amountFormatted: '¥10,800', periodLabel: '/月' },
-      ko: { amountFormatted: '₩95,000', periodLabel: '/월' },
+      id: { amount: 1000000, amountFormatted: 'Rp1.000.000', periodLabel: '/bulan' },
+      en: { amount: 69, amountFormatted: '$69', periodLabel: '/month' },
+      es: { amount: 69, amountFormatted: '$69', periodLabel: '/mes' },
+      ar: { amount: 69, amountFormatted: '$69', periodLabel: '/شهر' },
+      ja: { amount: 10800, amountFormatted: '¥10,800', periodLabel: '/月' },
+      ko: { amount: 95000, amountFormatted: '₩95,000', periodLabel: '/월' },
     },
     pro_1500k: {
-      id: { amountFormatted: 'Rp1.500.000', periodLabel: '/bulan' },
-      en: { amountFormatted: '$99', periodLabel: '/month' },
-      es: { amountFormatted: '$99', periodLabel: '/mes' },
-      ar: { amountFormatted: '$99', periodLabel: '/شهر' },
-      ja: { amountFormatted: '¥15,500', periodLabel: '/月' },
-      ko: { amountFormatted: '₩139,000', periodLabel: '/월' },
+      id: { amount: 1500000, amountFormatted: 'Rp1.500.000', periodLabel: '/bulan' },
+      en: { amount: 99, amountFormatted: '$99', periodLabel: '/month' },
+      es: { amount: 99, amountFormatted: '$99', periodLabel: '/mes' },
+      ar: { amount: 99, amountFormatted: '$99', periodLabel: '/شهر' },
+      ja: { amount: 15500, amountFormatted: '¥15,500', periodLabel: '/月' },
+      ko: { amount: 139000, amountFormatted: '₩139,000', periodLabel: '/월' },
     },
   };
   return prices[planId][locale];

@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
-import Link from "next/link";
+import { useState } from "react";
 import VeloxaDedicatedPageShell from "@/components/VeloxaDedicatedPageShell";
 import { type VeloxaLocale } from "@/lib/veloxa-i18n";
+import { VeloxaLegalDocument, legalContactEmail } from "@/components/VeloxaLegalDocument";
+import styles from "@/components/VeloxaDedicatedPageShell.module.css";
+import authStyles from "@/components/VeloxaAuthScreen.module.css";
 
 export default function VeloxaTermsOfUsePage() {
   const [locale, setLocale] = useState<VeloxaLocale>("id");
@@ -140,147 +142,15 @@ export default function VeloxaTermsOfUsePage() {
       activePage="terms"
       locale={locale}
       onLocaleChange={setLocale}
-      pageBadge={
-        isId
-          ? "DOKUMEN HUKUM RESMI · KEPATUHAN ENTERPRISE GLOBAL"
-          : "OFFICIAL LEGAL AGREEMENT · GLOBAL ENTERPRISE COMPLIANCE"
-      }
-      pageTitle={
-        isId
-          ? "Syarat & Ketentuan Penggunaan (Terms of Use)"
-          : "Terms of Use & Enterprise Service Agreement"
-      }
-      pageSubtitle={
-        isId
-          ? "Ketentuan hukum penggunaan studio konten AI otonom 4-kanal, kepemilikan 100% hak cipta aset brand, serta aturan keamanan AI Meta Ads di Veloxa AI."
-          : "Governing terms for Veloxa AI's autonomous 4-channel content studio, 100% client IP ownership, and AI Meta Ads budget safety controls."
-      }
+      pageTitle={isId ? "Syarat dan Ketentuan" : "Terms of Use"}
+      pageSubtitle={isId ? "Ketentuan penggunaan akun dan layanan Veloxa AI." : "The terms for using your Veloxa AI account and services."}
     >
-      {/* Top Summary Banner */}
-      <div className="veloxa-luxury-card-pink rounded-xl p-6 sm:p-8 bg-white mb-8">
-        <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-5 border-b border-neutral-100">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center rounded-full bg-[#bd416e] px-3.5 py-1 text-sm font-semibold text-white">
-              v4.2 Enterprise Edition
-            </span>
-            <span className="text-sm font-medium text-neutral-500">
-              {isId ? "Berlaku Efektif: 3 November 2026" : "Effective Date: November 3, 2026"}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href="/privacy"
-              className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-[#EC749B] hover:text-[#a92e5d] transition"
-            >
-              {isId ? "Lihat Privacy Policy →" : "View Privacy Policy →"}
-            </Link>
-            <Link
-              href="/register"
-              className="veloxa-btn-pink rounded-xl px-4 py-2 text-sm font-semibold"
-            >
-              {isId ? "Daftarkan Brand" : "Register Brand"}
-            </Link>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
-              {isId ? "100% HAK CIPTA KLIEN" : "100% CLIENT IP OWNERSHIP"}
-            </div>
-            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
-              {isId
-                ? "Semua foto asli yang Anda unggah dan seluruh video Reels, Carousel, & Poster hasil render AI adalah milik bisnis Anda sepenuhnya."
-                : "All uploaded authentic photos and all AI-rendered Reels, Carousels, and Posters belong 100% to your brand."}
-            </p>
-          </div>
-          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
-              {isId ? "HARD BUDGET CAP IKLAN" : "HARD DAILY AD BUDGET CAP"}
-            </div>
-            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
-              {isId
-                ? "Agen AI Meta Ads dijamin secara sistem tidak pernah melebihi batas anggaran harian yang Anda tetapkan."
-                : "The AI Meta Ads agent is programmatically locked from ever exceeding your configured daily spend cap."}
-            </p>
-          </div>
-          <div className="rounded-xl border border-[#FBCFE0] bg-[#FFF9FB] p-4">
-            <div className="text-sm font-semibold uppercase tracking-wider text-[#a92e5d]">
-              {isId ? "OAUTH RESMI & AMAN" : "OFFICIAL OAUTH 2.0 APIS"}
-            </div>
-            <p className="mt-1 text-sm text-neutral-700 leading-relaxed">
-              {isId
-                ? "Integrasi resmi Meta Graph API, TikTok API, & YouTube API v3. Cabut izin akses kapan saja dalam 1 klik."
-                : "Official Meta Graph API, TikTok API, & YouTube API v3 integration. Revoke access anytime in 1 click."}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Detailed Legal Clauses */}
-      <div className="space-y-6">
-        {sections.map((sec) => (
-          <article
-            key={sec.id}
-            className="veloxa-luxury-card rounded-xl p-6 sm:p-8 bg-white"
-          >
-            <div className="flex items-start gap-4">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF0F5] border border-[#FBCFE0] text-sm font-semibold text-[#a92e5d]">
-                {sec.id}
-              </span>
-              <div className="space-y-3 flex-1">
-                <h2 className="text-lg sm:text-xl font-semibold text-neutral-900">
-                  {sec.title}
-                </h2>
-                <p className="text-sm sm:text-base text-neutral-600 leading-relaxed">
-                  {sec.body}
-                </p>
-                <ul className="space-y-2 pt-1">
-                  {sec.bullets.map((bullet, idx) => (
-                    <li
-                      key={idx}
-                      className="flex items-start gap-2.5 text-sm sm:text-base text-neutral-700"
-                    >
-                      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#bd416e]" />
-                      <span>{bullet}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      {/* Bottom CTA Bar */}
-      <div className="mt-8 veloxa-luxury-card rounded-xl p-6 sm:p-8 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h3 className="text-base sm:text-lg font-semibold text-neutral-900">
-            {isId
-              ? "Pertanyaan Hukum atau Kepatuhan Enterprise?"
-              : "Legal or Enterprise Compliance Questions?"}
-          </h3>
-          <p className="text-sm sm:text-base text-neutral-600 mt-1">
-            {isId
-              ? "Tim Legal & Data Protection Officer kami siap membantu di legal@veloxa.ai"
-              : "Our Legal & Data Protection Officer team is available at legal@veloxa.ai"}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href="/privacy"
-            className="rounded-xl border border-neutral-200 bg-white px-5 py-3 text-sm sm:text-base font-medium text-neutral-800 hover:border-[#EC749B] hover:text-[#a92e5d] transition"
-          >
-            {isId ? "Baca Privacy Policy" : "Read Privacy Policy"}
-          </Link>
-          <Link
-            href="/register"
-            className="veloxa-btn-pink rounded-xl px-6 py-3 text-sm sm:text-base font-semibold"
-          >
-            {isId ? "Setuju & Daftarkan Brand →" : "Accept & Register Brand →"}
-          </Link>
-        </div>
-      </div>
+      <VeloxaLegalDocument page="terms" isId={isId} sections={sections}>
+        <section className={styles.contact} aria-labelledby="legal-contact">
+          <h2 id="legal-contact">{isId ? "Pertanyaan tentang ketentuan?" : "Questions about these terms?"}</h2>
+          <a className={`${authStyles.secondary} ${styles.action}`} href={`mailto:${legalContactEmail}`}>{legalContactEmail}</a>
+        </section>
+      </VeloxaLegalDocument>
     </VeloxaDedicatedPageShell>
   );
 }

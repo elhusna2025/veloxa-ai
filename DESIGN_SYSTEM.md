@@ -34,6 +34,30 @@ Jangan memakai radius pill pada seluruh input, tombol, atau kartu. Pill hanya un
 
 Warna DNA bisnis merupakan arahan untuk **konten bisnis**. Warna logo Berez/Cendekia tidak otomatis mengganti tema aplikasi Veloxa.
 
+## Landing page publik
+
+- Gunakan plum gelap, krem hangat, dan aksen rose. Gunakan warna rose untuk tindakan utama di permukaan gelap.
+- Pakai font sans-serif bawaan Veloxa untuk seluruh teks landing page. Bedakan judul utama, judul bagian, harga, dan teks isi lewat ukuran, bobot, dan jarak baris. Gunakan angka berlebar tetap pada harga dan hasil kalkulator.
+- Buka dengan manfaat produk dan visual kampanye. Tampilkan demo Cara kerja di bagian tersendiri setelah daftar kanal. Tunjukkan pemberian izin akun, pembuatan gambar dan caption, pilihan cara menerbitkan, dan hasil di akun tujuan. Pengunjung bisa memilih langkah serta memutar atau menjeda demo.
+- Bandingkan cara kerja yang konkret. Kalkulator biaya memakai angka ilustratif yang bisa diedit, harga paket resmi dari konfigurasi aplikasi, dan hasil yang berubah mengikuti masukan.
+- Pada layar di bawah 768 px, tampilkan alur sambutan enam slide untuk pengunjung yang belum masuk. Gunakan satu tujuan dan satu ilustrasi per slide. Jelaskan manfaat Veloxa, koneksi akun, pembuatan draf AI, pilihan publikasi, dan hasil. Akhiri dengan tombol mulai uji coba.
+- Tampilkan foto kampanye editorial selebar layar sambutan dan letakkan judul serta penjelasan pada bidang krem yang terpisah. Pakai palet plum, rose, dan tembaga untuk menyatukan keenam adegan. Beri label pada simulasi publikasi agar pengunjung mengenalinya sebagai contoh.
+- Gunakan teks penjelasan 18–19 px pada sambutan. Pendekkan naskah supaya nyaman dibaca dan sisakan ruang untuk kontrol pada layar pendek.
+- Alur sambutan bergerak otomatis setiap delapan detik dan berhenti di slide terakhir. Sediakan putar dan jeda, geser, tombol kembali dan lanjut, indikator yang bisa dipilih, serta tindakan Lewati. Hentikan putar otomatis saat pengunjung memakai kontrol navigasi, menggeser, atau masuk dengan keyboard. Mulai dalam keadaan dijeda ketika perangkat meminta pengurangan gerakan.
+- Pertahankan Masuk dan pilihan bahasa di bagian atas. Gunakan target sentuh minimal 44 px, area aman perangkat, dan urutan kanan ke kiri untuk bahasa Arab.
+- Gunakan naskah dan harga sesuai bahasa yang dipilih. Tata bahasa Arab dari kanan ke kiri, termasuk susunan navigasi dan perbandingan.
+- Tampilkan status aktivasi paket dan kanal sesuai ketersediaan produk.
+
+## Masuk, daftar, pemulihan akun, dan dokumen hukum
+
+- Gunakan latar putih bersih, header publik versi terang, dan aksen plum dari alur sambutan. Tampilkan foto editorial hanya pada panel samping Masuk dan Daftar di desktop.
+- Susun formulir satu kolom dengan label yang selalu terlihat, input 16 px atau lebih, dan tombol minimal 44 px. Sisakan ruang aman perangkat dan biarkan layar bergulir saat keyboard terbuka.
+- Pada pendaftaran lewat email, minta konfirmasi kata sandi dan tampilkan pesan di dekat kolomnya jika berbeda. Aktifkan pendaftaran lewat email dan Google setelah Ketentuan dan Privasi dicentang. Bedakan status masuk, membuat akun, menunggu Google, dan mengirim tautan reset di tombol yang sedang dipakai.
+- Tampilkan Ketentuan dan Privasi sebagai dokumen satu kolom dengan judul, tanggal, dan tautan antarhalaman. Gunakan pembatas tipis untuk memisahkan bagian.
+- Pada onboarding, gunakan satu kolom dengan tiga langkah berurutan: Bisnis, Kanal, dan Paket. Tampilkan informasi wajib terlebih dahulu, lipat preferensi opsional, dan ringkas pilihan sebelum menyimpan. Gunakan tombol kembali dan lanjut yang mudah dijangkau di HP.
+- Gunakan judul langkah onboarding 22 px pada HP dan 26 px pada desktop, dengan teks petunjuk 16 px.
+- Terapkan bahasa pilihan pengguna ke seluruh onboarding, termasuk pilihan bidang bisnis, pesan validasi, dan status simpan. Ganti bahasa tanpa mengatur ulang isian atau langkah aktif. Tampilkan alur bahasa Arab dari kanan ke kiri.
+
 ## Pilihan, dropdown, dan input
 
 - Untuk 2–4 pilihan yang perlu dipahami, gunakan kartu radio/segmented selector dengan judul dan satu keterangan singkat. Contoh: Tujuan konten, sumber ide, format, mode palet.
@@ -63,6 +87,16 @@ Warna DNA bisnis merupakan arahan untuk **konten bisnis**. Warna logo Berez/Cend
 Urutan workspace: **Beranda → Profil & aset → Content Studio → Jadwal konten → Meta Ads**. Akun sosial menjadi pengaturan koneksi terpisah. Navigasi ponsel mengikuti urutan makna yang sama; label boleh dipendekkan.
 
 Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. Pergantian bisnis tidak membuang perubahan yang belum disimpan atau menerapkan hasil AI ke bisnis lain.
+
+## Workspace di ponsel dan desktop
+
+- Gunakan permukaan putih, bingkai tipis, dan latar netral hangat. Ambil plum `#682943`, rose `#F2AFC8`, dan krem `#FFF7EE` dari alur sambutan. Gunakan aksen lembut pada navigasi aktif, ikon, dan pengantar halaman. Simpan panel plum gelap untuk tindakan utama di Beranda.
+- Di ponsel, gunakan judul halaman sekitar 21 px dan tampilkan pilihan bahasa di header serta navigasi utama di bawah dengan area aman perangkat. Di desktop, pertahankan sidebar dan judul sekitar 26 px. Beri fokus keyboard yang terlihat dan nama aksesibel pada tombol ikon.
+- Tempatkan pemilih bisnis di atas isi. Sebelum publikasi pertama, Beranda menampilkan panduan akun sosial, Profil & aset, draf di Studio, dan tinjauan publikasi. Tandai langkah aktif dari status bisnis yang tersimpan. Setelah satu kiriman berhasil, tampilkan tindakan membuat konten dan pintasan format seperti biasa.
+- Saat pemeriksaan akun selesai dan bisnis aktif belum punya akun yang siap digunakan, tampilkan tindakan koneksi di bagian atas Beranda. Jika ada akun terhubung yang belum ditautkan, arahkan ke Kelola bisnis. Tandai publikasi selesai hanya setelah ada konfirmasi berhasil pada salah satu akun tujuan.
+- Profil, Studio, Jadwal, dan Meta Ads memakai pengantar ringkas, dengan formulir satu kolom pada HP. Gunakan ruang dan pengelompokan untuk membedakan tahap, tanpa memperbesar judul.
+- Satu pilihan bahasa berlaku untuk navigasi dan teks antarmuka workspace tanpa mengulang formulir. Pertahankan nama bisnis, isi pengguna, dan hasil AI dalam bahasa asalnya. Letakkan navigasi Arab dari kanan ke kiri dan pertahankan format angka, waktu WIB, dan rasio agar jelas.
+- Pesan pengguna menyebut hasil yang diketahui dan langkah berikutnya. Jangan tampilkan nama database, identitas proyek infrastruktur, atau penanda sinkronisasi internal.
 
 ## Arahan visual dengan bantuan AI
 
