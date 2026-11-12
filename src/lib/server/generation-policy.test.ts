@@ -37,3 +37,32 @@ test('normal plan cap, development status and missing counter initialization use
  const status=await generationQuotaStatus(d.ref,'workspace-a','free_trial');assert.equal(status.mode,'development');assert.equal(status.dailyLimit,null);assert.equal(status.used,100);
  assert.deepEqual(await generationPolicy(f.ref,'workspace-a','starter_500k'),{mode:'standard',dailyLimit:3});
 });
+
+test('scheduled Reels recovers using the original WIB quota reservation even across midnight', async t => {
+ t.mock.timers.enable({apis:['Date'], now:Date.parse('2026-11-12T16:59:00Z')});
+ const usage = new Map([['2026-11-12',5],['2026-11-13',6]]);
+ let job: {state:string; generationQuotaDay?:string} = { state: 'generating' };
+ const jobRef = {};
+ const policyRef = {};
+ const ref = {
+  collection: () => ({doc: (day: string) => day}),
+  firestore: {
+   collection: () => ({doc: () => policyRef}),
+   runTransaction: async (action: (tx: unknown) => Promise<unknown>) => action({
+    get: async (doc: unknown) => ({data: () => doc === jobRef ? job : typeof doc === 'string' ? {count:usage.get(doc)} : undefined}),
+    update: (doc: unknown, update: Partial<typeof job>) => {assert.equal(doc, jobRef); job = {...job, ...update};},
+    set: (day: string, value: {count:number}) => {usage.set(day, value.count);},
+   }),
+  },
+ };
+ const reserve = () => reserveGenerationAttempt(ref as never, 'workspace-a', 'free_trial', jobRef as never);
+ assert.equal((await reserve()).used, 6);
+ assert.equal(job.generationQuotaDay,'2026-11-12');
+ assert.equal((await reserve()).used, 6);
+ t.mock.timers.tick(120_000);
+ assert.equal((await reserve()).day, '2026-11-12');
+ await assert.rejects(reserveGenerationAttempt(ref as never, 'workspace-a', 'free_trial'), /hari ini tercapai/);
+ job.state = 'cancelled';
+ await assert.rejects(reserve(), /Slot Otonom sudah berubah/);
+ assert.deepEqual([...usage], [['2026-11-12',6],['2026-11-13',6]]);
+});

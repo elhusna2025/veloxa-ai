@@ -2,10 +2,13 @@ import {GenerationStageError} from './content-generation-stream';
 
 const minute=60_000;
 const generationDelays=[2*minute];
+const reelsArtworkDelays=[2*minute,3*minute,5*minute];
 const publicationDelays=[2*minute,5*minute];
 
-export function recoveryTime(kind:'generation'|'publication', attempts:number, scheduledAt:number, now:number, nextSlot:number|null) {
-  const delay=(kind==='generation'?generationDelays:publicationDelays)[attempts-1];
+const recoveryDelays = { generation:generationDelays, reels_artwork:reelsArtworkDelays, publication:publicationDelays };
+
+export function recoveryTime(kind:keyof typeof recoveryDelays, attempts:number, scheduledAt:number, now:number, nextSlot:number|null) {
+  const delay=recoveryDelays[kind][attempts-1];
   const due=now+delay;
   // Recovery yields to the next scheduled slot.
   const deadline=Math.min(scheduledAt+30*minute,nextSlot===null?Infinity:nextSlot);

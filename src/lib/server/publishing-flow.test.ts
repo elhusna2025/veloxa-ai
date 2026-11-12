@@ -229,7 +229,7 @@ test('autonomy stops publication on pause, profile change, moved account, owner 
 
 test('autonomy resumes only confirmed queued draft; unknown delivery is paused and never regenerated',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const unknown of[false,true]){const f=await autonomyFixture();let creates=0,publishes=0,clock=Date.now();const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{hasMore:!unknown&&publishes===1,draft:{status:unknown?'needs_attention':publishes===1?'publish_queued':'published'},receipts:[]};})as never};const first=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(first.state,unknown?'needs_attention':'queued');clock+=61000;const last=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(last.state,unknown?'inactive':'published');assert.equal(creates,1);assert.equal(publishes,unknown?1:2);}});
 
-test('autonomy records an unsent visual rejection and continues to the next dated slot', async () => {
+test('autonomy keeps recovering a rejected Reels slot with the same draft key and publishes once', async () => {
  const {processAutonomyRule}=await import('./autonomy-worker');
  const {GenerationStageError}=await import('./content-generation-stream');
  const firstSlot=Date.parse('2026-11-12T05:00:00Z');
@@ -238,16 +238,22 @@ test('autonomy records an unsent visual rejection and continues to the next date
   const f=await autonomyFixture();
   let clock=firstSlot+1000;
   const created:string[]=[];
+  const reelsRecovery:(string|undefined)[]=[];
+  const reelDraftKeys:string[]=[];
   let published=0;
   Object.assign(f.rule,{config:{...f.config,days:['Kam'],timesWib:['12:00','13:00'],formats:['carousel','short_video'],endsOnWib:'2026-11-12'},nextSlotMs:firstSlot,nextDueMs:firstSlot});
   const deps={
    database:f.database as never,
    now:()=>clock,
-   create:(async(request:Request)=>{
+   create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>{
     const {format}=await request.json();
     created.push(format);
-    if(format==='carousel'||rejectLast)throw new GenerationStageError(new ApiError(422,'Visual otomatis perlu diperiksa.','scheduled_artwork_rejected'),'compositing');
-    return{draft:{id:'draft_reels',title:'Arus kas'}};
+    if(format==='short_video') {
+      reelsRecovery.push(options?.recoverScheduledReelsArtwork);
+      reelDraftKeys.push(options!.scheduledDraft!.id);
+    }
+    if(format==='carousel'||reelsRecovery.length<3||rejectLast)throw new GenerationStageError(new ApiError(422,'Visual otomatis perlu diperiksa.','scheduled_artwork_rejected'),'compositing');
+    return{draft:{id:options!.scheduledDraft!.id,title:'Arus kas'}};
    })as never,
    publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
   };
@@ -257,6 +263,7 @@ test('autonomy records an unsent visual rejection and continues to the next date
   assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');
   const firstJob=f.database.values.get(`${f.ruleRef.path}/jobs/slot_${firstSlot}`)!;
   assert.equal(firstJob.state,'failed');
+  assert.deepEqual(firstJob.generationFailure,{stage:'compositing',code:'scheduled_artwork_rejected'});
   assert.equal(firstJob.draftId,undefined);
   const afterFirst=f.database.values.get(f.ruleRef.path)!;
   assert.equal(afterFirst.enabled,true);
@@ -264,9 +271,17 @@ test('autonomy records an unsent visual rejection and continues to the next date
   assert.equal(afterFirst.processingJob,null);
   assert.equal(published,0);
   clock=secondSlot+1000;
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');
+  clock+=120_000;
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+  assert.equal(published,0);
+  clock+=180_000;
   assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,rejectLast?'retry_generation':'published');
-  if(rejectLast){clock+=120_000;assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');}
-  assert.deepEqual(created,rejectLast?['carousel','carousel','short_video','short_video']:['carousel','carousel','short_video']);
+  if(rejectLast){clock+=300_000;assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');}
+  assert.deepEqual(created,['carousel','carousel',...Array(rejectLast?4:3).fill('short_video')]);
+  assert.deepEqual(reelsRecovery,rejectLast?[undefined,'photo','simplified','simplified']:[undefined,'photo','simplified']);
+  assert.equal(new Set(reelDraftKeys).size,1);
   assert.equal(published,rejectLast?0:1);
   assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);
  }

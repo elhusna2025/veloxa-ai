@@ -98,7 +98,8 @@ test('30/31s timing is preserved and 60/61s narration reserves AAC padding witho
       const pcm = Buffer.alloc(24_000 * 2 * seconds);
       // An audible marker only in the final 80ms detects trimming instead of time compression.
       for (let sample = 24_000 * seconds - 1920; sample < pcm.length / 2; sample += 1) pcm.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * sample / 24_000) * 6000), sample * 2);
-      const result = await renderReelsVideo({ images, pcm, sampleRate: 24000, sceneWeights: [10, 12, 15, 13] });
+      const result = await renderReelsVideo({ images, pcm, sampleRate: 24000, sceneWeights: [10, 12, 15, 13], useReviewedFrames: true });
+      assert.deepEqual(result.poster, images[0]);
       const target = Math.min(seconds, REELS_SPEC.maxDurationSeconds - REELS_SPEC.encodingHeadroomSeconds);
       assert.ok(result.durationSeconds >= REELS_SPEC.minDurationSeconds && result.durationSeconds <= REELS_SPEC.maxDurationSeconds, `actual duration ${result.durationSeconds} must stay within the publication bounds`);
       assert.ok(Math.abs(result.durationSeconds - target) < 0.15, `source ${seconds}s should render near ${target}s`);

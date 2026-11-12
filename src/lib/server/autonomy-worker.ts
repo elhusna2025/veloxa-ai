@@ -10,6 +10,7 @@ import {profileFingerprint} from '../profile-fingerprint';
 import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource} from '../autonomy-rules';
 import {readSocialAccounts} from './social-accounts';
 import {createSocialContent} from './content';
+import {GenerationStageError} from './content-generation-stream';
 import {canRetryGeneration,recoveryTime} from './autonomy-recovery';
 import {publishSocialContent} from './publishing';
 import {publishMetaImage} from './meta-graph';
@@ -50,7 +51,8 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     if(raw.processingRun&&job&&job.ruleRevision===raw.revision&&job.draftKey&&(job.state==='generating'||job.state==='prepared'&&job.draftId===job.draftKey)){
      const deadline=Math.min(job.scheduledAt+30*60_000,raw.nextSlotMs??Infinity);
      const prepared=job.state==='prepared';
-     const retryAt=prepared?(now()<deadline?now():null):recoveryTime('generation',job.generationAttempts,job.scheduledAt,now(),raw.nextSlotMs);
+     const recoveryKind=job.reelsArtworkRecovery?'reels_artwork':'generation';
+     const retryAt=prepared?(now()<deadline?now():null):recoveryTime(recoveryKind,job.generationAttempts,job.scheduledAt,now(),raw.nextSlotMs);
      if(retryAt!==null){
       tx.update(interrupted,{state:prepared?'queued':'retry_generation',error:prepared?'':'Pembuatan konten terputus. Veloxa akan mencoba slot ini lagi.',retryAt:prepared?null:retryAt});
       tx.update(ruleRef,{...reset,pendingJob:interrupted.id,nextDueMs:retryAt});
@@ -95,7 +97,9 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    else tx.update(job,{state:retryGeneration?'generating':'publishing',retryAt:null,error:'',generationAttempts,publicationAttempts});
    const processingUntil=now()+6*60_000;
    tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,...(!pending?{nextSlotMs:future,sequence:sequence+1}:{})});
-   return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt};
+   const recoverScheduledReelsArtwork=retryGeneration&&input.format==='short_video'&&previous?.reelsArtworkRecovery
+    ? (generationAttempts===2?'photo':'simplified') as 'photo'|'simplified' : undefined;
+   return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork};
   });
   if(!claim)return{state:'idle'};jobRef=claim.job;claimed=true;revision=claim.raw.revision;
   const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const ws=(await tx.get(claim.ref)).data();if(!ws||ws.ownerUid!==claim.raw.ownerUid)throw new ApiError(403,'Pemilik workspace berubah.');const {context}=await resolveBusinessContext(claim.ref,ws,claim.raw.businessId,tx);if(await profileFingerprint(context.brand)!==claim.raw.profileFingerprint)throw new ApiError(409,'Profil berubah saat proses berjalan. Tinjau draf sebelum terbit.');const accounts=readSocialAccounts((await tx.get(claim.ref.collection('private_meta_connections'))).docs);if(claim.config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah. Pengiriman dihentikan.');for(const assetId of new Set([...claim.config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){const asset=(await tx.get(claim.ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,claim.ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==claim.raw.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');}return ws;};
@@ -105,8 +109,8 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
   if(!draftId){
    generating=true;
    const result=await(deps.create||createSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({...claim.input,expectedProfileFingerprint:claim.raw.profileFingerprint})}),{
-    authorize,source:'autonomous_agent',scheduledRepairBudget:()=>started+235_000-now(),
-    scheduledDraft:{id:claim.draftKey,persist:async(draftRef,record)=>db.runTransaction(async tx=>{
+    authorize,source:'autonomous_agent',scheduledRepairBudget:()=>started+235_000-now(),recoverScheduledReelsArtwork:claim.recoverScheduledReelsArtwork,
+    scheduledDraft:{id:claim.draftKey,...(claim.input.format==='short_video'?{quotaJob:claim.job}:{}),persist:async(draftRef,record)=>db.runTransaction(async tx=>{
      await checkActive(tx);
      tx.create(draftRef,record);
      tx.update(claim.job,{draftId:claim.draftKey,topic:record.draft.title,state:'prepared'});
@@ -162,6 +166,8 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
  }catch(error){
   const message=error instanceof ApiError?error.message:'Proses otomatis belum selesai. Periksa draf dan akun sosial sebelum mengaktifkan kembali.';
   const recoverable=claimed&&generating&&canRetryGeneration(error);
+  const failure=generating&&error instanceof GenerationStageError
+   ? {generationFailure:{stage:error.stage,code:error.code}} : {};
   const state=claimed&&!recoverable?'needs_attention':'failed';
   // Saving the error is best effort. A failed write leaves the lease to stop unsafe retries.
   const resolved=await db.runTransaction(async tx=>{
@@ -175,10 +181,12 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    }
    if(recoverable&&ownsJob){
     const job=(await tx.get(jobRef!)).data()!;
-    const retryAt=recoveryTime('generation',job.generationAttempts,job.scheduledAt,now(),current.nextSlotMs);
+    const reelsArtworkRecovery=job.format==='short_video'&&(job.reelsArtworkRecovery===true||failure.generationFailure?.code==='scheduled_artwork_rejected');
+    const retryAt=recoveryTime(reelsArtworkRecovery?'reels_artwork':'generation',job.generationAttempts,job.scheduledAt,now(),current.nextSlotMs);
     const hasNextSlot=typeof current.nextSlotMs==='number';
     const nextState=retryAt?'retry_generation':'failed';
-    tx.update(jobRef!,{state:nextState,error:message,retryAt,finishedAt:retryAt?null:now()});
+    const retryMessage='Veloxa sedang memulihkan visual Reels dan akan mencoba slot ini lagi.';
+    tx.update(jobRef!,{state:nextState,error:reelsArtworkRecovery&&retryAt?retryMessage:message,retryAt,finishedAt:retryAt?null:now(),...failure,...(reelsArtworkRecovery?{reelsArtworkRecovery:true}:{})});
     tx.update(ruleRef,{
      ...reset,
      pendingJob:retryAt?jobRef!.id:null,
@@ -188,7 +196,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     });
     return nextState;
    }
-   if(jobRef&&ownsJob)tx.update(jobRef,{state,error:message,finishedAt:now()});
+   if(jobRef&&ownsJob)tx.update(jobRef,{state,error:message,finishedAt:now(),...failure});
    else if(current.pendingJob){
     const pending=ruleRef.collection('jobs').doc(current.pendingJob);
     if((await tx.get(pending)).exists)tx.update(pending,{state:'failed',retryAt:null,error:message,finishedAt:now()});

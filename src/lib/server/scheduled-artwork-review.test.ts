@@ -24,5 +24,6 @@ test('scheduled artwork requires an acceptable layout and exactly the intended v
 test('Reels artwork checks the short overlay and omits the narration', () => {
   const reels = { ...params, aspectRatio: '9:16' as const, cta: '', website: '' };
   assert.equal(passesScheduledArtworkReview(reels, {visibleCopy:'Berez ERP\nCatat Transaksi',layoutPasses:true}), true);
+  assert.equal(passesScheduledArtworkReview(reels, {visibleCopy:'berez erp\nCatat Transaksi',layoutPasses:true}), false);
   assert.equal(passesScheduledArtworkReview(reels, {visibleCopy:'Berez ERP\nCatat Transaksi\n'+params.hook,layoutPasses:true}), false);
 });

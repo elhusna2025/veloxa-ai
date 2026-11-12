@@ -73,6 +73,7 @@ function fixture() {
     format?: 'single_post' | 'carousel' | 'short_video';
     source?: 'autonomous_agent';
     verifyArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyArtwork'];
+    recoverScheduledReelsArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['recoverScheduledReelsArtwork'];
     generateVoice?: NonNullable<Parameters<typeof createSocialContent>[1]>['generateVoice'];
     renderVideo?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderVideo'];
     topic?: string;
@@ -85,6 +86,7 @@ function fixture() {
     renderImage?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderImage'];
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source: options.source, verifyArtwork: options.verifyArtwork,
+    recoverScheduledReelsArtwork: options.recoverScheduledReelsArtwork,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -197,6 +199,100 @@ test('scheduled Reels verifies all editorial frames before rendering the video',
   },
  });
  assert.equal(draft.videoScenes?.length,4);
+});
+
+test('scheduled Reels repairs the rejected frame with exact text and uses that method for the slot retry', async () => {
+ const scene = await sharp({create:{width:1080,height:1920,channels:3,background:'#f1eee6'}}).jpeg().toBuffer();
+ for (const retry of [false,true]) {
+  const f=fixture();
+  const repaired: string[]=[];
+  const rejected: string[]=[];
+  const simplified: string[]=[];
+  const approved = new Map<string, Buffer>();
+  const {draft}=await f.create({
+   source:'autonomous_agent',recoverScheduledReelsArtwork:retry?'photo':undefined,
+   renderImage:async params=>{
+    if(params.scheduledReelsPhotoOnly){assert.equal(params.sceneOnly,true);repaired.push(params.title);}
+    if(params.scheduledArtworkRepair) simplified.push(params.title);
+    return scene;
+   },
+   verifyArtwork:async(image,params)=>{
+    assert.equal(f.blobs.size,0);
+    if(params.title==='Langkah 2' && rejected.length === 0){
+     rejected.push(params.title);
+     throw new ApiError(422,'Visual ditolak','scheduled_artwork_rejected');
+    }
+    if(params.scheduledReelsPhotoOnly){
+     const {data,info}=await sharp(image).raw().toBuffer({resolveWithObject:true});
+     assert.equal(info.width,720);
+     assert.equal(info.height,1280);
+     assert.ok(data.subarray(250*720*3,400*720*3).some(pixel=>pixel<60),'headline rendered over the photo');
+     assert.ok(data[0]>220,'no full-frame dark overlay');
+    }
+    approved.set(params.title, image);
+   },
+   renderVideo:async({images,useReviewedFrames})=>{
+    assert.equal(useReviewedFrames,true);
+    assert.deepEqual(images, [1,2,3,4].map(index => approved.get('Langkah ' + index)));
+    return {mp4:Buffer.from('test-video'),poster:scene,width:720,height:1280,durationSeconds:48,mimeType:'video/mp4'};
+   },
+  });
+  assert.deepEqual(rejected,['Langkah 2']);
+  assert.deepEqual(repaired.sort(),retry?['Langkah 1','Langkah 2','Langkah 2','Langkah 3','Langkah 4']:['Langkah 2']);
+  assert.deepEqual(simplified,retry?['Langkah 2']:[]);
+  assert.equal(draft.renderedVideo?.durationSeconds,48);
+ }
+});
+
+test('scheduled Reels checks the original logo and screenshot on the final frame before encoding', async () => {
+ const f = fixture();
+ const ids = ['123e4567-e89b-42d3-a456-426614174101', '123e4567-e89b-42d3-a456-426614174102'];
+ const scene = await sharp({create:{width:1080,height:1920,channels:3,background:'white'}}).jpeg().toBuffer();
+ for (const [index, id] of ids.entries()) {
+  const storagePath = `workspaces/${f.ref.id}/vault/${id}.jpg`;
+  const bytes = await sharp({create:{width:160,height:80,channels:3,background:index ? '#2244cc' : '#cc3322'}}).jpeg().toBuffer();
+  f.database.values.set(`${f.ref.path}/server_assets/${id}`, {asset:{id,workspaceId:f.ref.id,title:'Asset',mediaType:'photo'},storagePath});
+  f.blobs.set(storagePath, bytes);
+ }
+ let rejectedFrames = 0;
+ await assert.rejects(f.create({
+  source:'autonomous_agent',
+  referenceAssetIds:ids,
+  referenceRoles:{[ids[0]]:'logo',[ids[1]]:'screenshot'},
+  renderImage:async()=>scene,
+  verifyArtwork:async(image,params,beforeOriginalAssets)=>{
+   assert.ok(beforeOriginalAssets);
+   if (!params.scheduledReelsPhotoOnly) assert.deepEqual(beforeOriginalAssets, scene);
+   const {data,info} = await sharp(image).raw().toBuffer({resolveWithObject:true});
+   assert.equal(info.width,720);
+   assert.equal(info.height,1280);
+   const logo = (179 * info.width + 103) * info.channels;
+   const screen = (775 * info.width + 327) * info.channels;
+   assert.ok(data[logo] > 170 && data[logo+2] < 85, 'original logo visible');
+   assert.ok(data[screen] < 85 && data[screen+2] > 170, 'original screenshot visible');
+   if (params.title === 'Langkah 2') {
+    rejectedFrames++;
+    throw new ApiError(422,'Visual ditolak','scheduled_artwork_rejected');
+   }
+  },
+  renderVideo:async()=>assert.fail('a rejected final frame must stop video rendering'),
+ }), error => error instanceof ApiError && error.code === 'scheduled_artwork_rejected');
+ assert.equal(rejectedFrames,2);
+ assert.equal(f.blobs.size,2);
+ assert.equal([...f.database.values.keys()].some(key => key.includes('/social_drafts/')), false);
+});
+
+test('scheduled Reels recovery never renders or saves a video when the exact text lacks contrast', async () => {
+ const f=fixture();
+ const scene=await sharp({create:{width:1080,height:1920,channels:3,background:'white'}})
+  .composite([{input:{create:{width:900,height:1920,channels:3,background:'black'}},left:180,top:0}]).jpeg().toBuffer();
+ await assert.rejects(f.create({
+  source:'autonomous_agent',recoverScheduledReelsArtwork:'simplified',
+  renderImage:async()=>scene,
+  verifyArtwork:async()=>assert.fail('contrast check should stop verification'),
+  renderVideo:async()=>assert.fail('unreadable frames must not be rendered'),
+ }),error=>error instanceof ApiError&&error.code==='scheduled_artwork_rejected');
+ assert.equal(f.blobs.size,0);
 });
 
 test('protected roles are applied to all four Reels images without entering image-edit references',async()=>{

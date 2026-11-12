@@ -15,13 +15,13 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, shortVisualCta, visualWebsite } from './content-compositor';
+import { composeScheduledReelsCopy, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { generateContentWithSavedAgent } from './content-agent';
-import { generateSocialPostImage } from './content-image';
+import { generateSocialPostImage, scheduledArtworkCopy } from './content-image';
 import { verifyScheduledArtwork } from './scheduled-artwork-review';
 import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { renderReelsVideo } from './reels-renderer';
@@ -74,7 +74,12 @@ export async function createSocialContent(request: Request, dependencies: {
   renderImage?: typeof generateSocialPostImage;
   verifyArtwork?: typeof verifyScheduledArtwork;
   scheduledRepairBudget?: () => number;
-  scheduledDraft?: {id:string;persist:(ref:FirebaseFirestore.DocumentReference,record:FirebaseFirestore.DocumentData)=>Promise<void>};
+  recoverScheduledReelsArtwork?: 'photo' | 'simplified';
+  scheduledDraft?: {
+    id: string;
+    quotaJob?: FirebaseFirestore.DocumentReference;
+    persist: (ref: FirebaseFirestore.DocumentReference, record: FirebaseFirestore.DocumentData) => Promise<void>;
+  };
   generateVoice?: typeof generateReelsVoiceover;
   renderVideo?: typeof renderReelsVideo;
   onProgress?: (progress: GenerationProgress) => void;
@@ -139,12 +144,11 @@ export async function createSocialContent(request: Request, dependencies: {
     referenceInstruction: input.referenceInstruction || topic,
   } : {};
   if (references.length) progress('validation');
-  // The trusted server policy can lift the daily cap; every attempt is still counted atomically.
-  const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
+  const scheduledDraft=scheduledEditorial?dependencies.scheduledDraft:undefined;
+  const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId, scheduledDraft?.quotaJob);
   progress('script');
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), ...(carouselPlan ? { carouselPlan } : {}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
   if(scheduledEditorial&&!generated.draft.qualityReview.passed)throw new ApiError(422,'Naskah belum lolos pemeriksaan. Veloxa perlu menyusunnya ulang.','scheduled_script_rejected');
-  const scheduledDraft=scheduledEditorial?dependencies.scheduledDraft:undefined;
   const draft: ContentDraft = { ...generated.draft, id: scheduledDraft?.id??`draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   if (carouselPlan) {
     draft.slides = carouselPlan.map(({headline, body, visualDirection}, index) => ({
@@ -242,20 +246,59 @@ export async function createSocialContent(request: Request, dependencies: {
       hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
     } : params;
     const render=dependencies.renderImage||generateSocialPostImage;
-    let scene=await render({...imageParams,sceneOnly:!editorial});
+    const recoverReels = scheduledEditorial && params.aspectRatio === '9:16';
+    const verify = dependencies.verifyArtwork || verifyScheduledArtwork;
+    const recoverFrame = async (timeoutMs?: number, simplifyFraming = false) => {
+      const photo = await render({
+        ...imageParams,
+        scheduledReelsPhotoOnly: true,
+        scheduledArtworkRepair: simplifyFraming,
+        sceneOnly: true,
+      }, { timeoutMs });
+      return composeScheduledReelsCopy(photo, scheduledArtworkCopy(imageParams), Boolean(imageParams.hasOriginalLogo));
+    };
+    const retryWithPhoto = recoverReels ? dependencies.recoverScheduledReelsArtwork : undefined;
+    const initialScene = retryWithPhoto ? null : await render({ ...imageParams, sceneOnly: !editorial });
     if(stage!=='compositing')progress('compositing');
     let composed:Buffer;
     try{
-     if (scheduledEditorial) {
-       const verify=dependencies.verifyArtwork||verifyScheduledArtwork;
+     const repairTimeout = async (error: unknown) => {
+       const budget = dependencies.scheduledRepairBudget?.() ?? 90_000;
+       if (!(error instanceof ApiError) || error.code !== 'scheduled_artwork_rejected' || budget < 45_000) throw error;
+       await dependencies.authorize?.(request, workspaceId);
+       return Math.min(90_000, budget - 22_000);
+     };
+     if (recoverReels) {
+       const finish = async (frame: Buffer, repaired: boolean) => {
+         const master = await finishEditorialCarousel(frame, originalAssets, true);
+         const output = await sharp(master).resize(720, 1280).jpeg({ quality: 94 }).toBuffer();
+         const reviewParams = repaired ? { ...imageParams, scheduledReelsPhotoOnly: true } : imageParams;
+         await verify(output, reviewParams, originalAssets.length ? frame : undefined);
+         return output;
+       };
+       if (!initialScene) {
+         const budget = dependencies.scheduledRepairBudget?.() ?? 202_000;
+         if (budget < 45_000) throw new ApiError(503, 'Waktu pemulihan visual Reels belum cukup.', 'scheduled_artwork_review_unavailable');
+         try { return await finish(await recoverFrame(Math.min(180_000, budget - 22_000), retryWithPhoto === 'simplified'), true); }
+         catch (error) {
+           const timeoutMs = await repairTimeout(error);
+           return await finish(await recoverFrame(timeoutMs, true), true);
+         }
+       }
+       try { return await finish(initialScene, false); }
+       catch (error) {
+         const timeoutMs = await repairTimeout(error);
+         return await finish(await recoverFrame(timeoutMs), true);
+       }
+     }
+     let scene = initialScene ?? await recoverFrame();
+     if (initialScene && scheduledEditorial) {
        try{await verify(scene,imageParams);}
        catch(error){
-         const budget=dependencies.scheduledRepairBudget?.()??90_000;
-         if(!(error instanceof ApiError)||error.code!=='scheduled_artwork_rejected'||budget<45_000)throw error;
          // Recheck the rule before spending another image request. Never change the approved copy or references.
-         await dependencies.authorize?.(request,workspaceId);
+         const timeoutMs = await repairTimeout(error);
          const repair={...imageParams,scheduledArtworkRepair:true,sceneOnly:false};
-         scene=await render(repair,{timeoutMs:Math.min(90_000,budget-22_000)});
+         scene=await render(repair,{timeoutMs});
          await verify(scene,repair);
        }
      }
@@ -284,7 +327,11 @@ export async function createSocialContent(request: Request, dependencies: {
     if (results[1].status !== 'fulfilled') throw new GenerationStageError(new ApiError(502, 'Voiceover Reels belum dapat dibuat. Silakan coba lagi.', 'reels_media_unavailable'), 'voiceover');
     const voice = results[1].value;
     progress('rendering');
-    const video = await (dependencies.renderVideo || renderReelsVideo)({ images: results[0].value, pcm: voice.pcm, sampleRate: voice.sampleRate, sceneWeights: draft.videoScenes.map(scene => scene.voiceover.trim().split(/\s+/).length) });
+    const video = await (dependencies.renderVideo || renderReelsVideo)({
+      images: results[0].value, pcm: voice.pcm, sampleRate: voice.sampleRate,
+      sceneWeights: draft.videoScenes.map(scene => scene.voiceover.trim().split(/\s+/).length),
+      useReviewedFrames: scheduledEditorial,
+    });
     progress('saving');
     media = await savePublicJpeg(workspaceId, 'renders', video.poster, dependencies.storage);
     const storedVideo = await savePublicMp4(workspaceId, video.mp4, dependencies.storage);

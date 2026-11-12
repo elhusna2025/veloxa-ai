@@ -21,6 +21,13 @@ export const REELS_ARTWORK = {
  screenshot: {left: 180, top: 1050, width: 620, height: 224},
 } satisfies Record<OriginalVisualAsset['role'], Rect>;
 
+export const scheduledReelsCopyAreas = (hasLogo: boolean) => ({
+  businessName: { left: hasLogo ? 262 : 70, top: 246, width: hasLogo ? 638 : 830, height: 62 },
+  headline: { left: 70, top: 375, width: 780, height: 310 },
+  cta: { left: 70, top: 1350, width: 810, height: 90 },
+  website: { left: 70, top: 1460, width: 810, height: 65 },
+}) satisfies Record<string, Rect>;
+
 async function placeOriginalAsset(asset: OriginalVisualAsset, box: Rect, deviceFrame: boolean): Promise<OverlayOptions[]> {
  const fitted = await sharp(asset.bytes,{limitInputPixels:30_000_000}).rotate().resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});
  const left = box.left + Math.floor((box.width - fitted.info.width) / 2);
@@ -56,6 +63,66 @@ export async function fitCompositionText(text: string, width: number, height: nu
   if(rendered.info.height<=height&&rendered.info.width<=width)return {data:rendered.data,fontSize:size,width:rendered.info.width,height:rendered.info.height};
  }
  throw new ApiError(422,'Teks yang dibuat AI belum muat dengan ukuran yang nyaman dibaca. Coba buat ulang dengan pesan yang lebih singkat.','visual_composition_invalid');
+}
+
+const linearColor = Array.from({ length: 256 }, (_, byte) => {
+  const channel = byte / 255;
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+});
+
+function reelsCopyRejected() {
+  return new ApiError(422, 'Teks Reels belum mendapatkan ruang yang cukup dan kontras yang aman. Slot ini tidak dikirim.', 'scheduled_artwork_rejected');
+}
+
+/** Add the exact copy over the original photo. Never add a scrim to force contrast. */
+export async function composeScheduledReelsCopy(
+  photo: Buffer,
+  copy: Record<keyof ReturnType<typeof scheduledReelsCopyAreas>, string>,
+  hasLogo: boolean,
+): Promise<Buffer> {
+  const width = 1080;
+  const height = 1920;
+  const pixels = await sharp(photo, { limitInputPixels: 30_000_000 }).rotate()
+    .resize(width, height, { fit: 'cover' }).toColourspace('srgb').removeAlpha().raw().toBuffer();
+  const areas = scheduledReelsCopyAreas(hasLogo);
+  const metrics = {
+    businessName: CONTENT_TYPOGRAPHY.brand, headline: CONTENT_TYPOGRAPHY.reelsTitle,
+    cta: CONTENT_TYPOGRAPHY.cta, website: CONTENT_TYPOGRAPHY.website,
+  };
+  const layers: OverlayOptions[] = [];
+  for (const key of Object.keys(areas) as Array<keyof typeof areas>) {
+    const box = areas[key];
+    const { max, min } = metrics[key];
+    const bold = key !== 'website';
+    let dark: Awaited<ReturnType<typeof fitCompositionText>>;
+    try {
+      dark = await fitCompositionText(copy[key], box.width, box.height, max, min, '#000000', bold);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'visual_composition_invalid') throw reelsCopyRejected();
+      throw error;
+    }
+    if (!dark) continue;
+    const mask = await sharp(dark.data).toColourspace('srgb').ensureAlpha().raw().toBuffer();
+    let darkest = 1;
+    let brightest = 0;
+    for (let y = 0; y < dark.height; y++) {
+      for (let x = 0; x < dark.width; x++) {
+        if (mask[(y * dark.width + x) * 4 + 3] < 220) continue;
+        const offset = ((box.top + y) * width + box.left + x) * 3;
+        const luminance = 0.2126 * linearColor[pixels[offset]] + 0.7152 * linearColor[pixels[offset + 1]] + 0.0722 * linearColor[pixels[offset + 2]];
+        darkest = Math.min(darkest, luminance);
+        brightest = Math.max(brightest, luminance);
+      }
+    }
+    const darkContrast = (darkest + 0.05) / 0.05;
+    const lightContrast = 1.05 / (brightest + 0.05);
+    if (darkest > brightest || Math.max(darkContrast, lightContrast) < 4.5) throw reelsCopyRejected();
+    const rendered = darkContrast >= lightContrast
+      ? dark
+      : await fitCompositionText(copy[key], box.width, box.height, dark.fontSize, dark.fontSize, '#FFFFFF', bold);
+    layers.push({ input: rendered!.data, left: box.left, top: box.top });
+  }
+  return sharp(pixels, { raw: { width, height, channels: 3 } }).composite(layers).jpeg({ quality: 96 }).toBuffer();
 }
 export function shortVisualCta(cta: string): string {return cta.trim().length<=36?cta.trim():'Pelajari selengkapnya';}
 export function visualWebsite(url?: string): string {if(!url)return '';try{const parsed=new URL(url);return ['https:','http:'].includes(parsed.protocol)&&!parsed.username&&!parsed.password?parsed.host:'';}catch{return '';}}

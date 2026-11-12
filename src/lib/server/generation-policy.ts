@@ -21,9 +21,13 @@ function validCount(value: unknown): number {
   if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0 || count >= Number.MAX_SAFE_INTEGER) throw new ApiError(503, 'Penggunaan pembuatan konten belum dapat diverifikasi. Silakan coba lagi.');
   return count;
 }
-export async function reserveGenerationAttempt(ref: DocumentReference, workspaceId: string, planId: SubscriptionPlanId): Promise<GenerationQuota> {
-  const day = wibDay();
-  const usage = ref.collection('generation_usage').doc(day);
+export async function reserveGenerationAttempt(
+  ref: DocumentReference,
+  workspaceId: string,
+  planId: SubscriptionPlanId,
+  scheduledJob?: DocumentReference,
+): Promise<GenerationQuota> {
+  const today = wibDay();
   const policyRef = ref.firestore.collection('platform_configs').doc(`generation_${workspaceId}`);
   return ref.firestore.runTransaction(async tx => {
     // Read policy and count in the same transaction so disabling conflicts with pending reservations.
@@ -31,8 +35,19 @@ export async function reserveGenerationAttempt(ref: DocumentReference, workspace
     try { config = (await tx.get(policyRef)).data(); }
     catch { /* An unverified policy never grants the development exemption. */ }
     const policy = policyFromConfig(config, workspaceId, planId);
+    const job = scheduledJob ? (await tx.get(scheduledJob)).data() : undefined;
+    if (scheduledJob && job?.state !== 'generating') {
+      throw new ApiError(409, 'Slot Otonom sudah berubah. Periksa jadwal sebelum melanjutkan.');
+    }
+    // Recovery belongs to the same slot and its original WIB reservation, including after midnight.
+    const reservedDay = typeof job?.generationQuotaDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(job.generationQuotaDay)
+      ? job.generationQuotaDay : undefined;
+    const day = reservedDay ?? today;
+    const usage = ref.collection('generation_usage').doc(day);
     const count = validCount((await tx.get(usage)).data()?.count);
+    if (reservedDay) return { ...policy, day, used: count };
     if (policy.dailyLimit !== null && count >= policy.dailyLimit) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.');
+    if (scheduledJob) tx.update(scheduledJob, { generationQuotaDay: day });
     tx.set(usage, { count: count + 1 });
     return { ...policy, day, used: count + 1 };
   });

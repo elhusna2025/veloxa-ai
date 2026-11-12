@@ -24,6 +24,7 @@ export interface ReelsRenderParams {
   pcm: Buffer;
   sampleRate: 24000;
   sceneWeights?: number[];
+  useReviewedFrames?: boolean;
 }
 
 export interface ReelsRenderResult {
@@ -68,11 +69,16 @@ export async function renderReelsVideo(params: ReelsRenderParams): Promise<Reels
     workDir = await mkdtemp(path.join(tmpdir(), 'veloxa-reels-'));
     const normalizedImages: Buffer[] = [];
     for (let index = 0; index < params.images.length; index += 1) {
-      const normalized = await sharp(params.images[index], { limitInputPixels: 60_000_000 })
-        .rotate()
-        .resize(WIDTH, HEIGHT, { fit: 'cover', position: 'centre' })
-        .jpeg({ quality: 88 })
-        .toBuffer();
+      const frame = params.images[index];
+      const image = sharp(frame, { limitInputPixels: 60_000_000 });
+      let normalized = frame;
+      if (params.useReviewedFrames) {
+        const { format, width, height, orientation } = await image.metadata();
+        if (format !== 'jpeg' || width !== WIDTH || height !== HEIGHT || (orientation && orientation !== 1)) throw INVALID_RENDER_INPUT;
+      } else {
+        normalized = await image.rotate().resize(WIDTH, HEIGHT, { fit: 'cover', position: 'centre' })
+          .jpeg({ quality: 88 }).toBuffer();
+      }
       normalizedImages.push(normalized);
       await writeFile(path.join(workDir, `scene${index}.jpg`), normalized);
     }
