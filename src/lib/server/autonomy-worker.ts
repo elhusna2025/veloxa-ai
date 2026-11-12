@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import type {DecodedIdToken} from 'firebase-admin/auth';
 import {adminDb} from './firebase';
 import type {requireWorkspace} from './auth';
@@ -9,7 +10,7 @@ import {profileFingerprint} from '../profile-fingerprint';
 import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource} from '../autonomy-rules';
 import {readSocialAccounts} from './social-accounts';
 import {createSocialContent} from './content';
-import {GenerationStageError} from './content-generation-stream';
+import {canRetryGeneration,recoveryTime} from './autonomy-recovery';
 import {publishSocialContent} from './publishing';
 import {publishMetaImage} from './meta-graph';
 import {publishMetaCarousel} from './meta-carousel';
@@ -21,84 +22,181 @@ import {assertNoAutonomyDispatch,createAutonomyDispatch} from './autonomy-dispat
 type Database=ReturnType<typeof adminDb>;
 type RuleRef=FirebaseFirestore.DocumentReference;
 interface Dependencies{database?:Database;create?:typeof createSocialContent;publish?:typeof publishSocialContent;now?:()=>number}
-/** Single durable slot claim; ambiguous generation/send is held, never blindly retried. */
+/** One durable slot claim; only failures known to precede a save/send can be retried. */
 export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
  const db=deps.database||adminDb();const now=deps.now||Date.now;const initial=(await ruleRef.get()).data();if(!initial?.enabled)return{state:'inactive'};
- let jobRef:RuleRef|undefined;let revision=initial.revision;let claimed=false;
+ const started=now();
+ const executionId=randomUUID();
+ const newDraftKey=`draft_${randomUUID()}`;
+ const reset={processingJob:null,processingRun:null,processingUntil:0};
+ let jobRef:RuleRef|undefined;let revision=initial.revision;let claimed=false;let generating=false;
  try{
   const claim=await db.runTransaction(async tx=>{
    const raw=(await tx.get(ruleRef)).data();if(!raw?.enabled||raw.revision!==initial.revision)return null;
-   if(raw.processingJob){if(raw.processingUntil>now())return null;tx.update(ruleRef.collection('jobs').doc(raw.processingJob),{state:'needs_attention',error:'Proses terputus. Periksa Studio dan akun sosial sebelum mengulang.',finishedAt:now()});tx.update(ruleRef,{enabled:false,revision:raw.revision+1,lastError:'Proses sebelumnya terputus. Periksa aktivitas dan akun sosial sebelum mengaktifkan kembali.'});return null;}
+   if(raw.processingJob){
+    if(raw.processingUntil>now())return null;
+    const interrupted=ruleRef.collection('jobs').doc(raw.processingJob);
+    const job=(await tx.get(interrupted)).data();
+    if(raw.processingRun&&job?.state==='publishing'&&job.ruleRevision===raw.revision&&job.draftId===job.draftKey&&typeof job.draftId==='string'){
+     const ledger=db.collection('workspaces').doc(raw.workspaceId).collection('publish_jobs').doc(job.draftId);
+     const saved=(await tx.get(ledger)).data();
+     if(saved?.state==='published'&&Array.isArray(saved.receipts)&&saved.receipts.length&&saved.receipts.every((receipt:{status?:unknown;externalPostId?:unknown})=>receipt?.status==='published'&&typeof receipt.externalPostId==='string'&&!!receipt.externalPostId)){
+      tx.update(interrupted,{state:'published',receipts:saved.receipts,error:'',retryAt:null,finishedAt:now()});
+      tx.update(ruleRef,{...reset,pendingJob:null,nextDueMs:raw.nextSlotMs,lastError:'',...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1}:{})});
+      return null;
+     }
+    }
+    // Only jobs with a fenced, atomic draft save are safe to recover after a worker crash.
+    if(raw.processingRun&&job&&job.ruleRevision===raw.revision&&job.draftKey&&(job.state==='generating'||job.state==='prepared'&&job.draftId===job.draftKey)){
+     const deadline=Math.min(job.scheduledAt+30*60_000,raw.nextSlotMs??Infinity);
+     const prepared=job.state==='prepared';
+     const retryAt=prepared?(now()<deadline?now():null):recoveryTime('generation',job.generationAttempts,job.scheduledAt,now(),raw.nextSlotMs);
+     if(retryAt!==null){
+      tx.update(interrupted,{state:prepared?'queued':'retry_generation',error:prepared?'':'Pembuatan konten terputus. Veloxa akan mencoba slot ini lagi.',retryAt:prepared?null:retryAt});
+      tx.update(ruleRef,{...reset,pendingJob:interrupted.id,nextDueMs:retryAt});
+     }else{
+      tx.update(interrupted,{state:'failed',retryAt:null,finishedAt:now(),error:'Waktu pemulihan slot ini sudah habis. Periksa aktivitas untuk melihat hasilnya.'});
+      tx.update(ruleRef,{...reset,pendingJob:null,nextDueMs:raw.nextSlotMs,...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1,lastError:'Waktu pemulihan slot terakhir sudah habis.'}:{})});
+     }
+     return null;
+    }
+    tx.update(interrupted,{state:'needs_attention',error:'Proses terputus. Periksa Studio dan akun sosial sebelum mengulang.',finishedAt:now()});
+    tx.update(ruleRef,{enabled:false,revision:raw.revision+1,lastError:'Proses sebelumnya terputus. Periksa aktivitas dan akun sosial sebelum mengaktifkan kembali.'});
+    return null;
+   }
+   if(typeof raw.nextDueMs==='number'&&raw.nextDueMs>now())return null;
    const config=autonomyConfigSchema.parse(raw.config);const ref=db.collection('workspaces').doc(raw.workspaceId);await assertNoAutonomyDispatch(tx,ref);const ws=(await tx.get(ref)).data();if(!ws||ws.ownerUid!==raw.ownerUid)throw new ApiError(409,'Pemilik workspace berubah. Tinjau ulang aturan otomatis.');
    const {context}=await resolveBusinessContext(ref,ws,raw.businessId,tx);if(await profileFingerprint(context.brand)!==raw.profileFingerprint)throw new ApiError(409,'Profil bisnis berubah. Tinjau dan aktifkan kembali aturan dengan profil terbaru.');validateAutonomySource(config,context.brand);
    const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);if(config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah atau izinnya berakhir. Periksa akun sebelum melanjutkan.');
    const pending=typeof raw.pendingJob==='string'?raw.pendingJob:null;
    if(!pending&&raw.nextSlotMs===null){tx.update(ruleRef,{enabled:false,revision:raw.revision+1,nextDueMs:null});return null;}
    if(!pending){const plan=SUBSCRIPTION_PLANS[Object.hasOwn(SUBSCRIPTION_PLANS,String(ws.subscriptionPlanId))?ws.subscriptionPlanId as keyof typeof SUBSCRIPTION_PLANS:'free_trial'];const used=Number((await tx.get(ref.collection('publish_usage').doc(wibMonth()))).data()?.count||0);if(!Number.isSafeInteger(used)||used<0||used>=plan.monthlyPostQuota)throw new ApiError(429,'Kuota publikasi bulan ini habis. Aturan dijeda sebelum membuat konten.');if(config.connectionIds.some(id=>!plan.allowedChannels.includes(accounts.find(account=>account.connectionId===id)!.channel)))throw new ApiError(403,'Kanal tujuan tidak tersedia dalam paket workspace.');}const slot=raw.nextSlotMs;if(!pending&&slot>now())return null;const id=pending||'slot_'+slot;const job=ruleRef.collection('jobs').doc(id);const previous=(await tx.get(job)).data();
-   if(pending){if(!previous?.draftId||previous.state!=='queued'||previous.ruleRevision!==raw.revision)throw new ApiError(409,'Antrean publikasi perlu diperiksa; tidak dikirim ulang otomatis.');}
+   const retryGeneration=previous?.state==='retry_generation';
+   const retryPublication=previous?.state==='retry_publication';
+   if(pending){
+    const validJob=!!previous&&previous.ruleRevision===raw.revision&&(retryGeneration?!previous.draftId&&Number.isSafeInteger(previous.contentSequence):(retryPublication||previous.state==='queued')&&!!previous.draftId);
+    if(!validJob)throw new ApiError(409,'Antrean publikasi perlu diperiksa; tidak dikirim ulang otomatis.');
+    if((retryGeneration||retryPublication)&&(now()>=previous!.scheduledAt+30*60_000||raw.nextSlotMs!==null&&now()>=raw.nextSlotMs)){
+     tx.update(job,{state:'failed',retryAt:null,finishedAt:now(),error:'Waktu pemulihan slot ini sudah habis. Periksa aktivitas untuk melihat hasilnya.'});
+     tx.update(ruleRef,{pendingJob:null,nextDueMs:raw.nextSlotMs,...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1,lastError:'Waktu pemulihan slot terakhir sudah habis.'}:{})});
+     return null;
+    }
+   }
    else if(previous)throw new ApiError(409,'Slot ini sudah pernah diproses. Periksa aktivitas sebelum mengulang.');
-   const sequence=raw.sequence||0;const input=autonomyContentInput(config,context.brand,sequence,raw.recentTitles||[]);const future=nextConfiguredAutonomySlot(config,now());
+   const sequence=raw.sequence||0;
+   const input=autonomyContentInput(config,context.brand,retryGeneration?previous!.contentSequence:sequence,raw.recentTitles||[]);
+   const future=nextConfiguredAutonomySlot(config,now());
    if(!pending&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});return null;}
-   if(!pending)tx.create(job,{state:'generating',scheduledAt:slot,createdAt:now(),ruleRevision:raw.revision,topic:input.topic,format:input.format});else tx.update(job,{state:'publishing'});
-   tx.update(ruleRef,{processingJob:id,processingUntil:now()+15*60000,pendingJob:null,...(!pending?{nextSlotMs:future,nextDueMs:now()+15*60000,sequence:sequence+1}:{})});
-   return{raw,config,ref,job,input,pendingDraft:previous?.draftId as string|undefined};
+   const generationAttempts=retryGeneration?(previous!.generationAttempts||1)+1:previous?.generationAttempts||1;
+   const publicationAttempts=retryPublication?(previous!.publicationAttempts||1)+1:previous?.publicationAttempts||1;
+   const scheduledAt=(previous?.scheduledAt??slot) as number;
+   const draftKey=previous?.draftKey as string|undefined||newDraftKey;
+   if(!pending)tx.create(job,{state:'generating',scheduledAt,createdAt:now(),ruleRevision:raw.revision,contentSequence:sequence,draftKey,generationAttempts,publicationAttempts,topic:input.topic,format:input.format});
+   else tx.update(job,{state:retryGeneration?'generating':'publishing',retryAt:null,error:'',generationAttempts,publicationAttempts});
+   const processingUntil=now()+6*60_000;
+   tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,...(!pending?{nextSlotMs:future,sequence:sequence+1}:{})});
+   return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt};
   });
   if(!claim)return{state:'idle'};jobRef=claim.job;claimed=true;revision=claim.raw.revision;
-  const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id)throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const ws=(await tx.get(claim.ref)).data();if(!ws||ws.ownerUid!==claim.raw.ownerUid)throw new ApiError(403,'Pemilik workspace berubah.');const {context}=await resolveBusinessContext(claim.ref,ws,claim.raw.businessId,tx);if(await profileFingerprint(context.brand)!==claim.raw.profileFingerprint)throw new ApiError(409,'Profil berubah saat proses berjalan. Tinjau draf sebelum terbit.');const accounts=readSocialAccounts((await tx.get(claim.ref.collection('private_meta_connections'))).docs);if(claim.config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah. Pengiriman dihentikan.');for(const assetId of new Set([...claim.config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){const asset=(await tx.get(claim.ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,claim.ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==claim.raw.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');}return ws;};
+  const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const ws=(await tx.get(claim.ref)).data();if(!ws||ws.ownerUid!==claim.raw.ownerUid)throw new ApiError(403,'Pemilik workspace berubah.');const {context}=await resolveBusinessContext(claim.ref,ws,claim.raw.businessId,tx);if(await profileFingerprint(context.brand)!==claim.raw.profileFingerprint)throw new ApiError(409,'Profil berubah saat proses berjalan. Tinjau draf sebelum terbit.');const accounts=readSocialAccounts((await tx.get(claim.ref.collection('private_meta_connections'))).docs);if(claim.config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah. Pengiriman dihentikan.');for(const assetId of new Set([...claim.config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){const asset=(await tx.get(claim.ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,claim.ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==claim.raw.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');}return ws;};
   const assertActive=async()=>db.runTransaction(checkActive);
   const authorize:typeof requireWorkspace=async(_request,workspaceId)=>{if(workspaceId!==claim.ref.id)throw new ApiError(403,'Workspace tidak sesuai.');const workspace=await assertActive();return{workspace,ref:claim.ref,workspaceId:claim.ref.id,user:{uid:claim.raw.ownerUid} as DecodedIdToken};};
   let draftId=claim.pendingDraft;let title='';
-  if(!draftId){const result=await(deps.create||createSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({...claim.input,expectedProfileFingerprint:claim.raw.profileFingerprint})}),{authorize,source:'autonomous_agent'});draftId=result.draft.id;title=result.draft.title;await jobRef.update({draftId,topic:title,state:'publishing'});}
-  await assertActive();
-  // Claim the durable dispatch fence atomically with activation/account checks.
-  const guardedFetch=createAutonomyDispatch(claim.ref,checkActive);
-  const result=await(deps.publish||publishSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({workspaceId:claim.ref.id,draftId})}),{authorize,database:db,publisher:params=>publishMetaImage(params,{fetcher:guardedFetch}),carouselPublisher:params=>publishMetaCarousel(params,{fetcher:guardedFetch}),reelPublisher:params=>publishMetaReel(params,{fetcher:guardedFetch})});
-  const state=result.hasMore?'queued':result.draft.status==='published'?'published':result.draft.status==='needs_attention'?'needs_attention':'failed';
+  if(!draftId){
+   generating=true;
+   const result=await(deps.create||createSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({...claim.input,expectedProfileFingerprint:claim.raw.profileFingerprint})}),{
+    authorize,source:'autonomous_agent',scheduledRepairBudget:()=>started+235_000-now(),
+    scheduledDraft:{id:claim.draftKey,persist:async(draftRef,record)=>db.runTransaction(async tx=>{
+     await checkActive(tx);
+     tx.create(draftRef,record);
+     tx.update(claim.job,{draftId:claim.draftKey,topic:record.draft.title,state:'prepared'});
+    })},
+   });
+   generating=false;
+   draftId=result.draft.id;title=result.draft.title;
+   // Give a slow generation its own invocation rather than starting a send near the request deadline.
+   if(now()-started>150_000){
+    const queued=await db.runTransaction(async tx=>{
+     const current=(await tx.get(ruleRef)).data();
+     if(current?.processingJob!==claim.job.id||current.processingRun!==executionId)return false;
+     const active=current.enabled&&current.revision===revision;
+     tx.update(claim.job,{draftId,topic:title,...(active?{state:'queued'}:{state:'cancelled',finishedAt:now()})});
+     tx.update(ruleRef,{...reset,...(active?{pendingJob:claim.job.id,nextDueMs:now()}:{})});
+     return active;
+    });
+    return{state:queued?'queued':'cancelled',draftId};
+   }
+  }
   await db.runTransaction(async tx=>{
+   await checkActive(tx);
+   if(!claim.pendingDraft)tx.update(claim.job,{draftId,topic:title,state:'publishing'});
+  });
+  // Claim the durable dispatch fence atomically with activation/account checks.
+  const guardedFetch=createAutonomyDispatch(claim.ref,checkActive,fetch,()=>started+255_000-now());
+  const result=await(deps.publish||publishSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({workspaceId:claim.ref.id,draftId})}),{authorize,database:db,retryTransientFailures:claim.retryPublication,stopOnUnknown:true,publisher:params=>publishMetaImage(params,{fetcher:guardedFetch}),carouselPublisher:params=>publishMetaCarousel(params,{fetcher:guardedFetch}),reelPublisher:params=>publishMetaReel(params,{fetcher:guardedFetch})});
+  const outcome=result.hasMore?'queued':result.draft.status==='published'?'published':result.draft.status==='needs_attention'?'needs_attention':'failed';
+  const state=await db.runTransaction(async tx=>{
    const current=(await tx.get(ruleRef)).data();
-   tx.update(jobRef!,{state,draftId,receipts:JSON.parse(JSON.stringify(result.receipts)),finishedAt:now()});
-   if(current?.processingJob!==jobRef!.id)return;
-   const reset={processingJob:null,processingUntil:0};
-   if(current.revision!==revision){tx.update(ruleRef,reset);return;}
-   const queued=state==='queued';
-   const failed=state==='failed'||state==='needs_attention';
+   if(current?.processingJob!==jobRef!.id||current.processingRun!==executionId)return outcome;
+   const active=current.enabled&&current.revision===revision;
+   const transient=outcome==='failed'&&result.receipts.some(receipt=>receipt.status==='failed'&&receipt.retryable===true);
+   const retryAt=active&&transient?recoveryTime('publication',claim.publicationAttempts,claim.scheduledAt,now(),current.nextSlotMs):null;
+   const state=retryAt?'retry_publication':!active&&outcome==='queued'?'cancelled':outcome;
+   const queued=state==='queued'||state==='retry_publication';
+   const error=state==='retry_publication'?'Gangguan sementara. Veloxa akan mencoba lagi hanya untuk akun yang belum menerima konten.':
+    state==='needs_attention'||state==='failed'?'Publikasi belum lengkap. Periksa hasil per akun di aktivitas dan Studio.':'';
+   tx.update(jobRef!,{state,draftId,receipts:JSON.parse(JSON.stringify(result.receipts)),retryAt,error,finishedAt:queued?null:now()});
+   if(!active){tx.update(ruleRef,reset);return state;}
+   const hold=state==='needs_attention'||state==='failed'&&!transient;
    tx.update(ruleRef,{
     ...reset,
     pendingJob:queued?jobRef!.id:null,
-    nextDueMs:queued?now()+60000:current.nextSlotMs,
-    ...(!queued&&(failed||current.nextSlotMs===null)?{enabled:false,revision:revision+1}:{}),
-    ...(failed?{lastError:'Publikasi belum lengkap. Periksa hasil per akun di aktivitas dan Studio.'}:{}),
+    nextDueMs:retryAt??(queued?now()+60000:current.nextSlotMs),
+    ...(!queued&&(hold||current.nextSlotMs===null)?{enabled:false,revision:revision+1}:{}),
+    lastError:!queued&&(hold||current.nextSlotMs===null)?error:'',
     ...(title?{recentTitles:[title,...(current.recentTitles||[])].slice(0,10)}:{}),
    });
+   return state;
   });
   return{state,draftId};
  }catch(error){
   const message=error instanceof ApiError?error.message:'Proses otomatis belum selesai. Periksa draf dan akun sosial sebelum mengaktifkan kembali.';
-  const visualRejected=claimed&&error instanceof GenerationStageError&&error.stage==='compositing'&&error.code==='scheduled_artwork_rejected';
-  const state=claimed&&!visualRejected?'needs_attention':'failed';
+  const recoverable=claimed&&generating&&canRetryGeneration(error);
+  const state=claimed&&!recoverable?'needs_attention':'failed';
   // Saving the error is best effort. A failed write leaves the lease to stop unsafe retries.
-  await db.runTransaction(async tx=>{
+  const resolved=await db.runTransaction(async tx=>{
    const current=(await tx.get(ruleRef)).data();
-   if(jobRef)tx.set(jobRef,{state,error:message,finishedAt:now()},{merge:true});
-   if(!current)return;
-   const reset={processingJob:null,processingUntil:0};
-   const ownsJob=!!jobRef&&current.processingJob===jobRef.id;
-   if(current.revision!==revision){if(ownsJob)tx.update(ruleRef,reset);return;}
-   if(visualRejected){
-    if(!ownsJob)return;
+   if(!current)return state;
+   const ownsJob=!!jobRef&&current.processingJob===jobRef.id&&current.processingRun===executionId;
+   if((claimed||current.processingJob)&&!ownsJob)return state;
+   if(current.revision!==revision){
+    if(ownsJob){tx.update(jobRef!,{state:generating?'cancelled':state,error:message,finishedAt:now()});tx.update(ruleRef,reset);}
+    return generating?'cancelled':state;
+   }
+   if(recoverable&&ownsJob){
+    const job=(await tx.get(jobRef!)).data()!;
+    const retryAt=recoveryTime('generation',job.generationAttempts,job.scheduledAt,now(),current.nextSlotMs);
     const hasNextSlot=typeof current.nextSlotMs==='number';
+    const nextState=retryAt?'retry_generation':'failed';
+    tx.update(jobRef!,{state:nextState,error:message,retryAt,finishedAt:retryAt?null:now()});
     tx.update(ruleRef,{
      ...reset,
-     pendingJob:null,
-     nextDueMs:hasNextSlot?current.nextSlotMs:null,
-     lastError:hasNextSlot?'':message,
-     ...(hasNextSlot?{}:{enabled:false,revision:revision+1}),
+     pendingJob:retryAt?jobRef!.id:null,
+     nextDueMs:retryAt??(hasNextSlot?current.nextSlotMs:null),
+     lastError:hasNextSlot||retryAt?'':message,
+     ...(hasNextSlot||retryAt?{}:{enabled:false,revision:revision+1}),
     });
-    return;
+    return nextState;
+   }
+   if(jobRef&&ownsJob)tx.update(jobRef,{state,error:message,finishedAt:now()});
+   else if(current.pendingJob){
+    const pending=ruleRef.collection('jobs').doc(current.pendingJob);
+    if((await tx.get(pending)).exists)tx.update(pending,{state:'failed',retryAt:null,error:message,finishedAt:now()});
    }
    tx.update(ruleRef,{...reset,enabled:false,revision:revision+1,pendingJob:null,lastError:message});
-  }).catch(()=>{});
-  return{state:visualRejected?'failed':'needs_attention',error:message};
+   return state;
+  }).catch(()=>'needs_attention');
+  return{state:resolved,error:message};
  }
 }
 export async function tickAutonomy(){

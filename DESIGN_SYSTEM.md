@@ -115,6 +115,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Jangan menampilkan persen atau waktu selesai palsu. Jangan mengklaim berhasil ketika hanya permintaan yang terkirim.
 - Hasil jaringan yang belum pasti tidak boleh memicu generasi atau kiriman ganda. Tawarkan pemeriksaan hasil proses yang sama.
 - Untuk publikasi otomatis, tampilkan akun, bahan, format, hari/jam WIB, dan ringkasan sebelum aktivasi. Simpan aturan tidak mengaktifkannya. Status Sedang menjeda berbeda dari sudah dijeda.
+- Aktivitas otomatis membedakan konten yang akan diperbaiki, pengiriman yang akan dicoba lagi, dan hasil yang perlu diperiksa. Tampilkan waktu percobaan berikutnya dalam WIB saat sudah dijadwalkan. Tandai terbit hanya setelah kanal mengonfirmasi.
 
 ## Aksesibilitas dan responsivitas
 

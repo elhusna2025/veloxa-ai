@@ -73,6 +73,8 @@ export async function createSocialContent(request: Request, dependencies: {
   generate?: typeof generateContentWithSavedAgent;
   renderImage?: typeof generateSocialPostImage;
   verifyArtwork?: typeof verifyScheduledArtwork;
+  scheduledRepairBudget?: () => number;
+  scheduledDraft?: {id:string;persist:(ref:FirebaseFirestore.DocumentReference,record:FirebaseFirestore.DocumentData)=>Promise<void>};
   generateVoice?: typeof generateReelsVoiceover;
   renderVideo?: typeof renderReelsVideo;
   onProgress?: (progress: GenerationProgress) => void;
@@ -141,7 +143,9 @@ export async function createSocialContent(request: Request, dependencies: {
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId);
   progress('script');
   const generated = await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), ...(carouselPlan ? { carouselPlan } : {}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
-  const draft: ContentDraft = { ...generated.draft, id: `draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
+  if(scheduledEditorial&&!generated.draft.qualityReview.passed)throw new ApiError(422,'Naskah belum lolos pemeriksaan. Veloxa perlu menyusunnya ulang.','scheduled_script_rejected');
+  const scheduledDraft=scheduledEditorial?dependencies.scheduledDraft:undefined;
+  const draft: ContentDraft = { ...generated.draft, id: scheduledDraft?.id??`draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   if (carouselPlan) {
     draft.slides = carouselPlan.map(({headline, body, visualDirection}, index) => ({
       headline, body, visualDirection, slideNumber: index + 1, badgeText: `${index + 1}/5`,
@@ -237,11 +241,24 @@ export async function createSocialContent(request: Request, dependencies: {
       hasOriginalLogo: originalAssets.some(asset => asset.role === 'logo'),
       hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
     } : params;
-    const scene=await(dependencies.renderImage||generateSocialPostImage)({...imageParams,sceneOnly:!editorial});
+    const render=dependencies.renderImage||generateSocialPostImage;
+    let scene=await render({...imageParams,sceneOnly:!editorial});
     if(stage!=='compositing')progress('compositing');
     let composed:Buffer;
     try{
-     if (scheduledEditorial) await (dependencies.verifyArtwork || verifyScheduledArtwork)(scene,imageParams);
+     if (scheduledEditorial) {
+       const verify=dependencies.verifyArtwork||verifyScheduledArtwork;
+       try{await verify(scene,imageParams);}
+       catch(error){
+         const budget=dependencies.scheduledRepairBudget?.()??90_000;
+         if(!(error instanceof ApiError)||error.code!=='scheduled_artwork_rejected'||budget<45_000)throw error;
+         // Recheck the rule before spending another image request. Never change the approved copy or references.
+         await dependencies.authorize?.(request,workspaceId);
+         const repair={...imageParams,scheduledArtworkRepair:true,sceneOnly:false};
+         scene=await render(repair,{timeoutMs:Math.min(90_000,budget-22_000)});
+         await verify(scene,repair);
+       }
+     }
      if (editorial) {
        composed = await finishEditorialCarousel(scene,originalAssets,params.aspectRatio==='9:16');
        if (params.aspectRatio !== '9:16') return composed;
@@ -313,7 +330,10 @@ export async function createSocialContent(request: Request, dependencies: {
   }
   const targetAccounts = Object.fromEntries(draft.publishTargets.map(target => [target.channel, target.accountId]));
   const targetProviders = Object.fromEntries(selected.docs.map(doc => doc.data() as StoredMetaConnection).filter(connection => draft.targetChannels.includes(connection.channel)).map(connection => [connection.channel, getMetaLoginProvider(connection.loginProvider)]));
-  await ref.collection('social_drafts').doc(draft.id).create(JSON.parse(JSON.stringify({ draft, targetBindings, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(),...(input.operationId?{operationId:input.operationId}:{}), engineMode: generated.engineMode, profileFingerprint:fingerprint, snapshotRevision:draft.profileContext.snapshotRevision, forbiddenWordsAtGeneration:brand.forbiddenWords })));
+  const draftRef=ref.collection('social_drafts').doc(draft.id);
+  const record=JSON.parse(JSON.stringify({ draft, targetBindings, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(),...(input.operationId?{operationId:input.operationId}:{}), engineMode: generated.engineMode, profileFingerprint:fingerprint, snapshotRevision:draft.profileContext.snapshotRevision, forbiddenWordsAtGeneration:brand.forbiddenWords }));
+  if(scheduledDraft)await scheduledDraft.persist(draftRef,record);
+  else await draftRef.create(record);
   return { draft, engineMode: generated.engineMode, generationQuota };
   } catch (error) {
     if (error instanceof GenerationStageError) throw error;

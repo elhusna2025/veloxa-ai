@@ -1,5 +1,5 @@
 import { ApiError } from './http';
-import { graphRequest, getMetaLoginProvider, MetaRequestError, type MetaChannel, type MetaLoginProvider } from './meta-graph';
+import { graphRequest, getMetaLoginProvider, MetaRequestError, prepareMetaMedia, type MetaChannel, type MetaLoginProvider } from './meta-graph';
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const IMAGE_COUNT = 5;
@@ -30,14 +30,6 @@ function validate(params: CarouselParams) {
   }
 }
 
-async function definitive<T>(operation: () => Promise<T>): Promise<T> {
-  try { return await operation(); }
-  catch (error) {
-    if (error instanceof MetaRequestError) throw new MetaRequestError(error.message, false, error.providerCode);
-    throw new MetaRequestError('Meta menolak permintaan sebelum publikasi selesai.');
-  }
-}
-
 export async function publishMetaCarousel(
   params: CarouselParams,
   deps: Dependencies = {},
@@ -52,7 +44,7 @@ export async function publishMetaCarousel(
   if (params.channel === 'instagram') {
     const childIds: string[] = [];
     for (const image of params.images) {
-      const child = await definitive(() => request<{ id?: string }>(`${params.accountId}/media`, 'POST', {
+      const child = await prepareMetaMedia(() => request<{ id?: string }>(`${params.accountId}/media`, 'POST', {
         image_url: image.imageUrl,
         is_carousel_item: 'true',
       }));
@@ -63,15 +55,15 @@ export async function publishMetaCarousel(
     for (const childId of childIds) {
       let childFinished = false;
       for (let attempt = 0; attempt < 12; attempt++) {
-        const state = await definitive(() => request<{ status_code?: string }>(childId, 'GET', { fields: 'status_code' }));
+        const state = await prepareMetaMedia(() => request<{ status_code?: string }>(childId, 'GET', { fields: 'status_code' }));
         if (state.status_code === 'FINISHED') { childFinished = true; break; }
         if (state.status_code === 'ERROR' || state.status_code === 'EXPIRED') throw new MetaRequestError('Instagram gagal memproses gambar carousel. Periksa format dan akses media.');
         await sleep(1500);
       }
-      if (!childFinished) throw new MetaRequestError('Instagram masih memproses gambar carousel. Belum ada posting diterbitkan.');
+      if (!childFinished) throw new MetaRequestError('Instagram masih memproses gambar carousel. Belum ada posting diterbitkan.',false,undefined,true);
     }
 
-    const parent = await definitive(() => request<{ id?: string }>(`${params.accountId}/media`, 'POST', {
+    const parent = await prepareMetaMedia(() => request<{ id?: string }>(`${params.accountId}/media`, 'POST', {
       media_type: 'CAROUSEL',
       children: childIds.join(','),
       caption: params.caption,
@@ -80,20 +72,20 @@ export async function publishMetaCarousel(
 
     let parentFinished = false;
     for (let attempt = 0; attempt < 12; attempt++) {
-      const state = await definitive(() => request<{ status_code?: string }>(parent.id!, 'GET', { fields: 'status_code' }));
+      const state = await prepareMetaMedia(() => request<{ status_code?: string }>(parent.id!, 'GET', { fields: 'status_code' }));
       if (state.status_code === 'FINISHED') { parentFinished = true; break; }
       if (state.status_code === 'ERROR' || state.status_code === 'EXPIRED') throw new MetaRequestError('Instagram gagal memproses carousel. Periksa format dan akses media.');
       await sleep(1500);
     }
-    if (!parentFinished) throw new MetaRequestError('Instagram masih memproses carousel. Belum ada posting diterbitkan.');
+    if (!parentFinished) throw new MetaRequestError('Instagram masih memproses carousel. Belum ada posting diterbitkan.',false,undefined,true);
 
     let published: { id?: string };
     try { published = await request<{ id?: string }>(`${params.accountId}/media_publish`, 'POST', { creation_id: parent.id }); }
     catch (error) {
-      if (error instanceof MetaRequestError) throw error;
+      if (error instanceof ApiError) throw error;
       throw new MetaRequestError('Hasil publikasi Instagram belum dapat dipastikan. Periksa akun sebelum mencoba ulang.', true);
     }
-    if (!published.id || !/^\d+$/.test(published.id)) throw new MetaRequestError('Hasil publikasi Instagram belum dapat dipastikan.', true);
+    if (typeof published.id!=='string' || !/^\d+$/.test(published.id)) throw new MetaRequestError('Hasil publikasi Instagram belum dapat dipastikan.', true);
 
     let permalink: string | undefined;
     try { permalink = (await request<{ permalink?: string }>(published.id, 'GET', { fields: 'permalink' })).permalink; }
@@ -106,7 +98,7 @@ export async function publishMetaCarousel(
     const form = new FormData();
     form.set('source', new Blob([new Uint8Array(image.imageBytes)], { type: 'image/jpeg' }), 'veloxa.jpg');
     form.set('published', 'false');
-    const photo = await definitive(() => request<{ id?: string }>(`${params.accountId}/photos`, 'POST', form));
+    const photo = await prepareMetaMedia(() => request<{ id?: string }>(`${params.accountId}/photos`, 'POST', form));
     if (!photo.id || !/^\d+$/.test(photo.id)) throw new MetaRequestError('Meta belum mengembalikan ID foto Page yang valid.');
     photoIds.push(photo.id);
   }
@@ -118,9 +110,9 @@ export async function publishMetaCarousel(
       attached_media: JSON.stringify(photoIds.map(media_fbid => ({ media_fbid }))),
     });
   } catch (error) {
-    if (error instanceof MetaRequestError) throw error;
+    if (error instanceof ApiError) throw error;
     throw new MetaRequestError('Hasil publikasi Facebook belum dapat dipastikan. Periksa Page sebelum mencoba ulang.', true);
   }
-  if (!published.id || !/^\d+(?:_\d+)?$/.test(published.id)) throw new MetaRequestError('Hasil publikasi Facebook belum dapat dipastikan.', true);
+  if (typeof published.id!=='string' || !/^\d+(?:_\d+)?$/.test(published.id)) throw new MetaRequestError('Hasil publikasi Facebook belum dapat dipastikan.', true);
   return { externalPostId: published.id, permalink: `https://www.facebook.com/${encodeURIComponent(published.id)}` };
 }

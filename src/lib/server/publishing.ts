@@ -28,6 +28,7 @@ export interface PublishReceipt {
   externalPostId?: string;
   permalink?: string;
   error?: string;
+  retryable?: boolean;
   publishedAt?: string;
 }
 const clean = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -47,6 +48,9 @@ export async function publishSocialContent(request: Request, dependencies: {
   carouselPublisher?: typeof publishMetaCarousel;
   reelPublisher?: typeof publishMetaReel;
   decrypt?: typeof decryptMetaToken;
+  /** Server-side continuation of an autonomous draft; never retry unknown or permanent outcomes. */
+  retryTransientFailures?: boolean;
+  stopOnUnknown?: boolean;
   now?:()=>number;
 } = {}) {
   const input = publishInput.parse(await readJson(request));
@@ -85,7 +89,7 @@ export async function publishSocialContent(request: Request, dependencies: {
     const job = jobSnap.data();
     const workspace = wsSnap.data();
     if (!workspace || !hasWorkspaceAccess(user.uid, workspace, isVerifiedAdmin(user))) throw new ApiError(403, 'Akses workspace telah berubah.');
-    if (job?.state === 'processing' || job?.state === 'needs_attention') throw new ApiError(409, 'Publikasi sedang diproses atau hasilnya perlu diperiksa di akun Meta. Jangan kirim ulang.', 'delivery_in_progress');
+    if (job?.state === 'processing' || job?.state === 'needs_attention' || dependencies.retryTransientFailures&&job?.state==='queued') throw new ApiError(409, 'Publikasi sedang diproses atau hasilnya perlu diperiksa di akun Meta. Jangan kirim ulang.', 'delivery_in_progress');
     const receipts = ((job?.receipts || []) as PublishReceipt[]).map(receipt=>{
       const matches=targets.filter(target=>receipt.connectionId?target.connectionId===receipt.connectionId:target.channel===receipt.channel);
       if(matches.length!==1)throw new ApiError(409,'Riwayat publikasi perlu diperiksa sebelum mengirim ulang.','delivery_unknown');
@@ -97,12 +101,18 @@ export async function publishSocialContent(request: Request, dependencies: {
     const generatedWords=stored.forbiddenWordsAtGeneration??[];
     if(!Array.isArray(currentWords)||!Array.isArray(generatedWords)||[...currentWords,...generatedWords].some(word=>typeof word!=='string'))throw new ApiError(409,'Daftar kata yang dihindari belum valid. Periksa profil bisnis.');
     if(forbiddenContentMatches(draft,[...currentWords,...generatedWords]).length)throw new ApiError(409,'Konten memuat kata yang dihindari dalam profil bisnis. Perbaiki atau buat draf baru sebelum menerbitkan.','content_policy_violation');
-    const remainingTargets:string[]=job?.state==='queued' ? z.array(z.string()).max(50).parse(job.remainingTargets) : targets.filter(target=>!receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='published')).map(target=>target.connectionId);
+    const remainingTargets:string[]=job?.state==='queued'
+      ? z.array(z.string()).max(50).parse(job.remainingTargets)
+      : targets.filter(target=>dependencies.retryTransientFailures
+        ? receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='failed'&&receipt.retryable===true)
+        : !receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='published')).map(target=>target.connectionId);
     if(new Set(remainingTargets).size!==remainingTargets.length||remainingTargets.some(id=>!targets.some(target=>target.connectionId===id)))throw new ApiError(409,'Antrean tujuan publikasi tidak valid.','delivery_unknown');
+    if(dependencies.retryTransientFailures&&!remainingTargets.length)return { alreadyPublished: false, nothingToRetry: true, receipts };
     for(const target of targets){
       // Continuations record an unavailable destination as its own failure in the loop below.
       // A single disconnected account must not hold the remaining approved queue hostage.
       if(job?.state==='queued')continue;
+      if(!remainingTargets.includes(target.connectionId))continue;
       if(receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='published'))continue;
       assertTargetBinding(accounts.find(account=>account.connectionId===target.connectionId),target);
       try{assertBusinessTargets(contexts,context.id,[target.connectionId],!draft.businessId&&contexts.length===1&&context.revision===0);}catch(error){throw new ApiError(409,error instanceof Error?error.message:'Akun tidak sesuai bisnis.','business_target_mismatch');}
@@ -123,6 +133,7 @@ export async function publishSocialContent(request: Request, dependencies: {
     return { alreadyPublished: false, receipts, remainingTargets };
   });
   if (claim.alreadyPublished) return { draft: { ...draft, status: 'published' }, receipts: claim.receipts, quotaUsed: Number((await usageRef.get()).data()?.count || 0) };
+  if (claim.nothingToRetry) return {draft:{...draft,status:publicationState(claim.receipts)},receipts:claim.receipts,quotaUsed:Number((await usageRef.get()).data()?.count||0)};
 
   const receipts:PublishReceipt[] = [...claim.receipts];
   const remainingTargets=[...(claim.remainingTargets||[])];
@@ -139,15 +150,18 @@ export async function publishSocialContent(request: Request, dependencies: {
     if (previous >= 0) receipts.splice(previous, 1);
     let receipt: PublishReceipt;
     let dispatched = false;
+    let loadingMedia = false;
     let connection: StoredAccount | undefined;
     try {
       connection=readSocialAccounts((await ref.collection('private_meta_connections').get()).docs).find(account=>account.connectionId===target.connectionId);
       assertTargetBinding(connection,target);
       const loginProvider=target.loginProvider;
       const storage = dependencies.storage || adminBucket();
+      loadingMedia = true;
       const mediaBytes = draft.format === 'carousel'
         ? await Promise.all(stored.storagePaths.map(async (path: string) => (await storage.file(path).download())[0]))
         : [(await storage.file(draft.format === 'short_video' ? stored.videoStoragePath : stored.storagePath).download())[0]];
+      loadingMedia = false;
       // Media loading may take time: honor a disconnect/provider change immediately before dispatch.
       connection=readSocialAccounts((await ref.collection('private_meta_connections').get()).docs).find(account=>account.connectionId===target.connectionId);
       assertTargetBinding(connection,target);
@@ -169,7 +183,9 @@ export async function publishSocialContent(request: Request, dependencies: {
         await ref.collection('private_meta_connections').doc(connection.storageId).update({ expiresAt: Date.now() - 1 }).catch(() => undefined);
         await ref.collection('connections').doc(connection.storageId).update({ connected: false, oauthMode: 'pending_review' }).catch(() => undefined);
       }
-      receipt = { channel, status: error instanceof MetaRequestError && error.uncertain ? 'unknown' : error instanceof ApiError || !dispatched ? 'failed' : 'unknown', error: error instanceof ApiError ? error.message : dispatched ? 'Hasil publikasi belum dapat dipastikan. Periksa akun sebelum mencoba ulang.' : 'Media atau koneksi belum dapat dibaca. Belum ada konten dikirim ke kanal ini.' };
+      const status=error instanceof MetaRequestError && error.uncertain ? 'unknown' : error instanceof ApiError || !dispatched ? 'failed' : 'unknown';
+      const retryable=status==='failed'&&(error instanceof MetaRequestError&&error.transient||error instanceof ApiError&&error.code==='autonomy_send_not_started'||loadingMedia&&error instanceof Error&&'code'in error&&[408,429,500,502,503,504,'ECONNRESET','ETIMEDOUT','EAI_AGAIN'].some(code=>code===error.code));
+      receipt = { channel, status, ...(retryable?{retryable:true}:{}), error: error instanceof ApiError ? error.message : dispatched ? 'Hasil publikasi belum dapat dipastikan. Periksa akun sebelum mencoba ulang.' : 'Media atau koneksi belum dapat dibaca. Belum ada konten dikirim ke kanal ini.' };
     }
     receipt={...receipt,connectionId:target.connectionId,accountId:target.accountId,accountName:target.accountName,handle:target.handle};
     receipts.push(clean(receipt));
@@ -180,6 +196,7 @@ export async function publishSocialContent(request: Request, dependencies: {
       await ref.collection('private_meta_connections').doc(connection!.storageId).update({ lastPublishedAt: receipt.publishedAt }).catch(() => undefined);
       await ref.collection('connections').doc(connection!.storageId).update({ lastPublishedAt: receipt.publishedAt }).catch(() => undefined);
     }
+    if(dependencies.stopOnUnknown&&receipt.status==='unknown')break;
   }
   const hasMore=remainingTargets.length>0&&!receipts.some(receipt=>receipt.status==='unknown');
   const state:ContentDraft['status']=receipts.some(receipt=>receipt.status==='unknown')?'needs_attention':hasMore?'publish_queued':publicationState(receipts);

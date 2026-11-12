@@ -251,6 +251,9 @@ test('autonomy records an unsent visual rejection and continues to the next date
    })as never,
    publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
   };
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');
+  clock+=120_000;
   assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');
   const firstJob=f.database.values.get(`${f.ruleRef.path}/jobs/slot_${firstSlot}`)!;
   assert.equal(firstJob.state,'failed');
@@ -261,10 +264,114 @@ test('autonomy records an unsent visual rejection and continues to the next date
   assert.equal(afterFirst.processingJob,null);
   assert.equal(published,0);
   clock=secondSlot+1000;
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,rejectLast?'failed':'published');
-  assert.deepEqual(created,['carousel','short_video']);
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,rejectLast?'retry_generation':'published');
+  if(rejectLast){clock+=120_000;assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');}
+  assert.deepEqual(created,rejectLast?['carousel','carousel','short_video','short_video']:['carousel','carousel','short_video']);
   assert.equal(published,rejectLast?0:1);
   assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);
+ }
+});
+
+test('an interrupted generation can resume the same slot, while the old invocation cannot save its draft',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ let clock=Date.now(),release!:()=>void,calls=0,publishes=0;
+ const gate=new Promise<void>(resolve=>release=resolve);
+ const keys:string[]=[];
+ const deps={
+  database:f.database as never,now:()=>clock,
+  create:(async(_request:Request,options:Parameters<typeof createSocialContent>[1])=>{
+   const draft=options!.scheduledDraft!;
+   keys.push(draft.id);
+   if(++calls===1)await gate;
+   const result={id:draft.id,title:'Arus kas'};
+   await draft.persist(f.ref.collection('social_drafts').doc(draft.id) as never,{draft:result});
+   return{draft:result};
+  })as never,
+  publish:(async()=>{publishes++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ const abandoned=processAutonomyRule(f.ruleRef as never,deps);
+ while(!calls)await new Promise(resolve=>setImmediate(resolve));
+ clock+=6*60_000+1;
+ await processAutonomyRule(f.ruleRef as never,deps);
+ const rule=()=>f.database.values.get(f.ruleRef.path)!;
+ const jobId=rule().pendingJob;
+ assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/${jobId}`)?.state,'retry_generation');
+ clock+=120_000;
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ release();
+ await abandoned;
+ assert.equal(keys.length,2);
+ assert.equal(keys[0],keys[1]);
+ assert.equal(publishes,1);
+ assert.equal(rule().sequence,1);
+ assert.equal(rule().enabled,true);
+ assert.equal([...f.database.values.keys()].filter(key=>key.includes('/social_drafts/')).length,1);
+ assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/${jobId}`)?.state,'published');
+});
+
+test('a draft saved before the worker was interrupted is sent after recovery without generating again',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ let clock=Date.now(),release!:()=>void,publishes=0,saved=false;
+ const gate=new Promise<void>(resolve=>release=resolve);
+ const deps={
+  database:f.database as never,now:()=>clock,
+  create:(async(_request:Request,options:Parameters<typeof createSocialContent>[1])=>{
+   const scheduled=options!.scheduledDraft!;
+   const draft={id:scheduled.id,title:'Arus kas'};
+   await scheduled.persist(f.ref.collection('social_drafts').doc(scheduled.id) as never,{draft});
+   saved=true;await gate;return{draft};
+  })as never,
+  publish:(async(request:Request)=>{const {draftId}=await request.json();assert.ok(f.database.values.has(`${f.ref.path}/social_drafts/${draftId}`));publishes++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ const interrupted=processAutonomyRule(f.ruleRef as never,deps);
+ while(!saved)await new Promise(resolve=>setImmediate(resolve));
+ clock+=6*60_000+1;
+ await processAutonomyRule(f.ruleRef as never,deps);
+ assert.equal((await processAutonomyRule(f.ruleRef as never,{...deps,create:(async()=>assert.fail('must reuse draft'))as never})).state,'published');
+ release();await interrupted;
+ assert.equal(publishes,1);
+});
+
+test('a definite transient send is retried on the same draft; pause cancels the persisted retry',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ for(const pause of [false,true]){
+  const f=await autonomyFixture();
+  let clock=Date.now(),creates=0;
+  const sends:boolean[]=[];
+  const deps={
+   database:f.database as never,now:()=>clock,
+   create:(async()=>{creates++;return{draft:{id:'draft_same',title:'Arus kas'}};})as never,
+   publish:(async(request:Request,options:NonNullable<Parameters<typeof publishSocialContent>[1]>)=>{
+    assert.equal((await request.json()).draftId,'draft_same');
+    assert.equal(options.stopOnUnknown,true);
+    sends.push(options.retryTransientFailures===true);
+    return sends.length===1?{draft:{status:'publish_failed'},receipts:[{status:'failed',retryable:true}]}:{draft:{status:'published'},receipts:[{status:'published'}]};
+   })as never,
+  };
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_publication');
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');
+  if(pause)await f.updateAutonomy(f.request('pause',2),f.autoDeps);
+  clock+=120_000;
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,pause?'inactive':'published');
+  assert.deepEqual(sends,pause?[false]:[false,true]);
+  assert.equal(creates,1);
+ }
+});
+
+test('an interrupted send is marked published only if the same draft already has confirmed receipts',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ for(const confirmed of [true,false]){
+  const f=await autonomyFixture();
+  const clock=Date.now();
+  const job=f.ruleRef.collection('jobs').doc('slot_interrupted');
+  Object.assign(f.rule,{processingJob:job.id,processingRun:'interrupted',processingUntil:clock-1,nextSlotMs:clock+60_000});
+  f.database.values.set(job.path,{state:'publishing',ruleRevision:2,draftKey:'draft_exact',draftId:'draft_exact'});
+  f.database.values.set(`${f.ref.path}/publish_jobs/draft_exact`,confirmed?{state:'published',receipts:[{status:'published',externalPostId:'remote-exact'}]}:{state:'processing',receipts:[]});
+  await processAutonomyRule(f.ruleRef as never,{database:f.database as never,now:()=>clock,create:(async()=>assert.fail('must not generate'))as never,publish:(async()=>assert.fail('must not resend'))as never});
+  assert.equal(f.database.values.get(job.path)?.state,confirmed?'published':'needs_attention');
+  assert.equal(f.database.values.get(f.ruleRef.path)?.enabled,confirmed);
  }
 });
 
@@ -307,6 +414,46 @@ test('ambiguous provider timeout, truncated body and 5xx retain fence and block 
  assert.ok(f.database.values.get(dispatchGuard(f.ref as never).path)?.leaseId);await assert.rejects(f.updateAutonomy(f.request('activate',2),f.autoDeps),/Pengiriman otomatis/);
  let deleted=0;const storage={file:()=>({save:async()=>{},delete:async()=>{deleted++;}})};await assert.rejects(persistWorkspacePhoto(f.ref as never,f.ref.id,'customer-a',Buffer.from('new image'),'New photo',storage as never),/Pengiriman otomatis/);assert.equal(deleted,1);assert.equal([...f.database.values.keys()].some(key=>key.includes('/server_assets/')),false);
  }});
+
+test('Facebook Reels releases preparation fences and checks the exact video after a lost finish response',async()=>{
+ const {createAutonomyDispatch,dispatchGuard}=await import('./autonomy-dispatch');
+ const {publishMetaReel}=await import('./meta-reels');
+ for(const confirmed of [true,false]){
+  const f=fixture();
+  const guard=dispatchGuard(f.ref as never).path;
+  const phases:string[]=[];
+  const fetcher:typeof fetch=async(input,init)=>{
+   const url=new URL(String(input));
+   const phase=init?.body instanceof URLSearchParams?init.body.get('upload_phase'):null;
+   if(phase==='start'){
+    phases.push('start');
+    return Response.json({video_id:'500',upload_url:'https://rupload.facebook.com/video-upload/v26.0/500'});
+   }
+   if(url.hostname==='rupload.facebook.com'){phases.push('upload');return Response.json({success:true});}
+   if(phase==='finish'){phases.push('finish');throw new Error('finish response lost');}
+   assert.match(url.pathname,/\/500$/);
+   assert.ok(f.database.values.get(guard)?.leaseId);
+   if(!phases.includes('read'))phases.push('read');
+   return Response.json({status:confirmed?{video_status:'ready',publishing_phase:{publish_status:'published'}}:{video_status:'ready',publishing_phase:{status:'complete',publish_status:'failed'}}});
+  };
+  const run=publishMetaReel({channel:'facebook',accountId:'100',token:'fixture',caption:'Uji',videoUrl:'https://example.test/reel.mp4',videoBytes:Buffer.from('test')},{fetcher:createAutonomyDispatch(f.ref as never,async()=>{},fetcher),sleep:async()=>{}});
+  if(confirmed)assert.equal((await run).externalPostId,'500');
+  else await assert.rejects(run,(error:MetaRequestError)=>error.uncertain);
+  assert.deepEqual(phases,['start','upload','finish','read']);
+  assert.equal(f.database.values.has(guard),!confirmed);
+ }
+});
+
+test('only preparation can safely drop its fence after a provider timeout',async()=>{
+ const {createAutonomyDispatch,dispatchGuard}=await import('./autonomy-dispatch');
+ const f=fixture();
+ const guard=dispatchGuard(f.ref as never).path;
+ const sender=createAutonomyDispatch(f.ref as never,async()=>{},async()=>{throw new Error('lost');});
+ await assert.rejects(sender('https://graph.instagram.com/v26.0/100/media',{method:'POST'}));
+ assert.equal(f.database.values.has(guard),false);
+ await assert.rejects(sender('https://graph.instagram.com/v26.0/100/media_publish',{method:'POST'}));
+ assert.equal(f.database.values.has(guard),true);
+});
 
 test('photo metadata commit rechecks a dispatch that starts while private bytes upload',async()=>{const {dispatchGuard}=await import('./autonomy-dispatch');const f=fixture();let deleted=0;const storage={file:()=>({save:async()=>{f.database.values.set(dispatchGuard(f.ref as never).path,{leaseId:'started-during-upload'});},delete:async()=>{deleted++;}})};await assert.rejects(persistWorkspacePhoto(f.ref as never,f.ref.id,'customer-a',Buffer.from('photo'),'Race photo',storage as never),/Pengiriman otomatis/);assert.equal(deleted,1);assert.equal([...f.database.values.keys()].some(key=>key.includes('/server_assets/')),false);});
 
@@ -728,6 +875,25 @@ test('an unverified scheduled slide stops the whole batch before saving any medi
   assert.equal([...f.database.values.keys()].some(key=>key.startsWith(`${f.ref.path}/social_drafts/`)),false);
 });
 
+test('an Otonom carousel repairs and verifies only the rejected slide without changing its copy or direction',async()=>{
+ const f=fixture();
+ const scene=await sharp({create:{width:1080,height:1350,channels:3,background:'#82A0B2'}}).jpeg().toBuffer();
+ const renders:SocialPostImageParams[]=[];
+ const verified:SocialPostImageParams[]=[];
+ const {draft}=await f.create({format:'carousel',source:'autonomous_agent',renderImage:async params=>{renders.push(params);return scene;},verifyArtwork:async(_,params)=>{
+  verified.push(params);
+  assert.equal(f.blobs.size,0);
+  if(params.title==='Headline 3'&&!params.scheduledArtworkRepair)throw new ApiError(422,'Visual ditolak','scheduled_artwork_rejected');
+ }});
+ const {scheduledArtworkRepair,...repaired}=renders.find(item=>item.scheduledArtworkRepair)!;
+ assert.equal(scheduledArtworkRepair,true);
+ assert.deepEqual(repaired,renders.find(item=>item.title==='Headline 3'));
+ assert.equal(verified.filter(item=>item.title==='Headline 3').length,2);
+ assert.equal(renders.length,6);
+ assert.equal(draft.renderedSlides?.length,5);
+ assert.equal(f.generationCount(),1);
+});
+
 test('carousel rejects a source asset before generation or quota use', async () => {
   const f = fixture();
   await assert.rejects(f.create({ format: 'carousel', sourceAssetId: '123e4567-e89b-42d3-a456-426614174000' }), error => error instanceof ApiError && error.status === 400);
@@ -876,6 +1042,37 @@ function seedExtraInstagram(f:ReturnType<typeof fixture>){
  f.database.values.set(`${f.ref.path}/private_meta_connections/instagram_201`,{channel:'instagram',accountId:'201',pageId:'101',accountName:'Second IG',handle:'@second',encryptedToken:'unit-second-placeholder',expiresAt:0});
  return ['instagram_200','instagram_201','facebook_100'];
 }
+test('autonomous retry preserves successful and permanently rejected targets and only retries temporary failures',async()=>{
+ const f=fixture();
+ const {draft}=await f.create({selectedConnectionIds:seedExtraInstagram(f)});
+ const sends:string[]=[];
+ const publisher=async({accountId}:{accountId:string})=>{
+  sends.push(accountId);
+  if(accountId==='201'&&sends.filter(id=>id==='201').length===1)throw new MetaRequestError('Temporary',false,4,true);
+  if(accountId==='100')throw new MetaRequestError('Permanent',false,100);
+  return{externalPostId:`confirmed-${accountId}`};
+ };
+ const first=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher,stopOnUnknown:true});
+ assert.deepEqual(first.receipts.map(receipt=>[receipt.accountId,receipt.status,receipt.retryable??false]),[['200','published',false],['201','failed',true],['100','failed',false]]);
+ const retry=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher,retryTransientFailures:true,stopOnUnknown:true});
+ assert.deepEqual(sends,['200','201','100','201']);
+ assert.equal(retry.draft.status,'partially_published');
+ assert.equal(f.count(),1);
+});
+
+test('an ambiguous automated send blocks other sends and cannot become a retryable target',async()=>{
+ const f=fixture();
+ const {draft}=await f.create({selectedConnectionIds:seedExtraInstagram(f)});
+ let calls=0;
+ const publisher=async()=>{calls++;throw new MetaRequestError('Lost POST response',true,4,true);};
+ const result=await publishSocialContent(f.request(draft.id),{...f.dependencies,publisher,stopOnUnknown:true});
+ assert.equal(result.draft.status,'needs_attention');
+ assert.equal(result.receipts[0].retryable,undefined);
+ await assert.rejects(publishSocialContent(f.request(draft.id),{...f.dependencies,publisher,retryTransientFailures:true}),{code:'delivery_in_progress'});
+ assert.equal(calls,1);
+ assert.equal(f.count(),1);
+});
+
 test('multi-account dispatch persists two Instagram receipts and a Facebook receipt with one quota',async()=>{
  const f=fixture();const ids=seedExtraInstagram(f);const{draft}=await f.create({selectedConnectionIds:ids});const sent:string[]=[];
  assert.deepEqual(draft.publishTargets?.map(target=>target.connectionId),ids);assert.equal(draft.channelStatuses.length,3);assert.equal(f.generateCalls(),1);assert.equal(f.renderCalls(),1);

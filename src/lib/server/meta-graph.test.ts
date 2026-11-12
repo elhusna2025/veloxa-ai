@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
 import { graphRequest, MetaRequestError, publishMetaImage } from './meta-graph';
+
+test('Meta retry requires an unambiguous temporary rejection; conflicting responses stay unknown',async()=>{
+  for(const [status,body,uncertain] of [
+    [429,{error:{code:4,is_transient:true}},false],
+    [429,{id:'400',error:{code:4,is_transient:true}},true],
+    [503,{error:{code:4,is_transient:true}},true],
+  ] as const){
+    await assert.rejects(graphRequest('100/media_publish','fixture','POST',{creation_id:'500'},async()=>Response.json(body,{status})),
+      error=>error instanceof MetaRequestError&&error.transient&&error.uncertain===uncertain);
+  }
+});
 import { encryptMetaToken, decryptMetaToken } from './meta-crypto';
 import { publicationState } from './publishing';
 import { readJson } from './http';

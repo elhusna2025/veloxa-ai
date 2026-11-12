@@ -18,6 +18,7 @@ export interface SocialPostImageParams {
   referenceInstruction?: string;
   sceneOnly?: boolean;
   scheduledEditorial?: boolean;
+  scheduledArtworkRepair?: boolean;
   sceneReferenceLabels?: string[];
   carouselSlide?: boolean;
   hasOriginalScreenshot?: boolean;
@@ -47,6 +48,7 @@ interface ImageClient {
 
 export interface SocialPostImageDependencies {
   imageClient?: ImageClient;
+  timeoutMs?: number;
 }
 
 const maxBase64Length = 20 * 1024 * 1024;
@@ -78,6 +80,7 @@ function buildPrompt(params: SocialPostImageParams): string {
       `Design the finished ${vertical ? '9:16 Reels frame' : params.carouselSlide ? '4:5 carousel slide' : '4:5 Instagram post'} as one editorial composition. A full-bleed, naturally lit photograph illustrates this exact topic in a realistic setting. Integrate the typography into naturally quiet parts of the photo. Keep faces, hands, products and screens visible. No dark or white wash, text boxes, separate text panels or bands, and no swipe instructions or numbering. Use bold, readable type and high contrast. On a naturally pale background use very dark letters for both the title and body. Use white letters only against a genuinely dark, quiet part of the photo. Use saved brand colors as restrained accents, for example a corner curve or an underline, without recoloring the scene. Render the supplied copy exactly once, omit blank fields, and add no other copy.`,
       vertical ? 'This is a full-screen portrait video frame. Keep the top 17%, bottom 20%, and rightmost 19% completely free of lettering. Place the business name and a compact title in the quiet middle-left portion of the scene, between 20% and 48% of frame height, at least 8% from the left and ending before 79% of frame width. Use line breaks instead of a wide line. If supplied, put the short CTA and domain inside the same safe width and above the bottom fifth. Never print the narration. Match the series art direction.' : 'Keep copy at least 64 px from the edges of the 1080 × 1350 master. Keep a coherent art direction and give this topic its own scene.',
       'Use attached references in their original order to guide the scene. Depict software naturally on a device only when grounded in a reference. Do not invent readable product UI, prices, data, claims, or additional marks.',
+      ...(params.scheduledArtworkRepair ? ['Rebuild this composition from scratch. Use a simpler photo composition with generous natural negative space, larger bold lettering, and clear separation from faces and reserved asset areas. Double-check the exact spelling of every supplied text field and print each only once. Preserve the same topic, references, and brand.'] : []),
       ...(params.hasOriginalLogo ? [`Keep this rectangle clear of text and objects for the original logo the app will place there: ${JSON.stringify(layout.logo)}.`] : []),
       ...(params.hasOriginalScreenshot ? [`Reserve a natural tabletop foreground in this rectangle for the original screenshot, which the app will place inside a device: ${JSON.stringify(layout.screenshot)}. Keep all copy and faces out of that area and do not draw a placeholder.`] : []),
       JSON.stringify({
@@ -191,7 +194,7 @@ export async function generateSocialPostImage(
       apiKey,
       baseURL: 'https://api.openai.com/v1',
       maxRetries: 0,
-      timeout: 180_000,
+      timeout: dependencies.timeoutMs ?? 180_000,
     }) as unknown as ImageClient;
   }
 
