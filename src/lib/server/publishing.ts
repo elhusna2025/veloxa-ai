@@ -8,8 +8,9 @@ import { hasWorkspaceAccess, requireWorkspace } from './auth';
 import { ApiError, readJson } from './http';
 import { isVerifiedAdmin } from '../veloxa-workspace-policy';
 import { wibMonth } from './clock';
+import { assertPublicationCapacity, incrementPublicationUsage, monthlyPublicationUsage, readPublicationQuota, releasePublicationUsage } from './publication-quota';
 import { decryptMetaToken } from './meta-crypto';
-import { MetaRequestError, publishMetaImage, getMetaLoginProvider, type MetaConnection, type MetaChannel } from './meta-graph';
+import { MetaRequestError, publishMetaImage, getMetaLoginProvider, type MetaConnection } from './meta-graph';
 import { publishMetaCarousel } from './meta-carousel';
 import { publishMetaReel } from './meta-reels';
 import { REELS_VOICE_DISCLOSURE } from './reels-voice';
@@ -17,22 +18,8 @@ import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { readSocialAccounts, type StoredAccount } from './social-accounts';
 import { storedAccountTargets, assertTargetBinding, type AccountTarget } from './social-targets';
 import type { ContentDraft, SubscriptionPlanId } from '../veloxa-types';
-
-export interface PublishReceipt {
-  connectionId?: string;
-  accountId?: string;
-  accountName?: string;
-  handle?: string;
-  channel: MetaChannel;
-  status: 'published' | 'failed' | 'unknown';
-  externalPostId?: string;
-  providerContainerId?: string;
-  confirmedAt?: string;
-  permalink?: string;
-  error?: string;
-  retryable?: boolean;
-  publishedAt?: string;
-}
+import { confirmedReceiptAt, type PublishReceipt } from './publication-receipt';
+export type { PublishReceipt } from './publication-receipt';
 const clean = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const publishInput = z.object({ workspaceId: z.string(), draftId: z.string().regex(/^draft_[a-zA-Z0-9_-]+$/) }).strict();
 
@@ -75,8 +62,6 @@ export async function publishSocialContent(request: Request, dependencies: {
   const db = dependencies.database || adminDb();
   const draftRef = ref.collection('social_drafts').doc(input.draftId);
   const jobRef = ref.collection('publish_jobs').doc(input.draftId);
-  const month = wibMonth();
-  const usageRef = ref.collection('publish_usage').doc(month);
   const stored = (await draftRef.get()).data();
   const draft = stored?.draft as ContentDraft | undefined;
   const validMedia = draft?.format === 'single_post'
@@ -101,18 +86,19 @@ export async function publishSocialContent(request: Request, dependencies: {
   const targets=storedAccountTargets(stored,draft);
 
   const claim = await db.runTransaction(async tx => {
-    const [jobSnap, usageSnap, wsSnap] = await tx.getAll(jobRef, usageRef, ref);
+    const [jobSnap, wsSnap] = await tx.getAll(jobRef, ref);
     const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);
     const job = jobSnap.data();
     const workspace = wsSnap.data();
     if (!workspace || !hasWorkspaceAccess(user.uid, workspace, isVerifiedAdmin(user))) throw new ApiError(403, 'Akses workspace telah berubah.');
+    const planId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
     if (job?.state === 'processing' || job?.state === 'needs_attention' || dependencies.retryTransientFailures&&job?.state==='queued') throw new ApiError(409, 'Publikasi sedang diproses atau hasilnya perlu diperiksa di akun Meta. Jangan kirim ulang.', 'delivery_in_progress');
     const receipts = ((job?.receipts || []) as PublishReceipt[]).map(receipt=>{
       const matches=targets.filter(target=>receipt.connectionId?target.connectionId===receipt.connectionId:target.channel===receipt.channel);
       if(matches.length!==1)throw new ApiError(409,'Riwayat publikasi perlu diperiksa sebelum mengirim ulang.','delivery_unknown');
       return {...receipt,connectionId:matches[0].connectionId,accountId:matches[0].accountId,accountName:matches[0].accountName,handle:matches[0].handle};
     });
-    if (job?.state === 'published') return { alreadyPublished: true, receipts };
+    if (job?.state === 'published') return { alreadyPublished: true, receipts, planId };
     const {contexts,context}=await resolveBusinessContext(ref,workspace,draftBusiness(draft),tx);
     const currentWords:unknown=context.brand.forbiddenWords;
     const generatedWords=stored.forbiddenWordsAtGeneration??[];
@@ -124,7 +110,7 @@ export async function publishSocialContent(request: Request, dependencies: {
         ? receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='failed'&&receipt.retryable===true)
         : !receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='published')).map(target=>target.connectionId);
     if(new Set(remainingTargets).size!==remainingTargets.length||remainingTargets.some(id=>!targets.some(target=>target.connectionId===id)))throw new ApiError(409,'Antrean tujuan publikasi tidak valid.','delivery_unknown');
-    if(dependencies.retryTransientFailures&&!remainingTargets.length)return { alreadyPublished: false, nothingToRetry: true, receipts };
+    if(dependencies.retryTransientFailures&&!remainingTargets.length)return { alreadyPublished: false, nothingToRetry: true, receipts, planId };
     for(const target of targets){
       // Continuations record an unavailable destination as its own failure in the loop below.
       // A single disconnected account must not hold the remaining approved queue hostage.
@@ -134,23 +120,31 @@ export async function publishSocialContent(request: Request, dependencies: {
       assertTargetBinding(accounts.find(account=>account.connectionId===target.connectionId),target);
       try{assertBusinessTargets(contexts,context.id,[target.connectionId],!draft.businessId&&contexts.length===1&&context.revision===0);}catch(error){throw new ApiError(409,error instanceof Error?error.message:'Akun tidak sesuai bisnis.','business_target_mismatch');}
     }
-    const planId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
     const plan = SUBSCRIPTION_PLANS[planId];
     if (targets.some(target => !plan.allowedChannels.includes(target.channel))) throw new ApiError(403, 'Kanal tidak termasuk dalam paket workspace.');
-    let reservedMonth = job?.reservedMonth || month;
+    let reservedMonth = job?.reservedMonth;
+    let reservedDay = job?.reservedDay ?? null;
     if (!job?.quotaReserved) {
-      const used = Number(usageSnap.data()?.count || 0);
-      if (!Number.isSafeInteger(used) || used < 0 || used >= plan.monthlyPostQuota) throw new ApiError(429, 'Kuota publikasi bulan ini habis.', 'quota_exhausted');
-      tx.set(usageRef, { count: used + 1 }, { merge: true });
-      tx.update(ref, { quotaUsed: used + 1 });
-      reservedMonth = month;
+      const quota = await readPublicationQuota(ref, planId, tx);
+      assertPublicationCapacity(quota);
+      incrementPublicationUsage(tx, ref, quota);
+      reservedMonth = quota.month;
+      reservedDay = quota.day;
     }
-    tx.set(jobRef, { state: 'processing', receipts, remainingTargets, quotaReserved: true, reservedMonth, startedAt: Date.now(), requestedBy: user.uid, autonomyRun:dependencies.autonomyRun??null }, { merge: true });
+    tx.set(jobRef, { state: 'processing', receipts, remainingTargets, quotaReserved: true, reservedMonth, reservedDay, startedAt: Date.now(), requestedBy: user.uid, autonomyRun:dependencies.autonomyRun??null }, { merge: true });
     tx.update(draftRef, { 'draft.status': 'publishing' });
-    return { alreadyPublished: false, receipts, remainingTargets };
+    return { alreadyPublished: false, receipts, remainingTargets, planId };
   });
-  if (claim.alreadyPublished) return { draft: { ...draft, status: 'published' }, receipts: claim.receipts, quotaUsed: Number((await usageRef.get()).data()?.count || 0) };
-  if (claim.nothingToRetry) return {draft:{...draft,status:publicationState(claim.receipts)},receipts:claim.receipts,quotaUsed:Number((await usageRef.get()).data()?.count||0)};
+  const quotaStatus = async () => {
+    const publicationQuota = await readPublicationQuota(ref, claim.planId).catch(() => null);
+    // A status read must not turn a confirmed remote send into a failed response.
+    if (publicationQuota) return { quotaUsed: publicationQuota.used, publicationQuota };
+    const fallback = await monthlyPublicationUsage(ref, wibMonth()).get().catch(() => null);
+    const used = fallback?.data()?.count;
+    return typeof used === 'number' && Number.isSafeInteger(used) && used >= 0 ? { quotaUsed: used } : {};
+  };
+  if (claim.alreadyPublished) return { draft: { ...draft, status: 'published' as const }, receipts: claim.receipts, hasMore:false, pendingAccounts:0, ...await quotaStatus() };
+  if (claim.nothingToRetry) return { draft:{...draft,status:publicationState(claim.receipts)}, receipts:claim.receipts, hasMore:false, pendingAccounts:0, ...await quotaStatus() };
 
   const receipts:PublishReceipt[] = [...claim.receipts];
   const remainingTargets=[...(claim.remainingTargets||[])];
@@ -209,7 +203,7 @@ export async function publishSocialContent(request: Request, dependencies: {
     remainingTargets.splice(remainingTargets.indexOf(target.connectionId),1);
     try {
       if(dependencies.persistReceipt)await dependencies.persistReceipt(receipt,receipts,remainingTargets);
-      else await jobRef.update({ receipts, remainingTargets });
+      else await jobRef.update({ receipts, remainingTargets, ...confirmedReceiptAt(receipts) });
     }
     catch { throw new ApiError(409, 'Hasil kirim belum tersimpan. Periksa akun Meta sebelum mencoba ulang.', 'delivery_unknown'); }
     if (receipt.status === 'published') {
@@ -224,17 +218,13 @@ export async function publishSocialContent(request: Request, dependencies: {
   await db.runTransaction(async tx => {
     const job = (await tx.get(jobRef)).data()!;
     if(dependencies.autonomyRun&&(job?.state!=='processing'||job.autonomyRun!==dependencies.autonomyRun))throw new ApiError(409,'Proses publikasi sudah berpindah.','delivery_unknown');
-    const reservedRef = ref.collection('publish_usage').doc(job.reservedMonth);
-    const usage = (await tx.get(reservedRef)).data();
     // Definitive failure on every channel releases the reservation; unknown delivery keeps it.
     if (state === 'publish_failed' && job.quotaReserved) {
-      const count = Math.max(0, Number(usage?.count || 0) - 1);
-      tx.set(reservedRef, { count }, { merge: true });
-      if (job.reservedMonth === month) tx.update(ref, { quotaUsed: count });
+      await releasePublicationUsage(tx, ref, job);
       tx.update(jobRef, { quotaReserved: false });
     }
     tx.update(jobRef, { state:hasMore?'queued':state, remainingTargets, completedAt:hasMore?null:Date.now() });
     tx.update(draftRef, { draft: updated });
   });
-  return { draft: updated, receipts, hasMore, pendingAccounts:remainingTargets.length, quotaUsed: Number((await usageRef.get()).data()?.count || 0) };
+  return { draft: updated, receipts, hasMore, pendingAccounts:remainingTargets.length, ...await quotaStatus() };
 }

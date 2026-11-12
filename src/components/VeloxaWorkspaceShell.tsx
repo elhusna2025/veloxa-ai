@@ -47,7 +47,7 @@ export function VeloxaWorkspaceShell(props: Props) {
       <div className="mt-auto pt-6"><div className={`${styles.plan} rounded-xl border p-4`}>
         <p className="break-words text-sm font-semibold">{t(props.planName)}</p>
         <p className="mt-1 text-sm text-[var(--ws-muted)]">{t('{used} dari {quota} publikasi', { used: number.format(props.used), quota: number.format(props.quota) })}</p>
-        <div role="progressbar" aria-label={t('Kuota publikasi terpakai')} aria-valuemin={0} aria-valuemax={props.quota} aria-valuenow={Math.min(props.used, props.quota)} className="mt-2 h-1.5 overflow-hidden rounded bg-[var(--ws-border)]"><div className="h-full rounded bg-[var(--ws-action)]" style={{width: `${quotaPercent}%`}}/></div>
+        {props.quota > 0 && <div role="progressbar" aria-label={t('Kuota publikasi terpakai')} aria-valuemin={0} aria-valuemax={props.quota} aria-valuenow={Math.min(props.used, props.quota)} className="mt-2 h-1.5 overflow-hidden rounded bg-[var(--ws-border)]"><div className="h-full rounded bg-[var(--ws-action)]" style={{width: `${quotaPercent}%`}}/></div>}
         <button type="button" onClick={props.onBilling} className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-[var(--ws-action)]">{t('Lihat paket')} <ChevronRight size={15} aria-hidden="true"/></button>
       </div>{props.isSuperAdmin && <button type="button" onClick={props.onAdmin} className="mt-4 w-full text-sm text-[var(--ws-muted)]">{t('Kembali ke Super Admin')}</button>}</div>
     </aside>

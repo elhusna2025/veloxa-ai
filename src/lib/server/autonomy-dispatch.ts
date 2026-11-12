@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {ApiError} from './http';
 import {isPublishedFacebookReel} from './meta-reels';
-import type {PublishReceipt} from './publishing';
+import {confirmedReceiptAt,type PublishReceipt} from './publication-receipt';
 type Ref=FirebaseFirestore.DocumentReference;
 type Tx=FirebaseFirestore.Transaction;
 export const dispatchGuard=(workspace:Ref)=>workspace.collection('server_operation_guards').doc('organic_dispatch');
@@ -146,7 +146,7 @@ export async function persistAutonomyReceipt(workspace:Ref,context:AutonomyDispa
   const job=ledgerSnapshot.data();
   if(job?.state!=='processing'||job.autonomyRun!==context.run)throw new ApiError(409,'Proses publikasi sudah berpindah.','delivery_unknown');
   const tracked=isDispatchFor(current,context)&&current?.accountId===receipt.accountId&&current?.channel===receipt.channel;
-  tx.update(ledger,{receipts,remainingTargets});
+  tx.update(ledger,{receipts,remainingTargets,...confirmedReceiptAt(receipts)});
   if(!tracked)return;
   const evidence=db.collection(publicationReconciliationCollection).doc(current!.leaseId);
   if(receipt.status==='unknown'){

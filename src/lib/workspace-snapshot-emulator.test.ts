@@ -11,9 +11,10 @@ test('real Firestore emulator: CAS two tabs, legacy migration, blind writes, ten
  assert.equal(enabled,'127.0.0.1:8787'); // Never connect this fixture to a live project.
  const projectId='demo-veloxa-consistency';const suffix=Date.now();
  const ownerUid=`owner-test-${suffix}`;const newUid=`registration-${suffix}`;
- const apps=['tab-a','tab-b','outsider','new-user'].map(name=>initializeApp({projectId,apiKey:'demo-key',appId:'demo'},`${name}-${suffix}`));
- const databases=apps.map((app,index)=>{const db=getFirestore(app);connectFirestoreEmulator(db,'127.0.0.1',8787,{mockUserToken:{sub:index===2?'outside-user':index===3?newUid:ownerUid,email:'fixture@example.test',firebase:{identities:{},sign_in_provider:'password'}}});return db;});
- const [a,b,outsider,newDb]=databases;const id=buildWorkspaceIdForUid(ownerUid);
+ const actors=[{sub:ownerUid},{sub:ownerUid},{sub:'outside-user'},{sub:newUid},{sub:'operator-test',role:'admin'}];
+ const apps=actors.map((_,index)=>initializeApp({projectId,apiKey:'demo-key',appId:'demo'},`actor-${index}-${suffix}`));
+ const databases=apps.map((app,index)=>{const db=getFirestore(app);connectFirestoreEmulator(db,'127.0.0.1',8787,{mockUserToken:{...actors[index],email:'fixture@example.test',firebase:{identities:{},sign_in_provider:'password'}}});return db;});
+ const [a,b,outsider,newDb,operatorDb]=databases;const id=buildWorkspaceIdForUid(ownerUid);
  const snapshot=buildRealInitialWorkspaceSnapshot({workspaceId:id,businessName:'Usaha Awal',city:'Indonesia',category:'software_saas',planId:'free_trial'});
  try{
   assert.equal(await commitWorkspaceSnapshot(a,id,snapshot,ownerUid,undefined),1);
@@ -27,6 +28,10 @@ test('real Firestore emulator: CAS two tabs, legacy migration, blind writes, ten
   await assert.rejects(setDoc(doc(a,'workspaces',id),{quotaUsed:999},{merge:true}),/permission|denied/i);
   await assert.rejects(getDoc(doc(outsider,'workspaces',id)),/permission|denied/i);
   await assert.rejects(setDoc(doc(a,'platform_configs','generation_any'),{mode:'development',enabled:true}),/permission|denied/i);
+  for (const ref of [doc(operatorDb,'private_admin_settings','global'),doc(operatorDb,'private_admin_settings','global','revisions','1'),doc(operatorDb,'platform_admin_audit','test'),doc(operatorDb,'workspaces',id,'publish_daily_usage','2026-11-13')]) {
+   await assert.rejects(setDoc(ref,{count:0}),/permission|denied/i);
+   await assert.rejects(getDoc(ref),/permission|denied/i);
+  }
   const saved=(await getDoc(doc(a,'workspaces',id))).data()!;assert.equal(saved.name,'Profil Terbaru');assert.equal(saved.snapshotRevision,2);assert.equal(saved.quotaUsed,0);
   const guardUrl=`http://127.0.0.1:8787/v1/projects/${projectId}/databases/(default)/documents/workspaces/${id}/server_operation_guards/organic_dispatch`;
   const locked=await fetch(guardUrl,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields:{leaseId:{stringValue:'in-flight-fixture'}}})});assert.equal(locked.ok,true);

@@ -1,20 +1,28 @@
-import type { DocumentReference } from 'firebase-admin/firestore';
+import type { DocumentReference, Transaction } from 'firebase-admin/firestore';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import type { SubscriptionPlanId } from '../veloxa-types';
 import type { GenerationQuota } from '../content-generation';
 import { ApiError } from './http';
 import { wibDay } from './clock';
+import { adminQuotaRefs, resolveAdminQuota } from './admin-settings';
 
-function policyFromConfig(config: Record<string, unknown> | undefined, workspaceId: string, planId: SubscriptionPlanId): Pick<GenerationQuota, 'mode' | 'dailyLimit'> {
-  if (config?.workspaceId === workspaceId && config.mode === 'development' && config.enabled === true) return { mode: 'development', dailyLimit: null };
-  return { mode: 'standard', dailyLimit: SUBSCRIPTION_PLANS[planId].maxPostsPerDay * 3 };
-}
 /** Admin-only platform config. Never trust a body, profile, or workspace snapshot flag. */
-export async function generationPolicy(ref: DocumentReference, workspaceId: string, planId: SubscriptionPlanId): Promise<Pick<GenerationQuota, 'mode' | 'dailyLimit'>> {
-  let config;
-  try { config = (await ref.firestore.collection('platform_configs').doc(`generation_${workspaceId}`).get()).data(); }
-  catch { /* Fail closed to the normal plan limit if configuration cannot be verified. */ }
-  return policyFromConfig(config, workspaceId, planId);
+export async function generationPolicy(ref: DocumentReference, workspaceId: string, planId: SubscriptionPlanId, tx?: Transaction): Promise<Pick<GenerationQuota, 'mode' | 'dailyLimit'>> {
+  const read = (document: DocumentReference) => tx ? tx.get(document) : document.get();
+  const policy = adminQuotaRefs(ref.firestore, workspaceId, planId);
+  const plan = (await read(policy.plan)).data();
+  const workspace = (await read(policy.workspace)).data();
+  const override = resolveAdminQuota(planId, undefined, workspace).dailyDraftLimit;
+  if (override === null) return { mode: 'development', dailyLimit: null };
+  if (override !== undefined) return { mode: 'standard', dailyLimit: override };
+
+  // Legacy development exemptions remain active unless this workspace has an explicit policy.
+  let legacy;
+  try { legacy = (await read(ref.firestore.collection('platform_configs').doc(`generation_${workspaceId}`))).data(); }
+  catch { /* An unverified legacy record never grants an exemption. */ }
+  if (legacy?.workspaceId === workspaceId && legacy.mode === 'development' && legacy.enabled === true) return { mode: 'development', dailyLimit: null };
+  const planLimit = resolveAdminQuota(planId, plan, undefined).dailyDraftLimit;
+  return { mode: 'standard', dailyLimit: planLimit ?? SUBSCRIPTION_PLANS[planId].maxPostsPerDay * 3 };
 }
 function validCount(value: unknown): number {
   const count = value === undefined ? 0 : value;
@@ -28,13 +36,13 @@ export async function reserveGenerationAttempt(
   scheduledJob?: DocumentReference,
 ): Promise<GenerationQuota> {
   const today = wibDay();
-  const policyRef = ref.firestore.collection('platform_configs').doc(`generation_${workspaceId}`);
   return ref.firestore.runTransaction(async tx => {
-    // Read policy and count in the same transaction so disabling conflicts with pending reservations.
-    let config;
-    try { config = (await tx.get(policyRef)).data(); }
-    catch { /* An unverified policy never grants the development exemption. */ }
-    const policy = policyFromConfig(config, workspaceId, planId);
+    // The workspace, policy and counter share the same transaction as a new reservation.
+    const workspace = (await tx.get(ref)).data();
+    if (!workspace) throw new ApiError(409, 'Workspace tidak lagi tersedia.');
+    const currentPlan = typeof workspace.subscriptionPlanId === 'string' && Object.hasOwn(SUBSCRIPTION_PLANS, workspace.subscriptionPlanId)
+      ? workspace.subscriptionPlanId as SubscriptionPlanId : planId;
+    const policy = await generationPolicy(ref, workspaceId, currentPlan, tx);
     const job = scheduledJob ? (await tx.get(scheduledJob)).data() : undefined;
     if (scheduledJob && job?.state !== 'generating') {
       throw new ApiError(409, 'Slot Otonom sudah berubah. Periksa jadwal sebelum melanjutkan.');
@@ -46,7 +54,7 @@ export async function reserveGenerationAttempt(
     const usage = ref.collection('generation_usage').doc(day);
     const count = validCount((await tx.get(usage)).data()?.count);
     if (reservedDay) return { ...policy, day, used: count };
-    if (policy.dailyLimit !== null && count >= policy.dailyLimit) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.');
+    if (policy.dailyLimit !== null && count >= policy.dailyLimit) throw new ApiError(429, 'Batas pembuatan konten hari ini tercapai. Coba lagi besok.', 'daily_draft_quota_exhausted');
     if (scheduledJob) tx.update(scheduledJob, { generationQuotaDay: day });
     tx.set(usage, { count: count + 1 });
     return { ...policy, day, used: count + 1 };

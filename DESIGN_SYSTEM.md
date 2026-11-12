@@ -130,3 +130,12 @@ Layar harus berfungsi pada lebar 390 px dan desktop tanpa overflow halaman. Kart
 3. Uji keyboard serta tampilan desktop dan 390 px melalui browser nyata.
 4. Simpan screenshot bukti dan laporkan batas verifikasi secara jujur.
 5. Saat pola baru disetujui, perbarui panduan dan komponen bersama agar layar berikutnya mengikuti pola yang sama.
+
+## Super Admin
+
+- Pisahkan navigasi Super Admin dari workspace pengguna. Tautan Workspace saya hanya membuka workspace milik admin. Detail pelanggan bersifat baca saja, kecuali tindakan operasional yang menyebut bisnis dan dampaknya secara eksplisit.
+- Mulai dari kesehatan layanan, jumlah terkonfirmasi, antrean yang perlu perhatian, dan slot terdekat. Bedakan slot yang belum pasti, antrean pemulihan, dan hasil yang sudah dikonfirmasi. Tampilkan periode pengukuran dan WIB.
+- Gunakan kartu ringkas dan daftar yang dapat dibuka untuk hasil per akun; susun satu kolom di ponsel. Status selalu memiliki label teks. Kuota publikasi bulanan dipisahkan dari percobaan pembuatan draf harian.
+- Menjeda satu aturan meminta alasan, membedakan proses yang masih berjalan, dan tidak menjadi tindakan untuk mengirim ulang konten. Simpan jejak tindakan di server.
+- Pengaturan model dan kuota selalu menampilkan cakupannya, seluruh platform atau workspace tertentu. Tampilkan nilai yang diwariskan, kuota efektif, serta perubahan yang belum disimpan.
+- Tinjau perubahan beserta cakupan dan alasan sebelum menyimpan. Pemulihan memakai revisi baru dan dicatat bersama waktu, pelaku, dan revisi sumber.

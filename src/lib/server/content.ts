@@ -25,6 +25,8 @@ import { generateSocialPostImage, scheduledArtworkCopy } from './content-image';
 import { verifyScheduledArtwork } from './scheduled-artwork-review';
 import { verifyScheduledScript } from './scheduled-script-review';
 import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
+import { resolveAdminModels } from './admin-settings';
+import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import { renderReelsVideo } from './reels-renderer';
 import { scheduledReelsCheckpoint } from './scheduled-reels-checkpoint';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
@@ -34,7 +36,7 @@ import { selectDraftAccounts, toAccountTarget } from './social-targets';
 import { MAX_PUBLISH_ACCOUNTS } from '../social-account-identity';
 import { getMetaLoginProvider, type MetaConnection as StoredMetaConnection } from './meta-graph';
 import { reserveGenerationAttempt, generationQuotaStatus } from './generation-policy';
-import { wibMonth } from './clock';
+import { readPublicationQuota } from './publication-quota';
 import type { MetaConnection } from './meta-graph';
 import {parseAssetKind} from '../asset-kind';
 import type { BrandProfile, ContentDraft, SubscriptionPlanId } from '../veloxa-types';
@@ -182,17 +184,32 @@ export async function createSocialContent(request: Request, dependencies: {
   } : {};
   if (references.length) progress('validation');
   const scheduledDraft=scheduledEditorial?dependencies.scheduledDraft:undefined;
+  const { scriptModel, imageModel, voiceModel } = await resolveAdminModels(ref.firestore, workspaceId);
+  const reelModels = {
+    ...(scriptModel && scriptModel !== DEFAULT_CONTENT_MODELS.scriptModel ? { scriptModel } : {}),
+    ...(imageModel && imageModel !== DEFAULT_CONTENT_MODELS.imageModel ? { imageModel } : {}),
+    ...(voiceModel && voiceModel !== DEFAULT_CONTENT_MODELS.voiceModel ? { voiceModel } : {}),
+  };
   const reelsCheckpoint = input.format === 'short_video' && scheduledDraft?.quotaJob && scheduledDraft.scheduledAt !== undefined
     ? scheduledReelsCheckpoint(() => dependencies.storage || adminBucket(), workspaceId, scheduledDraft.id, scheduledDraft.scheduledAt, {
       input: { ...input, explicitTopic: dependencies.scheduledExplicitTopic, references: references.map(({ id, title, category }) => ({ id, title, category })) },
       fingerprint,
       images: [...visualReferences, ...originalAssets].map(item => item.bytes),
+      ...(Object.keys(reelModels).length ? { models: reelModels } : {}),
     })
     : null;
   const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId, scheduledDraft?.quotaJob);
   progress('script');
   const cachedReelsScript = await reelsCheckpoint?.loadScript();
-  const generated = cachedReelsScript ?? await (dependencies.generate || generateContentWithSavedAgent)({ brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic, ...(source.focus?{offeringFocus:source.focus}:{}), ...(carouselPlan ? { carouselPlan } : {}), vaultAssets: [], connections, planId, ...(references.length ? { referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic } } : {}) });
+  const generated = cachedReelsScript ?? await (dependencies.generate || generateContentWithSavedAgent)({
+    brand, format: input.format, source: dependencies.source || 'manual_studio', customTopic: topic,
+    ...(source.focus ? { offeringFocus: source.focus } : {}),
+    ...(carouselPlan ? { carouselPlan } : {}),
+    vaultAssets: [], connections, planId,
+    ...(references.length ? {
+      referenceBrief: { titles: references.map(item => item.title), instruction: input.referenceInstruction || topic },
+    } : {}),
+  }, { model: scriptModel });
   if(scheduledEditorial&&!generated.draft.qualityReview.passed)throw new ApiError(422,'Naskah belum lolos pemeriksaan. Veloxa perlu menyusunnya ulang.','scheduled_script_rejected');
   const draft: ContentDraft = { ...generated.draft, id: scheduledDraft?.id??`draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   if (carouselPlan) {
@@ -298,7 +315,9 @@ export async function createSocialContent(request: Request, dependencies: {
       hasOriginalLogo: originalAssets.some(asset => asset.role === 'logo'),
       hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
   });
-  const render = dependencies.renderImage || generateSocialPostImage;
+  const imageGenerator = dependencies.renderImage || generateSocialPostImage;
+  const render: typeof generateSocialPostImage = (params, options) =>
+    imageGenerator(params, imageModel ? { ...options, model: imageModel } : options);
   const verify = dependencies.verifyArtwork || verifyScheduledArtwork;
   const repairTimeout = async (error: unknown) => {
     const budget = dependencies.scheduledRepairBudget?.() ?? 90_000;
@@ -393,7 +412,10 @@ export async function createSocialContent(request: Request, dependencies: {
     const checkpoint = reuseReelsMedia ? reelsCheckpoint : null;
     const frames = scheduledReelsFrames ? scheduledReelsFrames.map((frame, index) => checkpoint
       ? checkpoint.frame(index, () => renderScheduledReels(frame)) : renderScheduledReels(frame)) : visualPlan.map(params => renderVisual(params));
-    const generateVoice = () => (dependencies.generateVoice || generateReelsVoiceover)(draft.videoScenes!.map(scene => scene.voiceover).join(' '));
+    const generateVoice = () => (dependencies.generateVoice || generateReelsVoiceover)(
+      draft.videoScenes!.map(scene => scene.voiceover).join(' '),
+      { model: voiceModel },
+    );
     const results = await Promise.allSettled([
       Promise.allSettled(frames).then(images => { const failed=images.find(image=>image.status==='rejected');if(failed?.status==='rejected')throw failed.reason; return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
       checkpoint ? checkpoint.voice(generateVoice) : generateVoice(),
@@ -469,11 +491,13 @@ export async function createSocialContent(request: Request, dependencies: {
 
 export async function listSocialContent(request: Request, workspaceId: unknown) {
   const { ref, workspace, workspaceId: authorizedWorkspaceId } = await requireWorkspace(request, workspaceId);
-  const docs = await ref.collection('social_drafts').orderBy('createdAt', 'desc').limit(50).get();
-  const usage = await ref.collection('publish_usage').doc(wibMonth()).get();
   const planId: SubscriptionPlanId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
-  const generationQuota = await generationQuotaStatus(ref, authorizedWorkspaceId, planId);
-  return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), quotaUsed: Number(usage.data()?.count || 0), generationQuota };
+  const [docs, publicationQuota, generationQuota] = await Promise.all([
+    ref.collection('social_drafts').orderBy('createdAt', 'desc').limit(50).get(),
+    readPublicationQuota(ref, planId),
+    generationQuotaStatus(ref, authorizedWorkspaceId, planId),
+  ]);
+  return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), quotaUsed: publicationQuota.used, publicationQuota, generationQuota };
 }
 
 export async function listBrandPhotos(request: Request, workspaceId: unknown, includeTrash = false,selectedBusiness:unknown='primary') {

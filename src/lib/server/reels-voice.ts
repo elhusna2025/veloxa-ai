@@ -2,8 +2,9 @@ import OpenAI from 'openai';
 import { OpenAIRealtimeWS } from 'openai/realtime/ws';
 import { ApiError } from './http';
 import { REELS_SPEC, reelsWordCount } from '../reels-spec';
+import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 
-export const REELS_VOICE_MODEL = 'gpt-realtime-2.1-mini';
+export const REELS_VOICE_MODEL = DEFAULT_CONTENT_MODELS.voiceModel;
 export const REELS_VOICE_DISCLOSURE = 'Voiceover menggunakan suara AI.';
 
 const MAX_AUDIO_BYTES = REELS_SPEC.maxSourceAudioSeconds * 48_000;
@@ -20,8 +21,9 @@ interface VoiceConnection {
 }
 
 interface VoiceDependencies {
-  createConnection?: () => VoiceConnection;
+  createConnection?: (model: string) => VoiceConnection;
   timeoutMs?: number;
+  model?: string;
 }
 
 function isValidScript(script: string): boolean {
@@ -41,12 +43,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function productionConnection(): VoiceConnection {
+function productionConnection(model: string): VoiceConnection {
   const apiKey = process.env.OPENAI_API_KEY || '';
   if (!apiKey) throw SAFE_VOICE_ERROR;
   const client = new OpenAI({ apiKey, baseURL: 'https://api.openai.com/v1', maxRetries: 0 });
   return new OpenAIRealtimeWS(
-    { model: REELS_VOICE_MODEL, options: { maxPayload: 2 * 1024 * 1024 } },
+    { model, options: { maxPayload: 2 * 1024 * 1024 } },
     client,
   ) as unknown as VoiceConnection;
 }
@@ -54,12 +56,13 @@ function productionConnection(): VoiceConnection {
 export async function generateReelsVoiceover(
   script: string,
   deps: VoiceDependencies = {},
-): Promise<{ pcm: Buffer; sampleRate: 24000; transcript: string; model: typeof REELS_VOICE_MODEL }> {
+): Promise<{ pcm: Buffer; sampleRate: 24000; transcript: string; model: string }> {
   if (!isValidScript(script)) throw INVALID_SCRIPT_ERROR;
 
+  const model = deps.model ?? REELS_VOICE_MODEL;
   let connection: VoiceConnection;
   try {
-    connection = (deps.createConnection || productionConnection)();
+    connection = (deps.createConnection || productionConnection)(model);
   } catch {
     throw SAFE_VOICE_ERROR;
   }
@@ -97,7 +100,7 @@ export async function generateReelsVoiceover(
       settled = true;
       if (timer) clearTimeout(timer);
       closeOnce();
-      resolve({ pcm, sampleRate: 24000, transcript, model: REELS_VOICE_MODEL });
+      resolve({ pcm, sampleRate: 24000, transcript, model });
     };
 
     try {

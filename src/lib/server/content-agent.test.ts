@@ -325,3 +325,18 @@ test('menolak agen yang modelnya tidak sesuai atau memiliki tools', async () => 
     await assert.rejects(generate(makeParams()), /belum sesuai/i);
   }
 });
+
+test('menggunakan Sol pada sesi saja dan mempertahankan agen serta batasan tools', async () => {
+  const configured = mockClient(generatedCopy);
+  const result = await createContentAgentGenerator(configured.client as never, agentId, 'gpt-6.1-sol')(makeParams());
+  assert.equal(configured.calls.retrieved, agentId);
+  assert.equal(configured.calls.request?.agent_id, agentId);
+  assert.deepEqual(configured.calls.request?.agent, { model: 'gpt-6.1-sol' });
+  assert.equal(result.draft.title, generatedCopy.title);
+
+  const mismatch = mockClient(generatedCopy, { tools: [{ type: 'unexpected' }] });
+  await assert.rejects(createContentAgentGenerator(mismatch.client as never, agentId, 'gpt-6.1-sol')(makeParams()), {
+    code: 'content_agent_unavailable',
+  });
+  assert.equal(mismatch.calls.request, undefined);
+});

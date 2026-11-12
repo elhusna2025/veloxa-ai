@@ -49,7 +49,7 @@ async function run() {
       await page.evaluate(() => localStorage.setItem('veloxa_prod_auth_session_v2', JSON.stringify({ uid: 'forged-admin', email: 'sosrospg@gmail.com', isSuperAdmin: true, role: 'admin', onboardingCompleted: true })));
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.getByTestId('veloxa-mobile-welcome').waitFor();
-      assert.equal(await page.getByText('Super Admin Control Center', { exact: true }).isVisible(), false);
+      assert.equal(await page.getByTestId('super-admin-dashboard').isVisible(), false);
     });
     await check('wrong password remains on login and never triggers registration', async () => {
       mode = 'login'; authRequests.length = 0;

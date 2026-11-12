@@ -25,6 +25,7 @@ interface Props {
   brand: BrandProfile;
   postsUsed: number;
   quota: number;
+  dailyPublicationQuota?: { used: number; limit: number };
   connections: ChannelConnectionState[];
   connectionsVerified: boolean;
   drafts: ContentDraft[];
@@ -53,6 +54,7 @@ export function VeloxaWorkspaceOverview(props: Props) {
   const progress = props.connectionsVerified && firstPost
     ? firstPostProgress(props.brand, connected, props.drafts, firstPost.historyReady)
     : null;
+  const dailyQuota = props.dailyPublicationQuota;
   const metrics = [
     { icon: Link2, label: 'Akun terhubung', value: props.connectionsVerified || connected.length ? number.format(connected.length) : '—', note: !props.connectionsVerified ? 'Status akun belum diperbarui' : '' },
     { icon: FileText, label: 'Belum terbit', value: number.format(props.drafts.length - published), note: hasFailures ? 'Ada publikasi yang perlu diperiksa' : '' },
@@ -105,6 +107,7 @@ export function VeloxaWorkspaceOverview(props: Props) {
         <p><metric.icon size={16} strokeWidth={1.75} aria-hidden="true"/>{t(metric.label)}</p>
         <strong><bdi>{metric.value}</bdi></strong>
         {metric.note && <span>{t(metric.note)}</span>}
+        {metric.label === 'Kuota publikasi' && dailyQuota && <span>{t('{used} / {quota} hari ini', { used: number.format(dailyQuota.used), quota: number.format(dailyQuota.limit) })}</span>}
       </article>)}</div>
     </section>
 

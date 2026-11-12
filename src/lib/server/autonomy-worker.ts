@@ -17,7 +17,7 @@ import {publishMetaImage} from './meta-graph';
 import {publishMetaCarousel} from './meta-carousel';
 import {publishMetaReel} from './meta-reels';
 import {SUBSCRIPTION_PLANS} from '../veloxa-engine';
-import {wibMonth} from './clock';
+import {assertPublicationCapacity,readPublicationQuota} from './publication-quota';
 import {runAutonomySchedulerTick} from './autonomy-scheduler';
 import {sweepExpiredReelsCheckpoints} from './scheduled-reels-checkpoint';
 import {assertNoAutonomyDispatch,createAutonomyDispatch,dispatchGuard,isDispatchFor,persistAutonomyReceipt,type AutonomyDispatchContext} from './autonomy-dispatch';
@@ -70,7 +70,24 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);if(config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah atau izinnya berakhir. Periksa akun sebelum melanjutkan.');
    const pending=typeof raw.pendingJob==='string'?raw.pendingJob:null;
    if(!pending&&raw.nextSlotMs===null){tx.update(ruleRef,{enabled:false,revision:raw.revision+1,nextDueMs:null});return null;}
-   if(!pending){const plan=SUBSCRIPTION_PLANS[Object.hasOwn(SUBSCRIPTION_PLANS,String(ws.subscriptionPlanId))?ws.subscriptionPlanId as keyof typeof SUBSCRIPTION_PLANS:'free_trial'];const used=Number((await tx.get(ref.collection('publish_usage').doc(wibMonth()))).data()?.count||0);if(!Number.isSafeInteger(used)||used<0||used>=plan.monthlyPostQuota)throw new ApiError(429,'Kuota publikasi bulan ini habis. Aturan dijeda sebelum membuat konten.');if(config.connectionIds.some(id=>!plan.allowedChannels.includes(accounts.find(account=>account.connectionId===id)!.channel)))throw new ApiError(403,'Kanal tujuan tidak tersedia dalam paket workspace.');}const slot=raw.nextSlotMs;if(!pending&&slot>now())return null;const id=pending||'slot_'+slot;const job=ruleRef.collection('jobs').doc(id);const previous=(await tx.get(job)).data();
+   const slot=raw.nextSlotMs;
+   if(!pending&&slot>now())return null;
+   const id=pending||'slot_'+slot;
+   const job=ruleRef.collection('jobs').doc(id);
+   const previous=(await tx.get(job)).data();
+   const future=nextConfiguredAutonomySlot(config,now());
+   if(!pending&&!previous){
+    const planId=Object.hasOwn(SUBSCRIPTION_PLANS,String(ws.subscriptionPlanId))?ws.subscriptionPlanId as keyof typeof SUBSCRIPTION_PLANS:'free_trial';
+    const quota=await readPublicationQuota(ref,planId,tx,new Date(now()));
+    try { assertPublicationCapacity(quota); }
+    catch(error) {
+     if(!(error instanceof ApiError)||error.code!=='daily_publication_quota_exhausted')throw error;
+     tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:error.message});
+     tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});
+     return 'skipped' as const;
+    }
+    if(config.connectionIds.some(id=>!SUBSCRIPTION_PLANS[planId].allowedChannels.includes(accounts.find(account=>account.connectionId===id)!.channel)))throw new ApiError(403,'Kanal tujuan tidak tersedia dalam paket workspace.');
+   }
    const retryGeneration=previous?.state==='retry_generation';
    const retryPublication=previous?.state==='retry_publication';
    if(pending){
@@ -87,7 +104,6 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const contentSequence=retryGeneration?previous!.contentSequence:sequence;
    const input=autonomyContentInput(config,context.brand,contentSequence,raw.recentTitles||[]);
    const explicitTopic=config.sourceMode==='topics'?config.topics[contentSequence%config.topics.length]:undefined;
-   const future=nextConfiguredAutonomySlot(config,now());
    if(!pending&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});return null;}
    const generationAttempts=retryGeneration?(previous!.generationAttempts||1)+1:previous?.generationAttempts||1;
    const publicationAttempts=retryPublication?(previous!.publicationAttempts||1)+1:previous?.publicationAttempts||1;
@@ -101,6 +117,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     ? (generationAttempts===2?'photo':'simplified') as 'photo'|'simplified' : undefined;
    return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork,explicitTopic};
   });
+  if(claim==='skipped')return{state:'skipped'};
   if(!claim)return{state:'idle'};jobRef=claim.job;claimed=true;revision=claim.raw.revision;
   const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const ws=(await tx.get(claim.ref)).data();if(!ws||ws.ownerUid!==claim.raw.ownerUid)throw new ApiError(403,'Pemilik workspace berubah.');const {context}=await resolveBusinessContext(claim.ref,ws,claim.raw.businessId,tx);if(await profileFingerprint(context.brand)!==claim.raw.profileFingerprint)throw new ApiError(409,'Profil berubah saat proses berjalan. Tinjau draf sebelum terbit.');const accounts=readSocialAccounts((await tx.get(claim.ref.collection('private_meta_connections'))).docs);if(claim.config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah. Pengiriman dihentikan.');for(const assetId of new Set([...claim.config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){const asset=(await tx.get(claim.ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,claim.ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==claim.raw.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');}return ws;};
   const assertActive=async()=>db.runTransaction(checkActive);
@@ -190,6 +207,11 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    if(current.revision!==revision){
     if(ownsJob){tx.update(jobRef!,{state:generating?'cancelled':state,error:message,finishedAt:now()});tx.update(ruleRef,reset);}
     return generating?'cancelled':state;
+   }
+   if(ownsJob&&error instanceof ApiError&&['daily_publication_quota_exhausted','daily_draft_quota_exhausted'].includes(error.code||'')){
+    tx.update(jobRef!,{state:'skipped',error:message,retryAt:null,finishedAt:now()});
+    tx.update(ruleRef,{...reset,pendingJob:null,nextDueMs:current.nextSlotMs,lastError:'',...(current.nextSlotMs===null?{enabled:false,revision:revision+1}:{})});
+    return 'skipped';
    }
    if(dispatchContext&&ownsJob&&(!(error instanceof ApiError)||error.code==='delivery_unknown')){
     const slot=(await tx.get(jobRef!)).data();

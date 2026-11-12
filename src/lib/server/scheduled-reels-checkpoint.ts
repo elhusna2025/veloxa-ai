@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { REELS_SPEC } from '../reels-spec';
+import type { AdminModelOverrides } from '../admin-settings';
 import { wibDay } from './clock';
 import type { ContentAgentResult } from './content-agent';
 import { adminBucket } from './firebase';
@@ -55,7 +56,7 @@ function digest(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-type Voice = { pcm: Buffer; sampleRate: 24000; model: typeof REELS_VOICE_MODEL };
+type Voice = { pcm: Buffer; sampleRate: 24000; model: string };
 type Bucket = ReturnType<typeof adminBucket>;
 
 async function withinStorageBudget<T>(operation: () => Promise<T>): Promise<T | null> {
@@ -88,11 +89,18 @@ export function scheduledReelsCheckpoint(
   workspaceId: string,
   draftId: string,
   scheduledAt: number,
-  source: { input: unknown; fingerprint: string; images: Buffer[] },
+  source: {
+    input: unknown;
+    fingerprint: string;
+    images: Buffer[];
+    models?: AdminModelOverrides;
+  },
 ) {
   const expiry = String(scheduledAt + checkpointDeleteAfter).padStart(16, '0');
-  const prefix = `${checkpointRoot}${expiry}/${workspaceId}/${draftId}/`;
-  // Keep six immutable objects per slot. A changed source never reuses earlier approvals.
+  const modelFolder = source.models ? `${digest(JSON.stringify(source.models))}/` : '';
+  const prefix = `${checkpointRoot}${expiry}/${workspaceId}/${draftId}/${modelFolder}`;
+  const voiceModel = source.models?.voiceModel ?? REELS_VOICE_MODEL;
+  // Each model combination gets its own immutable objects and never reuses another model's approvals.
   const sourceKey = digest(JSON.stringify({ version: 1, day: wibDay(), ...source, images: source.images.map(digest) }));
   const file = (name: string) => bucket().file(`${prefix}${name}`);
   const scriptFile = 'script.json';
@@ -151,9 +159,11 @@ export function scheduledReelsCheckpoint(
     },
     async voice(render: () => Promise<Voice>): Promise<Voice> {
       const cached = resuming ? await read(voiceFile, maxPcmBytes) : null;
-      if (cached && cached.length % 2 === 0) return { pcm: cached, sampleRate: 24000, model: REELS_VOICE_MODEL };
+      if (cached && cached.length % 2 === 0) return { pcm: cached, sampleRate: 24000, model: voiceModel };
       const voice = await render();
-      if (voice.pcm.length <= maxPcmBytes && voice.pcm.length % 2 === 0) await write(voiceFile, voice.pcm, 'application/octet-stream');
+      if (voice.model === voiceModel && voice.pcm.length <= maxPcmBytes && voice.pcm.length % 2 === 0) {
+        await write(voiceFile, voice.pcm, 'application/octet-stream');
+      }
       return voice;
     },
     async remove() {

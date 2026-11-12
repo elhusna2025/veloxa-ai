@@ -22,6 +22,12 @@ export async function requireUser(request: Request) {
   }
 }
 
+export async function requirePlatformOperator(request: Request, authorize = requireUser) {
+  const user = await authorize(request);
+  if (!isVerifiedAdmin(user)) throw new ApiError(403, 'Akses Super Admin diperlukan.', 'forbidden');
+  return user;
+}
+
 export async function requireWorkspace(request: Request, rawWorkspaceId: unknown, ownerOnly = false) {
   const workspaceId = workspaceIdSchema.parse(rawWorkspaceId);
   const user = await requireUser(request);

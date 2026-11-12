@@ -2,10 +2,11 @@ import {draftBusiness} from '../business-context';
 import type {ContentDraft} from '../veloxa-types';
 import {workspaceIdSchema} from './auth';
 import {dispatchGuard,isDispatchFor,publicationReconciliationCollection,type AutonomyDispatchContext,type DispatchEvidence} from './autonomy-dispatch';
-import {wibMonth} from './clock';
 import {decryptMetaToken} from './meta-crypto';
 import {isPublishedFacebookReel} from './meta-reels';
-import {draftPublicationResult,publicationState,type PublishReceipt} from './publishing';
+import {draftPublicationResult,publicationState} from './publishing';
+import {confirmedReceiptAt,type PublishReceipt} from './publication-receipt';
+import {releasePublicationUsage} from './publication-quota';
 import {readSocialAccounts,socialConnectionId} from './social-accounts';
 import {storedAccountTargets,type AccountTarget} from './social-targets';
 
@@ -88,14 +89,8 @@ export async function recoverInterruptedPublication(tx:Tx,workspace:Ref,ruleRef:
  }
  const state=remaining.length?'publish_queued':publicationState(receipts);
  if(state==='publish_failed'){
-  if(typeof ledger.reservedMonth!=='string'||!/^\d{4}-\d{2}$/.test(ledger.reservedMonth))return false;
-  const usageRef=workspace.collection('publish_usage').doc(ledger.reservedMonth);
-  const usage=(await tx.get(usageRef)).data();
-  if(!Number.isSafeInteger(usage?.count)||usage!.count<1)return false;
-  const count=usage!.count-1;
+  await releasePublicationUsage(tx,workspace,ledger,new Date(now));
   if(ownsGuard)tx.delete(guardRef);
-  tx.set(usageRef,{count},{merge:true});
-  if(ledger.reservedMonth===wibMonth(new Date(now)))tx.update(workspace,{quotaUsed:count});
   tx.update(ledgerRef,{state,quotaReserved:false,remainingTargets:[],completedAt:now});
   tx.update(draftRef,{draft:draftPublicationResult(frozen.draft,frozen.targets,receipts,state,new Date(now))});
   tx.update(slotRef,{state:'failed',receipts,error:'Publikasi belum lengkap. Periksa hasil per akun.',retryAt:null,finishedAt:now});
@@ -103,7 +98,7 @@ export async function recoverInterruptedPublication(tx:Tx,workspace:Ref,ruleRef:
   return true;
  }
  if(ownsGuard)tx.delete(guardRef);
- tx.update(ledgerRef,{state:remaining.length?'queued':state,remainingTargets:remaining.map(target=>target.connectionId),completedAt:remaining.length?null:now});
+ tx.update(ledgerRef,{state:remaining.length?'queued':state,remainingTargets:remaining.map(target=>target.connectionId),completedAt:remaining.length?null:now,...confirmedReceiptAt(receipts)});
  tx.update(draftRef,{draft:draftPublicationResult(frozen.draft,frozen.targets,receipts,state,new Date(now))});
  tx.update(slotRef,{state:remaining.length?'queued':state==='published'?'published':'failed',receipts,error:'',retryAt:null,finishedAt:remaining.length?null:now});
  tx.update(ruleRef,{
@@ -246,7 +241,7 @@ export async function reconcileAutonomyPublication(ref:Ref,now:number,deps:Looku
   const slotState=resumeBatch?'queued':remaining.length?'cancelled':state==='published'?'published':'failed';
   tx.update(ledger,{
    state:remaining.length?'queued':state,receipts,remainingTargets:remaining.map(item=>item.connectionId),
-   completedAt:remaining.length?null:now,
+   completedAt:remaining.length?null:now,...confirmedReceiptAt(receipts),
   });
   tx.update(draft,{draft:draftPublicationResult(frozen.draft,frozen.targets,receipts,state,new Date(now))});
   tx.update(slot,{

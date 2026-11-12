@@ -1,7 +1,8 @@
 'use client';
-import {VeloxaSelect} from '@/components/VeloxaSelect';
+import { VeloxaSelect } from '@/components/VeloxaSelect';
+import { VeloxaSuperAdmin } from '@/components/VeloxaSuperAdmin';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type {ContentIntent,ContentSourceMode} from '@/lib/content-source';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
@@ -19,29 +20,25 @@ import { withConnectionPlaceholders } from '@/lib/social-account-identity';
 import type { CarouselPlan } from '@/lib/carousel-plan';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
 import { ContentGenerationError, type GenerationQuota, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
+import type { PublicationQuota } from '@/lib/server/publication-quota';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
 import { useRouter } from 'next/navigation';
 import {
   BRAND_PRESETS,
   SUBSCRIPTION_PLANS,
   buildMetaAdCampaignPlan,
-  calculatePlatformAdminMetrics,
-  calculateTenantUnitEconomics,
   canConsumePostingQuota,
   computeEventCampaignPhase,
   generateBrandContentDraft,
   runMetaAdsAutonomousOptimizer,
 } from '@/lib/veloxa-engine';
 import {
-  calculateFirestoreCostSavingsPct,
   getInitialLocalFirstTelemetry,
   type LocalFirstTelemetry,
 } from '@/lib/veloxa-local-first';
-import { VELOXA_OPENAI_AGENTS } from '@/lib/veloxa-openai-agents';
 import {
   buildRealInitialWorkspaceSnapshot,
   getDefaultFirebaseConnectionConfig,
-  loadAllRealTenantsFromFirestore,
   loadSavedFirebaseConfig,
   loadWorkspaceSnapshotFromStore,
   saveChannelConnectionToFirestore,
@@ -51,11 +48,9 @@ import {
 } from '@/lib/veloxa-firestore-repo';
 import {
   INITIAL_AUTONOMY_CONFIG,
-  INITIAL_CENTRAL_CREDENTIALS,
   INITIAL_CHANNEL_CONNECTIONS,
   INITIAL_EVENT_CAMPAIGNS,
   INITIAL_META_ADS_ACCOUNT,
-  INITIAL_TENANT_WORKSPACES,
   INITIAL_VAULT_ASSETS,
   buildInitialDrafts,
   buildInitialMetaAdCampaigns,
@@ -71,7 +66,6 @@ import {
   speakDraftVoiceoverIndonesian,
 } from '@/lib/veloxa-visual-renderer';
 import {
-  SUPER_ADMIN_EMAIL,
   consumePendingRegistrationBrand,
   getInitialAuthenticatedUser,
   signInQuickRoleSession,
@@ -83,7 +77,6 @@ import {
   type VeloxaAuthenticatedUser,
 } from '@/lib/veloxa-auth';
 import {
-  VELOXA_I18N_COPY,
   VELOXA_LOCALES,
   loadSavedVeloxaLocale,
   saveVeloxaLocale,
@@ -104,7 +97,6 @@ import type {
   BrandProfile,
   BrandVaultAsset,
   BusinessCategory,
-  CentralPlatformCredentials,
   ChannelConnectionState,
   ContentDraft,
   ContentFormat,
@@ -114,31 +106,22 @@ import type {
   MetaAdsAccountConnection,
   SocialChannelId,
   SubscriptionPlanId,
-  TenantWorkspaceSummary,
   VeloxaRole,
 } from '@/lib/veloxa-types';
 import {
-  Bot,
   Camera,
   CheckCircle2,
   ChevronRight,
-  CreditCard,
   Download,
-  Flame,
-  LayoutDashboard,
   Lock,
   Megaphone,
   Plus,
-  RefreshCw,
-  Rocket,
   Send,
-  ShieldCheck,
-  Smartphone,
   Sparkles,
   Upload,
   Volume2,
   Wand2,
-  Zap,
+  X,
 } from 'lucide-react';
 
 type UserTabId = 'overview' | 'brand_vault' | 'studio' | 'autonomy' | 'meta_ads';
@@ -185,7 +168,6 @@ export default function VeloxaAiPlatformPage() {
   const router = useRouter();
   const [activeRole, setActiveRole] = useState<VeloxaRole>('user');
   const [activeTab, setActiveTab] = useState<UserTabId>('overview');
-  const [selectedPresetKey, setSelectedPresetKey] = useState<'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom'>('running_event');
 
   // Multi-tenant workspace state
   const [workspaceBrand, setWorkspaceBrand] = useState<BrandProfile>(BRAND_PRESETS.running_event);
@@ -202,6 +184,7 @@ export default function VeloxaAiPlatformPage() {
   const brand=activeBusiness.id===PRIMARY_BUSINESS?workspaceBrand:activeBusiness.brand;
   const [activePlanId, setActivePlanId] = useState<SubscriptionPlanId>('free_trial');
   const [postsUsedThisMonth, setPostsUsedThisMonth] = useState<number>(0);
+  const [publicationQuota, setPublicationQuota] = useState<PublicationQuota | null>(null);
   const [connections, setConnections] = useState<ChannelConnectionState[]>(INITIAL_CHANNEL_CONNECTIONS.map(connection => ({ ...connection, connected: false, handle: '', accountName: 'Belum Terhubung', followerCount: 0, tokenExpiresAt: null, oauthMode: 'disconnected', lastPublishedAt: null })));
   const [connectionsVerified, setConnectionsVerified] = useState(false);
   const [selectedConnectionIds,setSelectedConnectionIds]=useState<string[]>([]);
@@ -266,15 +249,12 @@ export default function VeloxaAiPlatformPage() {
   const [adCustomInterest, setAdCustomInterest] = useState<string>('Marathon & Garmin');
 
   // Super Admin & Local-First Telemetry state
-  const [tenants, setTenants] = useState<TenantWorkspaceSummary[]>([]);
-  const [centralCreds] = useState<CentralPlatformCredentials>(INITIAL_CENTRAL_CREDENTIALS);
   const [firebaseCfg, setFirebaseCfg] = useState<VeloxaFirebaseConnectionConfig>(() =>
     getDefaultFirebaseConnectionConfig(),
   );
-  const [localTelemetry, setLocalTelemetry] = useState<LocalFirstTelemetry>(() =>
+  const [, setLocalTelemetry] = useState<LocalFirstTelemetry>(() =>
     getInitialLocalFirstTelemetry(),
   );
-  const [openAiInputKey, setOpenAiInputKey] = useState<string>('');
   const [statusBanner, setStatusBanner] = useState<string>(
     '',
   );
@@ -344,9 +324,7 @@ export default function VeloxaAiPlatformPage() {
       setEventCampaigns(snap.eventCampaigns);
       setDrafts(snap.drafts);
       setMetaAdCampaigns(snap.metaAdCampaigns);
-      if (snap.tenants && snap.tenants.length > 0) {
-        setTenants(snap.tenants);
-      }
+
       setAdCity(snap.brand.city);
       setAdPromoTitle(`Kampanye ${snap.brand.businessName} (${snap.brand.city})`);
       hasHydratedCloudWorkspaceRef.current = snap.brand.workspaceId;
@@ -391,7 +369,7 @@ export default function VeloxaAiPlatformPage() {
 
       const [metaResult, contentResult, mediaResult,businessResult] = await Promise.allSettled([
         veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
-        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number; generationQuota?: GenerationQuota }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
+        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number; publicationQuota?: PublicationQuota; generationQuota?: GenerationQuota }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
         veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}&includeTrash=1`),
         veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(targetWsId)}`),
       ]);
@@ -409,7 +387,7 @@ export default function VeloxaAiPlatformPage() {
       if (contentResult.status === 'fulfilled') {
         const content = contentResult.value;
         setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
-        setPostsUsedThisMonth(content.quotaUsed); setGenerationQuota(content.generationQuota || null);
+        setPostsUsedThisMonth(content.quotaUsed); setPublicationQuota(content.publicationQuota ?? null); setGenerationQuota(content.generationQuota || null);
         setContentHistoryReady(true);
       } else resourceIssues.push('Koleksi konten belum dapat diperbarui.');
       if (businessResult.status==='fulfilled'){setBusinesses(businessResult.value.businesses);try{const saved=sessionStorage.getItem(`veloxa:business:${user.uid}:${targetWsId}`);if(saved&&businessResult.value.businesses.some(item=>item.id===saved))setActiveBusinessId(saved);}catch{ /* Storage is optional. */ }setBusinessesReady(true);setBusinessError('');}else{setBusinessesReady(false);setBusinessError('Daftar bisnis belum dapat dimuat.');resourceIssues.push('Muat ulang daftar bisnis sebelum membuat konten.');}
@@ -431,10 +409,7 @@ export default function VeloxaAiPlatformPage() {
         oauthDialogRef.current?.showModal();
         callback.searchParams.delete('meta'); callback.searchParams.delete('instagram'); window.history.replaceState({}, '', callback.toString());
       }
-      if (user.isSuperAdmin) {
-        const realTenants = await loadAllRealTenantsFromFirestore(savedCfg);
-        if (epoch === hydrationEpoch.current) setTenants(realTenants);
-      }
+
     };
 
     const pendingReg = consumePendingRegistrationBrand();
@@ -452,6 +427,8 @@ export default function VeloxaAiPlatformPage() {
       setIsWorkspaceLoading(!!fbUser);
       setAuthUser(fbUser);setBusinessesReady(false);setBusinesses([]);setActiveBusinessId(PRIMARY_BUSINESS);setProfileDirty(false);setProfileBusy(false);
       setContentHistoryReady(false);
+      setPublicationQuota(null);
+      setGenerationQuota(null);
       setManagingBusiness(false);
       setActiveRole(fbUser?.isSuperAdmin ? 'admin' : 'user');
       if (fbUser) void hydrateForAuthenticatedUser(fbUser, epoch).catch(error => {
@@ -479,7 +456,7 @@ export default function VeloxaAiPlatformPage() {
         eventCampaigns,
         drafts,
         metaAdCampaigns,
-        tenants,
+        tenants: [],
         updatedAtIso: new Date().toISOString(),
       },
       firebaseCfg,
@@ -500,16 +477,10 @@ export default function VeloxaAiPlatformPage() {
     eventCampaigns,
     drafts,
     metaAdCampaigns,
-    tenants,
     firebaseCfg,
   ]);
 
   const currentPlan = SUBSCRIPTION_PLANS[activePlanId];
-  const adminSummary = useMemo(() => calculatePlatformAdminMetrics(tenants), [tenants]);
-  const firestoreSavingsPct = useMemo(
-    () => calculateFirestoreCostSavingsPct(localTelemetry),
-    [localTelemetry],
-  );
 
   const handleForceCloudSync = async () => {
     const res = await syncWorkspaceSnapshotToStore(
@@ -524,7 +495,7 @@ export default function VeloxaAiPlatformPage() {
         eventCampaigns,
         drafts,
         metaAdCampaigns,
-        tenants,
+        tenants: [],
         updatedAtIso: new Date().toISOString(),
       },
       firebaseCfg,
@@ -631,15 +602,6 @@ export default function VeloxaAiPlatformPage() {
     );
   };
 
-  const handleSelectBrandPreset = (key: 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom') => {
-    setSelectedPresetKey(key);
-    const nextBrand = BRAND_PRESETS[key];
-    if(activeBusinessId!==PRIMARY_BUSINESS){setStatusBanner('Preset inspeksi hanya tersedia untuk bisnis utama.');return;}
-    setWorkspaceBrand(authUser ? { ...nextBrand, workspaceId: workspaceBrand.workspaceId } : nextBrand);
-    setAdCity(nextBrand.city);
-    setAdPromoTitle(nextBrand.offerings[0]?.title || nextBrand.businessName);
-    setStatusBanner(`Workspace beralih ke preset "${nextBrand.businessName}" (${nextBrand.city}).`);
-  };
 
   const handleToggleChannel = (channel: SocialChannelId) => handleOpenOAuthConfigModal(channel);
 
@@ -682,9 +644,11 @@ export default function VeloxaAiPlatformPage() {
       setGenerationFeedback(null);
       for(let batch=0;batch<50;batch++){
         if(hydrationEpoch.current!==publishEpoch)return;
-        const result = await veloxaApi<{ draft: ContentDraft; receipts: { channel:string; handle?:string; accountName?:string; status:string; error?:string }[]; quotaUsed:number; hasMore?:boolean; pendingAccounts?:number }>('/api/veloxa/publish',{method:'POST',body:JSON.stringify({workspaceId:brand.workspaceId,draftId})});
+        const result = await veloxaApi<{ draft: ContentDraft; receipts: { channel:string; handle?:string; accountName?:string; status:string; error?:string }[]; quotaUsed?:number; publicationQuota?:PublicationQuota; hasMore?:boolean; pendingAccounts?:number }>('/api/veloxa/publish',{method:'POST',body:JSON.stringify({workspaceId:brand.workspaceId,draftId})});
         if(hydrationEpoch.current!==publishEpoch)return;
-        setDrafts(previous=>previous.map(item=>item.id===draftId?result.draft:item));setPostsUsedThisMonth(result.quotaUsed);
+        setDrafts(previous=>previous.map(item=>item.id===draftId?result.draft:item));
+        if(result.quotaUsed!==undefined)setPostsUsedThisMonth(result.quotaUsed);
+        if(result.publicationQuota)setPublicationQuota(result.publicationQuota);
         if(result.hasMore){setStatusBanner(`Publikasi diproses: ${result.receipts.length} akun diperiksa · ${result.pendingAccounts} akun menunggu. Jangan menutup halaman…`);continue;}
         setStatusBanner(result.receipts.map(receipt=>`${receipt.channel} ${receipt.channel==='facebook'?receipt.accountName||receipt.handle||'':receipt.handle||receipt.accountName||''}: ${receipt.status==='published'?'berhasil diterbitkan':receipt.error||'belum berhasil'}`).join(' · '));break;
       }
@@ -695,13 +659,13 @@ export default function VeloxaAiPlatformPage() {
   const handleSaveBusinessEvent=async(name:string,date:string,highlight:string,connectionIds:string[])=>{
     if(!businessesReady||!name.trim()||name.trim().length>120||highlight.length>500||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||!connectionIds.length||connectionIds.some(id=>!activeBusiness.connectionIds.includes(id)))throw new Error('Periksa nama, tanggal, dan akun rencana event.');
     const epoch=hydrationEpoch.current;const created:EventCampaign={id:'camp_'+crypto.randomUUID(),workspaceId:workspaceBrand.workspaceId,businessId:activeBusinessId,connectionIds:[...new Set(connectionIds)],name:name.trim(),eventDateIso:date,location:brand.city,ticketOrPromoHighlight:highlight.trim(),targetRegistrationsOrSales:0,currentConversions:0,status:'Scheduled',currentPhase:computeEventCampaignPhase(date).phase,autoInjectIntoDailyAutonomy:false};const next=[created,...eventCampaigns];setBusinessSaving(true);
-    try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns:next,drafts,metaAdCampaigns,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error('Rencana event belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setEventCampaigns(next);}finally{setBusinessSaving(false);}
+    try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns:next,drafts,metaAdCampaigns,tenants:[],updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error('Rencana event belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setEventCampaigns(next);}finally{setBusinessSaving(false);}
   };
 
   const handleDesignMetaAdsWithAi=(draft?:ContentDraft)=>{if(draft&&draftBusiness(draft)!==activeBusinessId){setStatusBanner('Pilih bisnis asal konten sebelum merancang iklan.');return;}setAdsSourceDraft(draft);setActiveTab('meta_ads');};
   const handleSaveBusinessAdPlan=async(plan:MetaAdCampaignPlan)=>{
     if(!businessesReady||plan.businessId!==activeBusinessId||!plan.destinationAccounts?.length||plan.destinationAccounts.some(target=>!activeBusiness.connectionIds.includes(target.connectionId)))throw new Error('Rancangan dan akun tujuan tidak sesuai bisnis aktif.');
-    const epoch=hydrationEpoch.current;const next=[plan,...metaAdCampaigns];setBusinessSaving(true);try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns,drafts,metaAdCampaigns:next,tenants,updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error('Rancangan belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setMetaAdCampaigns(next);setLocalTelemetry(result.telemetry);}finally{setBusinessSaving(false);}
+    const epoch=hydrationEpoch.current;const next=[plan,...metaAdCampaigns];setBusinessSaving(true);try{const result=await syncWorkspaceSnapshotToStore({brand:workspaceBrand,activePlanId,postsUsedThisMonth,connections,metaAccount,vaultAssets:workspaceAssets,autonomyConfig,eventCampaigns,drafts,metaAdCampaigns:next,tenants:[],updatedAtIso:new Date().toISOString()},firebaseCfg,{forceCloudPush:true});if(!result.syncedToFirestore)throw new Error('Rancangan belum tersimpan.');if(epoch!==hydrationEpoch.current)throw new Error('Bisnis telah berubah.');setMetaAdCampaigns(next);setLocalTelemetry(result.telemetry);}finally{setBusinessSaving(false);}
   };
 
   const handleToggleMetaCampaignRun = async (_campaignId: string) => {
@@ -717,7 +681,6 @@ export default function VeloxaAiPlatformPage() {
   };
 
   const handleSaveCloudConnectionConfig = () => {
-    setOpenAiInputKey('');
     setStatusBanner('Konfigurasi produksi dikelola melalui environment dan Secret Manager backend. Kunci API tidak disimpan di browser.');
   };
 
@@ -725,7 +688,6 @@ export default function VeloxaAiPlatformPage() {
   const businessAdPlans=metaAdCampaigns.filter(plan=>(plan.businessId||PRIMARY_BUSINESS)===activeBusinessId);
   const studioDrafts = businessDrafts.filter(draft => studioFilter === 'all' || (studioFilter === 'published' ? draft.status === 'published' : studioFilter === 'attention' ? ['publish_failed', 'partially_published', 'needs_attention'].includes(draft.status) : !['published', 'publish_failed', 'partially_published', 'needs_attention'].includes(draft.status)));
   const organicWinnerDraft = businessDrafts.find((d) => d.organicMetrics?.isOrganicWinner);
-  const i18nCopy = VELOXA_I18N_COPY[locale];
   const t = workspaceTranslator(locale, workspaceCatalog);
   const workspaceLanguage = VELOXA_LOCALES.find(item => item.code === locale)!;
 
@@ -739,136 +701,36 @@ export default function VeloxaAiPlatformPage() {
       lang={isUserWorkspaceView ? locale : undefined}
       dir={isUserWorkspaceView ? workspaceLanguage.dir : undefined}
       className={`min-h-dvh text-neutral-900 ${
-        isUserWorkspaceView ? `pb-24 lg:pb-0 ${workspaceStyles.frame}` : authUser ? 'pb-28 bg-white' : 'bg-[#fbf7f2]'
+        isUserWorkspaceView ? `pb-24 lg:pb-0 ${workspaceStyles.frame}` : authUser ? 'pb-12 bg-[#f8f5f7]' : 'bg-[#fbf7f2]'
       }`}
     >
       {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-medium text-neutral-800">{t('Menyiapkan workspace Anda…')}</p></div></div>}
-      {/* Top Global Header — Ditampilkan pada Landing Page, Super Admin, & Mobile (<1024px). Pada Desktop User Workspace, Header menyatu di sisi kanan Sidebar Pink */}
-      <header
-        className={`sticky top-0 z-30 border-b backdrop-blur ${
-          authUser ? 'border-neutral-200/80 bg-white/95 text-neutral-900' : 'border-[#eab1d026] bg-[#180f1c]/95'
-        } ${isUserWorkspaceView ? 'hidden' : ''}`}
-      >
-        {!authUser ? <VeloxaPublicHeader locale={locale} onLocale={handleSelectLocale} /> : (
-        <div
-          className={`flex items-center justify-between gap-2 ${
-            isUserWorkspaceView
-              ? 'w-full flex-wrap px-4 py-3 sm:px-6'
-              : `mx-auto max-w-[1480px] px-3.5 py-3 sm:px-8 sm:py-3.5 lg:px-12 ${
-                  authUser ? 'flex-wrap' : 'flex-nowrap'
-                }`
-          }`}
+      {!isUserWorkspaceView && (
+        <header
+          className={`sticky top-0 z-30 border-b backdrop-blur ${authUser
+            ? 'border-[#e9dfe5] bg-white/95 text-neutral-900'
+            : 'border-[#eab1d026] bg-[#180f1c]/95'}`}
         >
-          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
-            <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl bg-[#bd416e] font-semibold text-white shadow-xs shrink-0">
-              V
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-base sm:text-xl font-semibold tracking-tight text-neutral-900 whitespace-nowrap">
-                VELOXA AI
-              </span>
-              {authUser &&
-                (authUser.isSuperAdmin && activeRole === 'admin' ? (
-                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-medium text-[#a92e5d]">
-                    Super Admin Control Center
-                  </span>
-                ) : (
-                  <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-medium text-[#a92e5d]">
-                    Workspace: {brand.businessName} ({brand.city})
-                  </span>
-                ))}
-            </div>
-          </div>
-
-          {/* Right Navigation Actions — Global Language Selector + Dedicated Login/Register Pages */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
-            <label htmlFor="veloxa-global-lang-select" className="sr-only">
-              Select Language
-            </label>
-            <VeloxaSelect fullWidth={false}
-              id="veloxa-global-lang-select"
-              data-testid="header-lang-select"
-              value={locale}
-              onValueChange={(e) => handleSelectLocale(e as VeloxaLocale)}
-              className="max-w-[136px] sm:max-w-none truncate rounded-lg sm:rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs sm:text-sm font-semibold text-neutral-800 shadow-2xs hover:border-pink-200 focus:border-[#EC749B] focus:outline-hidden"
-            >
-              {VELOXA_LOCALES.map((loc) => (
-                <option key={loc.code} value={loc.code}>
-                  {loc.flag} {loc.label} ({loc.currencyCode})
-                </option>
-              ))}
-            </VeloxaSelect>
-
-            {!authUser ? (
-              <>
-                <Link
-                  href="/login"
-                  data-testid="open-auth-modal-btn"
-                  className="rounded-xl sm:rounded-xl border border-neutral-200 bg-white px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-neutral-800 hover:border-pink-200 hover:text-[#a92e5d] whitespace-nowrap"
-                >
-                  {i18nCopy.headerSignIn}
-                </Link>
-                <Link
-                  href="/register"
-                  data-testid="open-onboarding-public-btn"
-                  className="hidden sm:inline-flex rounded-xl bg-[#bd416e] px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-[#a92e5d] whitespace-nowrap"
-                >
-                  {i18nCopy.headerStartFree}
-                </Link>
-              </>
-            ) : (
-              <>
-                {authUser.isSuperAdmin && activeRole === 'user' && (
-                  <button
-                    type="button"
-                    data-testid="back-to-admin-btn"
-                    onClick={() => setActiveRole('admin')}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-300 bg-pink-50/80 px-3.5 py-2 text-sm font-semibold text-[#a92e5d] hover:bg-[#bd416e] hover:text-white"
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    ← Super Admin
-                  </button>
-                )}
-
-                {activeRole === 'user' && (
-                  <button
-                    type="button"
-                    data-testid="open-billing-modal-btn"
-                    onClick={() => {
-                      setSelectedCheckoutPlanId(activePlanId);
-                      billingDialogRef.current?.showModal();
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-pink-200 bg-pink-50/70 px-3 py-2 text-sm font-medium text-[#a92e5d] hover:bg-pink-100/70"
-                  >
-                    <CreditCard className="h-3.5 w-3.5 text-[#a92e5d]" />
-                    {currentPlan.name} · {postsUsedThisMonth}/{currentPlan.monthlyPostQuota}
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  data-testid="open-auth-modal-btn"
-                  onClick={() => authDialogRef.current?.showModal()}
-                  className="flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm font-medium text-neutral-700 hover:border-pink-200 hover:text-[#a92e5d]"
-                >
-                  <Lock className="h-3.5 w-3.5 text-[#a92e5d]" />
-                  <span className="max-w-[140px] truncate sm:max-w-none">{authUser.email}</span>
+          {!authUser ? <VeloxaPublicHeader locale={locale} onLocale={handleSelectLocale} /> : (
+            <div lang="id" dir="ltr" className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-2 px-3.5 py-3 sm:px-8">
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#682943] font-semibold text-white" aria-hidden="true">V</div>
+                <span className="text-base font-semibold">Veloxa <span className="block text-xs font-medium text-[#682943] sm:inline">Super Admin</span></span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" data-testid="open-own-workspace-btn" onClick={() => setActiveRole('user')}
+                  className="min-h-11 rounded-lg border border-[#e9dfe5] bg-white px-3 text-sm font-semibold text-[#682943] hover:bg-[#fbf1f6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#682943]">
+                  Workspace saya
                 </button>
-
-                <button
-                  type="button"
-                  data-testid="logout-btn"
-                  onClick={handleRequestSignOutClick}
-                  className="rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-600 hover:border-pink-200 hover:text-[#a92e5d]"
-                >
-                  {i18nCopy.headerLogout}
+                <button type="button" data-testid="logout-btn" onClick={handleRequestSignOutClick}
+                  className="min-h-11 rounded-lg border border-[#e9dfe5] bg-white px-3 text-sm font-medium text-neutral-700 hover:bg-[#fbf1f6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#682943]">
+                  Keluar
                 </button>
-              </>
-            )}
-          </div>
-        </div>
-        )}
-      </header>
+              </div>
+            </div>
+          )}
+        </header>
+      )}
 
       {/* Main Content Container — Flush Full-Width untuk User Sidemenu, atau 1480px untuk Landing/Super Admin */}
       <main
@@ -885,269 +747,7 @@ export default function VeloxaAiPlatformPage() {
                ====================================================================== */
             <VeloxaPublicLanding locale={locale} />
           ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
-            /* ======================================================================
-               KONDISI 2 (LOGIN SEBAGAI SUPER ADMIN sosrospg@gmail.com):
-               MURNI SUPER ADMIN COMMAND CENTER
-               ====================================================================== */
-            <div className="space-y-6" data-testid="super-admin-dashboard">
-              <div className="flex flex-col justify-between gap-4 rounded-xl border border-neutral-200/80 bg-white p-6 text-neutral-900 shadow-2xs sm:flex-row sm:items-center">
-                <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-pink-200 bg-pink-50/70 px-3 py-1 text-sm font-medium text-[#a92e5d]">
-                    <ShieldCheck className="h-3.5 w-3.5 text-[#a92e5d]" /> Super Admin Control Center ({authUser.email})
-                  </span>
-                  <h1 className="veloxa-hero-title mt-2 font-semibold tracking-tight text-neutral-900">
-                    Manajemen Bisnis SaaS Veloxa AI
-                  </h1>
-                  <p className="mt-1 text-base text-neutral-500">
-                    Pantau pendapatan langganan (Rp500rb – Rp1,5jt), margin API AI, kuota pelanggan, dan kredensial OAuth terpusat.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-4">
-                  <p className="text-sm font-medium uppercase tracking-wider text-neutral-500">
-                    Gross Margin SaaS
-                  </p>
-                  <p className="text-3xl font-semibold text-[#a92e5d]">{adminSummary.averageGrossMarginPct}%</p>
-                  <p className="text-sm text-neutral-500">Target sehat: &gt;75%</p>
-                </div>
-              </div>
-
-              {/* Admin KPI Row */}
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-sm font-medium uppercase text-neutral-400">Pendapatan Bulanan (MRR)</p>
-                  <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                    {formatIdr(adminSummary.totalMrrIdr)}
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-neutral-500">
-                    {tenants.length} bisnis aktif berlangganan
-                  </p>
-                </div>
-                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-sm font-medium uppercase text-neutral-400">Modal API (OpenAI + Render)</p>
-                  <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                    {formatIdr(adminSummary.totalApiCostIdr)}
-                  </p>
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Untuk {adminSummary.totalPublishedPosts} konten tayang bulan ini
-                  </p>
-                </div>
-                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-sm font-medium uppercase text-neutral-400">Laba Bersih SaaS</p>
-                  <p className="mt-2 text-2xl font-semibold text-[#a92e5d]">
-                    {formatIdr(adminSummary.totalNetProfitIdr)}
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-neutral-500">
-                    Margin kotor {adminSummary.averageGrossMarginPct}%
-                  </p>
-                </div>
-                <div className="rounded-xl border border-neutral-200/80 bg-white p-5 shadow-2xs">
-                  <p className="text-sm font-medium uppercase text-neutral-400">Kampanye AI Meta Ads</p>
-                  <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                    {adminSummary.totalActiveMetaCampaigns} Aktif
-                  </p>
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Ad spend ditarik langsung dari kartu user
-                  </p>
-                </div>
-              </div>
-
-              {/* Subscription Pricing Tiers Overview */}
-              <section className="veloxa-panel p-4 sm:p-6">
-                <h2 className="text-lg font-semibold text-neutral-900">
-                  Katalog Paket Langganan Veloxa AI (Rp500rb – Rp1,5 Juta)
-                </h2>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Pembayaran langganan dilakukan via Web (Midtrans/Xendit QRIS & VA) agar bebas potongan 30% App Store / Play Store.
-                </p>
-                <div className="mt-4 grid gap-4 md:grid-cols-3">
-                  {Object.values(SUBSCRIPTION_PLANS).map((plan) => (
-                    <div
-                      key={plan.id}
-                      className={`rounded-xl border p-5 ${
-                        plan.id === 'pro_1500k'
-                          ? 'border-pink-300 bg-white ring-2 ring-pink-100'
-                          : 'border-neutral-200 bg-white'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-base font-semibold text-neutral-900">{plan.name}</span>
-                        {plan.id === 'pro_1500k' && (
-                          <span className="rounded-full bg-[#bd416e] px-2.5 py-0.5 text-xs font-medium text-white">
-                            TERLARIS
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-2 text-2xl font-semibold text-neutral-900">
-                        {formatIdr(plan.priceMonthlyIdr)}
-                        <span className="text-sm font-semibold text-neutral-400">/bulan</span>
-                      </p>
-                      <p className="mt-1 text-sm text-neutral-500">{plan.tagline}</p>
-                      <ul className="mt-3 space-y-1.5 text-sm text-neutral-600">
-                        <li>• Kuota: <strong className="text-neutral-900">{plan.monthlyPostQuota} postingan/bulan</strong> (maks {plan.maxPostsPerDay}x/hari)</li>
-                        <li>• Kanal: <strong className="text-neutral-900">{plan.allowedChannels.join(', ').toUpperCase()}</strong></li>
-                        <li>• Kampanye Event: <strong className="text-neutral-900">{plan.includesEventCampaigns ? 'Termasuk' : 'Tidak'}</strong></li>
-                        <li>• AI Agent Meta Ads: <strong className="text-neutral-900">{plan.includesMetaAdsAgent ? 'Termasuk + Auto-Optimizer' : 'Tidak'}</strong></li>
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              {/* Accessible Sticky Responsive Tenant Table (modern-web-guidance responsive-table) */}
-              <section className="veloxa-panel p-4 sm:p-6">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 id="tenant-table-caption" className="text-lg font-semibold text-neutral-900">
-                      Daftar Pelanggan (Tenants) & Kontrol Kuota
-                    </h2>
-                    <p className="text-sm text-neutral-500">
-                      Ubah paket pelanggan secara instan, pantau margin pemakaian API, atau klik &ldquo;Inspeksi Workspace&rdquo; untuk mengecek studio brand pelanggan.
-                    </p>
-                  </div>
-                </div>
-
-                <div
-                  tabIndex={0}
-                  role="region"
-                  aria-labelledby="tenant-table-caption"
-                  className="veloxa-table-region rounded-xl border border-neutral-200"
-                >
-                  <table className="text-left text-base">
-                    <thead className="border-b border-neutral-200 bg-neutral-50 text-sm uppercase text-neutral-500">
-                      <tr>
-                        <th className="px-4 py-3.5">Brand / Bisnis</th>
-                        <th className="px-4 py-3.5">Kategori</th>
-                        <th className="px-4 py-3.5">Paket Langganan</th>
-                        <th className="px-4 py-3.5">Kuota Bulan Ini</th>
-                        <th className="px-4 py-3.5">Kanal & Meta Ads</th>
-                        <th className="px-4 py-3.5">Biaya API vs Harga</th>
-                        <th className="px-4 py-3.5">Ubah Paket</th>
-                        <th className="px-4 py-3.5">Aksi Super Admin</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-200 bg-white">
-                      {tenants.map((t) => (
-                        <tr key={t.workspaceId} className="hover:bg-neutral-50/70">
-                          <th className="px-4 py-3.5 font-medium text-neutral-900">
-                            <div>{t.businessName}</div>
-                            <div className="text-sm font-normal text-neutral-500">
-                              {t.ownerName} · {t.ownerEmail}
-                            </div>
-                          </th>
-                          <td className="px-4 py-3.5 text-sm font-semibold uppercase text-neutral-600">
-                            {t.category.replace('_', ' ')}
-                          </td>
-                          <td className="px-4 py-3.5">
-                            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-1 text-sm font-medium text-[#a92e5d]">
-                              {SUBSCRIPTION_PLANS[t.planId].name}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3.5 text-sm font-medium text-neutral-900">
-                            {t.postsPublishedThisMonth} / {t.monthlyPostQuota} post
-                          </td>
-                          <td className="px-4 py-3.5 text-sm text-neutral-600">
-                            <div>{t.connectedChannels.length} Sosmed Aktif</div>
-                            <div className="font-semibold text-[#a92e5d]">
-                              {t.metaAdsConnected ? `✓ ${t.activeMetaCampaigns} Kampanye Meta Ads` : 'Tanpa Meta Ads'}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3.5 text-sm">
-                            <div className="font-medium text-neutral-900">
-                              Bayar: {formatIdr(t.monthlySubscriptionRevenueIdr)}
-                            </div>
-                            <div className="text-neutral-500">
-                              API: {formatIdr(t.estimatedMonthlyApiCostIdr)} (Margin {t.grossMarginPct}%)
-                            </div>
-                          </td>
-                          <td className="px-4 py-3.5">
-                            <VeloxaSelect
-                              aria-label={`Ubah paket ${t.businessName}`}
-                              value={t.planId}
-                              onValueChange={(e) =>
-                                handleAdminChangeTenantPlan(
-                                  t.workspaceId,
-                                  e as SubscriptionPlanId,
-                                )
-                              }
-                              className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-sm font-medium text-neutral-800"
-                            >
-                              <option value="starter_500k">Starter (Rp500rb)</option>
-                              <option value="growth_1000k">Growth (Rp1jt)</option>
-                              <option value="pro_1500k">Pro + Ads (Rp1,5jt)</option>
-                            </VeloxaSelect>
-                          </td>
-                          <td className="px-4 py-3.5">
-                            <button
-                              type="button"
-                              data-testid={`inspect-tenant-btn-${t.workspaceId}`}
-                              onClick={() => {
-                                const presetMap: Record<string, 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom'> = {
-                                  running_event: 'running_event',
-                                  cafe_fnb: 'cafe_fnb',
-                                  clinic_beauty: 'clinic_beauty',
-                                };
-                                handleSelectBrandPreset(presetMap[t.category] || 'custom');
-                                setActivePlanId(t.planId);
-                                setActiveRole('user');
-                              }}
-                              className="rounded-xl border border-pink-200 bg-pink-50/70 px-3 py-1.5 text-sm font-medium text-[#a92e5d] hover:bg-[#bd416e] hover:text-white"
-                            >
-                              Inspeksi Workspace →
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              {/* Central API & OAuth Vault (1 App Developer for All Users) */}
-              <section className="veloxa-panel p-4 sm:p-6">
-                <div className="flex items-center gap-2">
-                  <Lock className="h-5 w-5 text-[#a92e5d]" />
-                  <h2 className="text-lg font-semibold text-neutral-900">
-                    Brankas API & OAuth Terpusat (Dikelola Pemilik SaaS)
-                  </h2>
-                </div>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Ringkasan layanan platform. Pengaturan teknis dikelola melalui backend.
-                </p>
-
-                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <div className="rounded-xl border border-neutral-200 bg-white p-4">
-                    <p className="text-sm font-semibold uppercase text-neutral-400">OpenAI Master Engine</p>
-                    <p className="mt-1 text-base font-medium text-neutral-900">
-                      Konfigurasi model dikelola di backend
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-neutral-600">
-                      <span className="font-medium text-neutral-600">Pengaturan model belum tersedia di UI</span>
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-neutral-200 bg-white p-4">
-                    <p className="text-sm font-semibold uppercase text-neutral-400">Meta Graph & Marketing API</p>
-                    <p className="mt-1 text-base font-medium text-neutral-900">
-                      App ID: {centralCreds.metaAppId}
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-neutral-600">
-                      <span className="font-medium text-neutral-600">Instagram & Facebook · mode pengujian</span>
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-neutral-200 bg-white p-4">
-                    <p className="text-sm font-semibold uppercase text-neutral-400">TikTok & YouTube Shorts</p>
-                    <p className="mt-1 text-base font-medium text-neutral-900">
-                      Integrasi belum tersedia
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-neutral-600">
-                      <span className="font-medium text-neutral-600">Pembayaran belum tersedia</span>
-                    </p>
-                  </div>
-                </div>
-              </section>
-
-              {/* Cloud Firebase Database & 5 OpenAI Agents Configuration Panel (Cendekia-Style Architecture) */}
-              <section className="veloxa-panel p-6"><h2 className="text-lg font-semibold">Pengaturan platform</h2><p className="mt-3 text-base leading-relaxed text-neutral-500">Konfigurasi AI dan koneksi layanan dikelola di backend. Pengaturan Super Admin akan dikembangkan pada tahap berikutnya.</p></section>
-            </div>
+            <VeloxaSuperAdmin />
           ) : (
             /* ======================================================================
                ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD
@@ -1156,7 +756,7 @@ export default function VeloxaAiPlatformPage() {
             <VeloxaWorkspaceShell
               activeTab={activeTab} brandName={brand.businessName} planName={currentPlan.name}
               email={authUser.email}
-              used={postsUsedThisMonth} quota={currentPlan.monthlyPostQuota} locale={locale}
+              used={postsUsedThisMonth} quota={publicationQuota?.limit ?? currentPlan.monthlyPostQuota} locale={locale}
               onNavigate={navigateWorkspace} onCreate={() => navigateWorkspace('studio')}
               onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
               onBilling={() => { setSelectedCheckoutPlanId(activePlanId); billingDialogRef.current?.showModal(); }}
@@ -1165,7 +765,6 @@ export default function VeloxaAiPlatformPage() {
               isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => setActiveRole('admin')}
               status={statusBanner === 'Profil bisnis sudah tersimpan. Selamat datang di Veloxa!' && activeTab !== 'overview' ? undefined : statusBanner || undefined}
               onDismissStatus={() => setStatusBanner('')}
-              presetControls={authUser.isSuperAdmin ? <VeloxaSelect aria-label="Pilih Inspeksi Brand" value={selectedPresetKey} onValueChange={event => handleSelectBrandPreset(event as 'running_event' | 'cafe_fnb' | 'clinic_beauty' | 'custom')} className="mt-3 w-full rounded-lg border p-2 text-base"><option value="running_event">Nusantara Run</option><option value="cafe_fnb">Kopi Senja</option><option value="clinic_beauty">GlowDerm</option><option value="custom">Brand aktif</option></VeloxaSelect> : undefined}
             >
               <VeloxaBusinessSwitcher businesses={businesses} activeId={activeBusinessId} accounts={connections} locked={businessLocked} ready={businessesReady} error={businessError} managing={managingBusiness} onManaging={setManagingBusiness} onSelect={selectBusiness} onCreate={createNewBusiness} onAssign={connectionIds=>saveBusinessChanges({connectionIds})} onReload={reloadBusinesses}/>
               {/* ====================================================================
@@ -1175,7 +774,8 @@ export default function VeloxaAiPlatformPage() {
                 <VeloxaWorkspaceOverview
                   brand={brand}
                   postsUsed={postsUsedThisMonth}
-                  quota={currentPlan.monthlyPostQuota}
+                  quota={publicationQuota?.limit ?? currentPlan.monthlyPostQuota}
+                  dailyPublicationQuota={publicationQuota && publicationQuota.dailyLimit !== null ? { used: publicationQuota.dailyUsed, limit: publicationQuota.dailyLimit } : undefined}
                   connections={activeConnections}
                   connectionsVerified={connectionsVerified && businessesReady}
                   drafts={businessDrafts}
@@ -1714,9 +1314,29 @@ export default function VeloxaAiPlatformPage() {
             logoutConfirmDialogRef.current?.close();
           }
         }}
-        className="m-auto w-full max-w-md rounded-xl border border-neutral-200 bg-white p-0 text-neutral-900 shadow-2xl"
+        className="max-w-md border border-neutral-200 bg-white p-0 text-neutral-900 shadow-xl"
       >
-        <div className="space-y-5"><div className="flex items-center justify-between gap-4"><h2 id="logout-confirm-title" className="text-xl font-semibold">Keluar dari akun?</h2><button type="button" aria-label="Tutup konfirmasi keluar" onClick={() => logoutConfirmDialogRef.current?.close()} className="h-10 w-10 rounded-lg border border-neutral-200">×</button></div><p id="logout-confirm-desc" className="break-words text-base leading-relaxed text-neutral-500">Anda akan keluar dari {authUser?.email || 'akun Veloxa'}. Anda dapat masuk kembali kapan saja.</p><div className="flex flex-wrap justify-end gap-3 border-t border-neutral-100 pt-4"><button type="button" autoFocus onClick={() => logoutConfirmDialogRef.current?.close()} className="veloxa-button-secondary">Batal</button><button type="button" onClick={() => void handleConfirmSignOut()} className="veloxa-button-primary">Keluar akun</button></div></div>
+        <div className="p-5 sm:p-6">
+          <header className="flex items-center justify-between gap-4">
+            <h2 id="logout-confirm-title" className="text-xl font-semibold leading-tight">{t('Keluar dari akun?')}</h2>
+            <button
+              type="button"
+              aria-label={t('Tutup')}
+              onClick={() => logoutConfirmDialogRef.current?.close()}
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-neutral-200 text-neutral-600 hover:bg-neutral-50"
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          </header>
+          <div id="logout-confirm-desc" className="mt-3 space-y-1 text-base leading-relaxed">
+            {authUser?.email && <p className="font-medium [overflow-wrap:anywhere]"><bdi>{authUser.email}</bdi></p>}
+            <p className="text-neutral-600">{t('Anda dapat masuk kembali kapan saja.')}</p>
+          </div>
+        </div>
+        <footer className="flex flex-wrap justify-end gap-2 border-t border-neutral-100 bg-neutral-50 px-5 py-4 sm:px-6">
+          <button type="button" autoFocus onClick={() => logoutConfirmDialogRef.current?.close()} className="veloxa-button-secondary">{t('Batal')}</button>
+          <button type="button" onClick={() => void handleConfirmSignOut()} className="veloxa-button-primary">{t('Keluar akun')}</button>
+        </footer>
       </dialog>
     </div>
     </WorkspaceLanguage>

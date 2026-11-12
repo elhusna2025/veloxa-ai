@@ -96,6 +96,7 @@ test('lost Instagram acknowledgement is reconciled by exact container GET and ca
  assert.equal(saved.receipts[0].status,'published');
  assert.equal(saved.receipts[0].providerContainerId,'777');
  assert.equal(saved.receipts[0].externalPostId,undefined);
+ assert.equal(saved.lastConfirmedAt, now);
  assert.equal(f.db.records.get(f.slot.path)?.state,'queued');
  assert.equal(f.db.records.get(f.rule.path)?.pendingJob,f.slot.id);
  assert.equal(f.db.records.get(f.usage.path)?.count,1);

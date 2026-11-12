@@ -5,6 +5,7 @@ import type { CarouselPlan } from '../carousel-plan';
 import { CONTENT_COPY_INSTRUCTION } from '../content-typography';
 import { forbiddenContentMatches } from '../content-policy';
 import { businessCategoryLabel } from '../business-categories';
+import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import { z } from 'zod';
 import { ApiError } from './http';
 import { generateBrandContentDraft, runAutonomousQualityRepairLoop } from '../veloxa-engine';
@@ -53,6 +54,7 @@ interface AgentsClient {
       sessions: {
         create(params: {
           agent_id: string;
+          agent?: { model: string };
           environment: { type: 'none' };
           input: string;
           stream: true;
@@ -62,20 +64,20 @@ interface AgentsClient {
   };
 }
 
-const savedAgentId = 'agent_3c670aa7406f45918fdb3023c7e617a49f8dc033e5274be0bf';
+const CONTENT_SCRIPT_MODEL = DEFAULT_CONTENT_MODELS.scriptModel;
 
 function safeProviderError(): ApiError {
   return new ApiError(503, 'Layanan pembuatan konten AI belum dapat menyelesaikan permintaan. Silakan coba lagi.', 'content_agent_unavailable');
 }
 
-export function createContentAgentGenerator(client: AgentsClient, agentId: string) {
+export function createContentAgentGenerator(client: AgentsClient, agentId: string, model: string = CONTENT_SCRIPT_MODEL) {
   return async function generateContentWithClient(params: ContentAgentParams): Promise<ContentAgentResult> {
     const scaffold = generateBrandContentDraft(params);
     let stream: AgentStream | undefined;
 
     try {
       const agent = await client.beta.agents.retrieve(agentId);
-      if (agent.model !== 'gpt-6-luna' || !Array.isArray(agent.tools) || agent.tools.length !== 0) {
+      if (agent.model !== CONTENT_SCRIPT_MODEL || !Array.isArray(agent.tools) || agent.tools.length !== 0) {
         throw new ApiError(503, 'Konfigurasi agen konten belum sesuai.', 'content_agent_unavailable');
       }
 
@@ -114,6 +116,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
       if(params.offeringFocus)brief.extraInstructions += ' Fokuskan konten pada offerings yang dipilih pengguna ini. offeringFocus.intent menentukan tujuan: auto pilih sudut relevan, education jelaskan manfaat dengan edukasi, introduction perkenalkan produk, promotion ajak mengenal atau memakai produk tanpa mengarang harga, diskon, tenggat, atau hasil pasti. Bila beberapa produk dipilih, hubungkan secara masuk akal sebagai satu cerita.';
       stream = await client.beta.agents.sessions.create({
         agent_id: agentId,
+        ...(model === CONTENT_SCRIPT_MODEL ? {} : { agent: { model } }),
         environment: { type: 'none' },
         input: JSON.stringify(brief),
         stream: true,
@@ -231,8 +234,12 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
   };
 }
 
-export async function generateContentWithSavedAgent(params: ContentAgentParams): Promise<ContentAgentResult> {
+export async function generateContentWithSavedAgent(
+  params: ContentAgentParams,
+  options: { model?: string } = {},
+): Promise<ContentAgentResult> {
   const apiKey = process.env.OPENAI_API_KEY;
+  const model = options.model ?? CONTENT_SCRIPT_MODEL;
   const agentId = process.env.OPENAI_CONTENT_AGENT_ID;
   if (!apiKey || !agentId) {
     throw new ApiError(503, 'Konfigurasi agen konten belum lengkap.', 'content_agent_unavailable');
@@ -244,5 +251,5 @@ export async function generateContentWithSavedAgent(params: ContentAgentParams):
     maxRetries: 0,
     timeout: 85_000,
   });
-  return createContentAgentGenerator(createManagedAgentTransport(client), agentId)(params);
+  return createContentAgentGenerator(createManagedAgentTransport(client), agentId, model)(params);
 }

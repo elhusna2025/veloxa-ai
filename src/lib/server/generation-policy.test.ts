@@ -1,10 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generationPolicy, generationQuotaStatus, reserveGenerationAttempt } from './generation-policy';
-function fake({config,configError=false,count=6}:{config?:unknown;configError?:boolean;count?:unknown}={}) {
- let value=count;let writes=0;const usage={get:async()=>({data:()=>({count:value})})};
- const ref={collection:()=>({doc:()=>usage}),firestore:{collection:(name:string)=>{assert.equal(name,'platform_configs');return{doc:(id:string)=>{assert.equal(id,'generation_workspace-a');return{get:async()=>{if(configError)throw Error('unavailable');return{data:()=>config}}}}}},runTransaction:async(action:any)=>action({get:(doc:any)=>doc.get(),set:(_ref:any,data:any)=>{writes++;value=data.count;}})}};
- return {ref:ref as never,value:()=>value,writes:()=>writes};
+function fake({ config, configError = false, count = 6, planData, workspaceData, actualPlan, beforeTransaction }:{
+ config?:unknown; configError?:boolean; count?:unknown; planData?:unknown; workspaceData?:unknown;
+ actualPlan?:string; beforeTransaction?:()=>void;
+} = {}) {
+ let value = count;
+ let writes = 0;
+ const reads:string[] = [];
+ const usage = { get: async () => ({ data: () => ({ count:value }) }) };
+ const ref = {
+  get: async () => ({ data: () => ({ subscriptionPlanId:actualPlan }) }),
+  collection: () => ({ doc: () => usage }),
+  firestore: {
+   collection: (name:string) => ({
+    doc: (id:string) => ({
+     get: async () => {
+      reads.push(`${name}/${id}`);
+      if (name === 'platform_configs' && configError) throw Error('unavailable');
+      return { data: () => name === 'platform_configs' ? config : id === 'global' ? planData : workspaceData };
+     },
+    }),
+   }),
+   runTransaction: async (action:any) => {
+    beforeTransaction?.();
+    return action({get:(doc:any)=>doc.get(),set:(_ref:any,data:any)=>{writes++;value=data.count;}});
+   },
+  },
+ };
+ return {ref:ref as never,value:()=>value,writes:()=>writes,reads};
 }
 test('unreadable admin configuration fails closed and standard status remains explicit',async()=>{
  const f=fake({configError:true});assert.deepEqual(await generationPolicy(f.ref,'workspace-a','free_trial'),{mode:'standard',dailyLimit:6});
@@ -18,15 +42,11 @@ test('even development mode rejects corrupt and overflowing counters before any 
  }
 });
 test('revocation before reservation is read through the same transaction, never from a stale external policy',async()=>{
- let enabled=true;let writes=0;let inTransaction=false;const reads:string[]=[];
- const policyRef={kind:'policy'};const usageRef={kind:'usage'};
- const ref={collection:()=>({doc:()=>usageRef}),firestore:{collection:()=>({doc:()=>policyRef}),runTransaction:async(action:any)=>{
-  // Admin revokes after the request starts, before the reservation transaction begins.
-  enabled=false;inTransaction=true;
-  try{return await action({get:async(doc:any)=>{assert.equal(inTransaction,true);reads.push(doc.kind);return{data:()=>doc===policyRef?{workspaceId:'workspace-a',mode:'development',enabled}:{count:6}}},set:()=>{writes++}});}finally{inTransaction=false;}
- }}};
- await assert.rejects(reserveGenerationAttempt(ref as never,'workspace-a','free_trial'),/hari ini tercapai/);
- assert.deepEqual(reads,['policy','usage']);assert.equal(writes,0);
+ const config = {workspaceId:'workspace-a',mode:'development',enabled:true};
+ const f=fake({config,beforeTransaction:()=>{config.enabled=false;}});
+ await assert.rejects(reserveGenerationAttempt(f.ref,'workspace-a','free_trial'),/hari ini tercapai/);
+ assert.deepEqual(f.reads,['private_admin_settings/global','private_admin_settings/workspace_workspace-a','platform_configs/generation_workspace-a']);
+ assert.equal(f.writes(),0);
 });
 
 test('normal plan cap, development status and missing counter initialization use the same policy',async()=>{
@@ -36,6 +56,23 @@ test('normal plan cap, development status and missing counter initialization use
  const d=fake({config:{workspaceId:'workspace-a',mode:'development',enabled:true},count:100});
  const status=await generationQuotaStatus(d.ref,'workspace-a','free_trial');assert.equal(status.mode,'development');assert.equal(status.dailyLimit,null);assert.equal(status.used,100);
  assert.deepEqual(await generationPolicy(f.ref,'workspace-a','starter_500k'),{mode:'standard',dailyLimit:3});
+});
+
+test('explicit workspace draft quota beats plan and legacy development; plan changes read current workspace package',async()=>{
+ const planData={plans:{
+  free_trial:{dailyDraftLimit:8,dailyPublicationLimit:null,monthlyPublicationLimit:20},
+  starter_500k:{dailyDraftLimit:2,dailyPublicationLimit:null,monthlyPublicationLimit:20},
+ }};
+ const legacy={workspaceId:'workspace-a',mode:'development',enabled:true};
+ const capped=fake({planData,config:legacy,workspaceData:{quota:{dailyDraftLimit:1}},count:1});
+ await assert.rejects(reserveGenerationAttempt(capped.ref,'workspace-a','free_trial'),/hari ini tercapai/);
+ assert.equal((await generationQuotaStatus(capped.ref,'workspace-a','free_trial')).dailyLimit,1);
+ const legacyMode=fake({planData,config:legacy,count:8});
+ assert.equal((await reserveGenerationAttempt(legacyMode.ref,'workspace-a','free_trial')).mode,'development');
+ const exempt=fake({planData,workspaceData:{quota:{dailyDraftLimit:null}},count:9});
+ assert.equal((await reserveGenerationAttempt(exempt.ref,'workspace-a','free_trial')).used,10);
+ const current=fake({planData,actualPlan:'starter_500k',count:2});
+ await assert.rejects(reserveGenerationAttempt(current.ref,'workspace-a','free_trial'),/hari ini tercapai/);
 });
 
 test('scheduled Reels recovers using the original WIB quota reservation even across midnight', async t => {
@@ -49,7 +86,7 @@ test('scheduled Reels recovers using the original WIB quota reservation even acr
   firestore: {
    collection: () => ({doc: () => policyRef}),
    runTransaction: async (action: (tx: unknown) => Promise<unknown>) => action({
-    get: async (doc: unknown) => ({data: () => doc === jobRef ? job : typeof doc === 'string' ? {count:usage.get(doc)} : undefined}),
+    get: async (doc: unknown) => ({data: () => doc === ref ? {subscriptionPlanId:'free_trial'} : doc === jobRef ? job : typeof doc === 'string' ? {count:usage.get(doc)} : undefined}),
     update: (doc: unknown, update: Partial<typeof job>) => {assert.equal(doc, jobRef); job = {...job, ...update};},
     set: (day: string, value: {count:number}) => {usage.set(day, value.count);},
    }),

@@ -87,16 +87,16 @@ function fixture() {
     referenceInstruction?: string;
     referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
     onProgress?: (event: { stage: string }) => void;
-    generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
+    generate?: NonNullable<Parameters<typeof createSocialContent>[1]>['generate'];
     renderImage?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderImage'];
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source: options.source, verifyArtwork: options.verifyArtwork,
     recoverScheduledReelsArtwork: options.recoverScheduledReelsArtwork,
     verifyScript: options.verifyScript ?? (async () => {}),
     scheduledDraft: options.scheduledDraft,
-    generate: async input => {
+    generate: async (input, optionsForModel) => {
       generateCalls++;
-      if (options.generate) return options.generate(input);
+      if (options.generate) return options.generate(input, optionsForModel);
       const draft = generateBrandContentDraft(input);
       if (input.format === 'carousel') draft.slides = Array.from({ length: 5 }, (_, index) => ({ slideNumber: index + 1, headline: `Headline ${index + 1}`, body: `Body ${index + 1}`, visualDirection: 'Visual direction', badgeText: `${index + 1}/5` }));
       if (input.format === 'short_video') {
@@ -119,6 +119,58 @@ function fixture() {
   const generationCount = () => [...database.values.entries()].find(([key]) => key.includes('/generation_usage/'))?.[1].count || 0;
   return { database, ref, blobs, create, dependencies, request, count, generationCount, generateCalls: () => generateCalls, renderCalls: () => renderCalls };
 }
+
+test('Studio and Otonom pin the workspace script and voice models and inherit the platform image model', async t => {
+  const scriptModel = 'gpt-6.1-sol';
+  const imageModel = 'gpt-image-2.5-sunburst';
+  const voiceModel = 'gpt-realtime-2.1';
+  for (const [key, value] of Object.entries({
+    VELOXA_ADMIN_SCRIPT_MODELS: scriptModel,
+    VELOXA_ADMIN_IMAGE_MODELS: imageModel,
+    VELOXA_ADMIN_VOICE_MODELS: voiceModel,
+  })) {
+    const previous = process.env[key];
+    t.after(() => {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
+    process.env[key] = value;
+  }
+  const photo = await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#daebe5' } }).jpeg().toBuffer();
+  for (const source of [undefined, 'autonomous_agent'] as const) {
+    const f = fixture();
+    const globalSettings = 'private_admin_settings/global';
+    const workspaceSettings = `private_admin_settings/workspace_${f.ref.id}`;
+    f.database.values.set(globalSettings, { models: { imageModel, scriptModel: 'gpt-6-luna' } });
+    f.database.values.set(workspaceSettings, { models: { scriptModel, voiceModel } });
+    const receivedImageModels: Array<string | undefined> = [];
+    const { draft } = await f.create({
+      source,
+      generate: async (input, options) => {
+        assert.equal(options?.model, scriptModel);
+        f.database.values.delete(globalSettings);
+        f.database.values.delete(workspaceSettings);
+        const draft = generateBrandContentDraft(input);
+        draft.videoScenes = Array.from({ length: 4 }, (_, index) => ({
+          sceneNumber: index + 1, timeRange: '00:00–00:05', textOverlay: `Langkah ${index + 1}`,
+          voiceover: 'Pelajari langkah ini.', visualDirection: 'Pelajar berlatih.',
+        }));
+        return { draft, engineMode: 'deterministic_local' };
+      },
+      renderImage: async (_params, options) => {
+        receivedImageModels.push(options?.model);
+        return photo;
+      },
+      verifyArtwork: async () => {},
+      generateVoice: async (transcript, options) => {
+        assert.equal(options?.model, voiceModel);
+        return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript, model: voiceModel };
+      },
+    });
+    assert.equal(draft.voiceoverModel, voiceModel);
+    assert.deepEqual(receivedImageModels, Array(4).fill(imageModel));
+  }
+});
 
 test('all visual copy is preflighted before any paid image or voice request, including the last slide',async()=>{
  for(const format of ['single_post','carousel','short_video'] as const){

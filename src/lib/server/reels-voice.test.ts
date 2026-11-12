@@ -99,6 +99,20 @@ test('mengirim naskah dengan konfigurasi suara naratif dan menggabungkan audio s
   assert.equal(connection.closeCount, 1);
 });
 
+test('membuka koneksi Realtime dengan model pilihan dan mencatatnya pada hasil', async () => {
+  const connection = new MockConnection();
+  const model = 'gpt-realtime-2.1';
+  const result = generateReelsVoiceover(script, {
+    model,
+    createConnection: selected => {
+      assert.equal(selected, model);
+      return connection as never;
+    },
+  });
+  emitCompletion(connection);
+  assert.equal((await result).model, model);
+});
+
 test('menolak audio malformed, kosong, terlalu besar, dan respons gagal dengan error aman', async () => {
   for (const scenario of ['malformed', 'empty', 'oversized', 'failed'] as const) {
     const { connection, createConnection } = mock();

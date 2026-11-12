@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import {ApiError} from './http';
-interface Input {agent_id:string;environment:{type:'none'};input:string;stream:true}
+interface Input {agent_id:string;agent?:{model:string};environment:{type:'none'};input:string;stream:true}
 interface Options {timeoutMs?:number;pollMs?:number;now?:()=>number;wait?:(ms:number,signal:AbortSignal)=>Promise<void>;log?:(event:Record<string,unknown>)=>void}
 function pause(ms:number,signal:AbortSignal){return new Promise<void>((resolve,reject)=>{if(signal.aborted){reject(new Error('aborted'));return;}const timer=setTimeout(done,ms);function done(){signal.removeEventListener('abort',abort);resolve();}function abort(){clearTimeout(timer);signal.removeEventListener('abort',abort);reject(new Error('aborted'));}signal.addEventListener('abort',abort,{once:true});});}
 function fault(code:string,message:string,status=503){return new ApiError(status,message,code);}

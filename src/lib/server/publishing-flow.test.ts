@@ -12,7 +12,7 @@ import { publishSocialContent } from './publishing';
 import { ApiError } from './http';
 import { MetaRequestError } from './meta-graph';
 import { BRAND_PRESETS, generateBrandContentDraft, SUBSCRIPTION_PLANS } from '../veloxa-engine';
-import { wibMonth } from './clock';
+import { wibDay, wibMonth } from './clock';
 
 /** Transactional in-memory Firebase test adapter. No Firebase/Meta network calls occur. */
 class Database {
@@ -810,6 +810,68 @@ test('a legacy Free Trial workspace can use its 20th publication but cannot use 
   await assert.rejects(publishSocialContent(f.request(twentyFirst.id), dependencies), { code: 'quota_exhausted' });
   assert.equal(calls, 2);
   assert.equal(f.count(), 20);
+});
+
+test('workspace daily publication cap is shared by concurrent drafts and the same draft is charged once', async () => {
+  const f = fixture();
+  f.database.values.set('private_admin_settings/global', {
+    plans: { free_trial: { dailyDraftLimit:6, dailyPublicationLimit:3, monthlyPublicationLimit:25 } },
+  });
+  f.database.values.set(`private_admin_settings/workspace_${f.ref.id}`, {
+    quota: { dailyPublicationLimit:1 },
+  });
+  const first = (await f.create()).draft;
+  const second = (await f.create()).draft;
+  let sends = 0;
+  const dependencies = { ...f.dependencies, publisher: async () => ({ externalPostId: `remote-${++sends}` }) };
+  const outcomes = await Promise.allSettled([first,second].map(draft => publishSocialContent(f.request(draft.id), dependencies)));
+  const success = outcomes.find(outcome => outcome.status === 'fulfilled');
+  const failed = outcomes.find(outcome => outcome.status === 'rejected');
+  assert.ok(success?.status === 'fulfilled' && failed?.status === 'rejected');
+  assert.equal(failed.reason.code, 'daily_publication_quota_exhausted');
+  assert.deepEqual(success.value.publicationQuota, { month:wibMonth(), used:1, limit:25, day:wibDay(), dailyUsed:1, dailyLimit:1 });
+  const same = await publishSocialContent(f.request(success.value.draft.id), dependencies);
+  assert.equal(same.draft.status, 'published');
+  assert.equal(sends, 2);
+  assert.equal(f.count(), 1);
+  assert.equal(f.database.values.get(`${f.ref.path}/publish_daily_usage/${wibDay()}`)?.count, 1);
+});
+
+test('publication refund reverses the original WIB day and month after midnight', async t => {
+  t.mock.timers.enable({ apis:['Date'], now:Date.parse('2026-11-30T16:59:00Z') });
+  const f = fixture();
+  const draft = (await f.create({ selectedConnectionIds:['facebook_100'] })).draft;
+  const result = await publishSocialContent(f.request(draft.id), {
+    ...f.dependencies,
+    publisher: async () => {
+      t.mock.timers.tick(120_000);
+      throw new MetaRequestError('Definitive rejection', false, 100);
+    },
+  });
+  assert.equal(result.draft.status, 'publish_failed');
+  assert.equal(result.publicationQuota?.month, '2026-12');
+  assert.equal(result.publicationQuota?.dailyUsed, 0);
+  assert.equal(f.database.values.get(`${f.ref.path}/publish_usage/2026-11`)?.count, 0);
+  assert.equal(f.database.values.get(`${f.ref.path}/publish_daily_usage/2026-11-30`)?.count, 0);
+  assert.equal(f.database.values.has(`${f.ref.path}/publish_daily_usage/2026-12-01`), false);
+});
+
+test('Otonom skips a slot at a daily cap without disabling its future schedule', async () => {
+  const { processAutonomyRule } = await import('./autonomy-worker');
+  const f = await autonomyFixture();
+  const slot = f.rule.nextSlotMs;
+  f.database.values.set(`private_admin_settings/workspace_${f.ref.id}`, {
+    quota: { dailyPublicationLimit:0 },
+  });
+  const result = await processAutonomyRule(f.ruleRef as never, {
+    database:f.database as never,
+    create:(async()=>assert.fail('must not generate at quota')) as never,
+    publish:(async()=>assert.fail('must not publish at quota')) as never,
+  });
+  assert.equal(result.state, 'skipped');
+  assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/slot_${slot}`)?.state, 'skipped');
+  assert.equal(f.database.values.get(f.ruleRef.path)?.enabled, true);
+  assert.ok(f.database.values.get(f.ruleRef.path)!.nextSlotMs > slot);
 });
 
 test('carousel generation renders and stores five ordered slides while consuming one generation quota', async () => {

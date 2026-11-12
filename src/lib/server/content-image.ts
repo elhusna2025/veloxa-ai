@@ -4,6 +4,7 @@ import { MAX_CONTENT_REFERENCES, MAX_REFERENCE_IMAGE_BYTES, MAX_REFERENCE_TOTAL_
 import sharp from 'sharp';
 import { ApiError } from './http';
 import { CAROUSEL_ARTWORK, REELS_ARTWORK } from './content-compositor';
+import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 
 export interface SocialPostImageParams {
   businessName: string;
@@ -51,6 +52,7 @@ interface ImageClient {
 export interface SocialPostImageDependencies {
   imageClient?: ImageClient;
   timeoutMs?: number;
+  model?: string;
 }
 
 const maxBase64Length = 20 * 1024 * 1024;
@@ -218,7 +220,7 @@ export async function generateSocialPostImage(
   let response: Awaited<ReturnType<ImageClient['images']['generate']>>;
   try {
     const imageRequest: ImageGenerationRequest = {
-      model: 'gpt-image-2.6-sunburst',
+      model: dependencies.model ?? DEFAULT_CONTENT_MODELS.imageModel,
       prompt: buildPrompt(params),
       n: 1,
       size: params.aspectRatio === '9:16' ? '1008x1792' : '1024x1280',

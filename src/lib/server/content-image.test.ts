@@ -134,6 +134,27 @@ test('meminta model yang ditentukan dan menghasilkan JPEG berukuran 1080x1350', 
   assert.equal(metadata.height, 1350);
 });
 
+test('memakai model gambar pilihan pada generasi dan edit referensi', async () => {
+  const fixture = await createJpegFixture();
+  const requestedModels: string[] = [];
+  const imageClient = {
+    images: {
+      generate: async ({ model }: { model: string }) => {
+        requestedModels.push(model);
+        return { data: [{ b64_json: fixture.toString('base64') }] };
+      },
+      edit: async ({ model }: { model: string }) => {
+        requestedModels.push(model);
+        return { data: [{ b64_json: fixture.toString('base64') }] };
+      },
+    },
+  };
+  const model = 'gpt-image-2.5-sunburst';
+  await generateSocialPostImage(params, { imageClient, model });
+  await generateSocialPostImage({ ...params, referenceImages: [fixture] }, { imageClient, model });
+  assert.deepEqual(requestedModels, [model, model]);
+});
+
 test('menolak respons gambar yang hilang atau bukan base64 JPEG valid', async () => {
   const invalidClients = [
     { images: { async generate() { return {}; } } },
