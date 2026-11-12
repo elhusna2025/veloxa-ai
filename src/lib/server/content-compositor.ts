@@ -22,10 +22,10 @@ export const REELS_ARTWORK = {
 } satisfies Record<OriginalVisualAsset['role'], Rect>;
 
 export const scheduledReelsCopyAreas = (hasLogo: boolean) => ({
-  businessName: { left: hasLogo ? 262 : 70, top: 246, width: hasLogo ? 638 : 830, height: 62 },
+  businessName: { left: hasLogo ? 262 : 70, top: 246, width: hasLogo ? 638 : 830, height: 108 },
   headline: { left: 70, top: 375, width: 780, height: 310 },
   cta: { left: 70, top: 1350, width: 810, height: 90 },
-  website: { left: 70, top: 1460, width: 810, height: 65 },
+  website: { left: 70, top: 1460, width: 810, height: 130 },
 }) satisfies Record<string, Rect>;
 
 async function placeOriginalAsset(asset: OriginalVisualAsset, box: Rect, deviceFrame: boolean): Promise<OverlayOptions[]> {
@@ -70,44 +70,69 @@ const linearColor = Array.from({ length: 256 }, (_, byte) => {
   return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 });
 
-function reelsCopyRejected() {
-  return new ApiError(422, 'Teks Reels belum mendapatkan ruang yang cukup dan kontras yang aman. Slot ini tidak dikirim.', 'scheduled_artwork_rejected');
+type ReelsCopyKey = keyof ReturnType<typeof scheduledReelsCopyAreas>;
+type FittedReelsText = NonNullable<Awaited<ReturnType<typeof fitCompositionText>>>;
+const REELS_COPY_METRICS = {
+  businessName: CONTENT_TYPOGRAPHY.brand, headline: CONTENT_TYPOGRAPHY.reelsTitle,
+  cta: CONTENT_TYPOGRAPHY.cta, website: CONTENT_TYPOGRAPHY.website,
+};
+const OUTLINE = 6;
+
+export async function prepareScheduledReelsCopy(copy: Record<ReelsCopyKey, string>, hasLogo: boolean) {
+  const areas = scheduledReelsCopyAreas(hasLogo);
+  const fitted: { key: ReelsCopyKey; box: Rect; text: FittedReelsText }[] = [];
+  const captionLines: string[] = [];
+  for (const key of Object.keys(areas) as ReelsCopyKey[]) {
+    if (!copy[key].trim()) continue;
+    let box = areas[key];
+    const { max, min } = REELS_COPY_METRICS[key];
+    const fit = async () => {
+      const text = await fitCompositionText(copy[key], box.width - OUTLINE * 2, box.height - OUTLINE * 2, max, min, '#000000', key !== 'website');
+      return text ?? invalid();
+    };
+    try {
+      let text: FittedReelsText;
+      try {
+        text = await fit();
+      } catch (error) {
+        if (key !== 'headline' || !(error instanceof ApiError) || error.code !== 'visual_composition_invalid') throw error;
+        box = { ...box, width: 830, height: 618 };
+        text = await fit();
+      }
+      fitted.push({
+        key, text, box: { left: box.left + OUTLINE, top: box.top + OUTLINE, width: text.width, height: text.height },
+      });
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'visual_composition_invalid') throw error;
+      captionLines.push(copy[key]);
+    }
+  }
+  return { fitted, captionLines };
 }
 
-/** Add the exact copy over the original photo. Never add a scrim to force contrast. */
+function glyphLayer(alpha: Buffer, width: number, height: number, left: number, top: number, ink: 0 | 255): OverlayOptions {
+  const input = Buffer.alloc(alpha.length * 4, ink);
+  for (let index = 0; index < alpha.length; index++) input[index * 4 + 3] = alpha[index];
+  return { input, raw: { width, height, channels: 4 }, left, top };
+}
+
+/** Preserve natural contrast where possible, otherwise outline the letters locally. */
 export async function composeScheduledReelsCopy(
   photo: Buffer,
-  copy: Record<keyof ReturnType<typeof scheduledReelsCopyAreas>, string>,
-  hasLogo: boolean,
+  fitted: Awaited<ReturnType<typeof prepareScheduledReelsCopy>>['fitted'],
 ): Promise<Buffer> {
   const width = 1080;
   const height = 1920;
   const pixels = await sharp(photo, { limitInputPixels: 30_000_000 }).rotate()
     .resize(width, height, { fit: 'cover' }).toColourspace('srgb').removeAlpha().raw().toBuffer();
-  const areas = scheduledReelsCopyAreas(hasLogo);
-  const metrics = {
-    businessName: CONTENT_TYPOGRAPHY.brand, headline: CONTENT_TYPOGRAPHY.reelsTitle,
-    cta: CONTENT_TYPOGRAPHY.cta, website: CONTENT_TYPOGRAPHY.website,
-  };
   const layers: OverlayOptions[] = [];
-  for (const key of Object.keys(areas) as Array<keyof typeof areas>) {
-    const box = areas[key];
-    const { max, min } = metrics[key];
-    const bold = key !== 'website';
-    let dark: Awaited<ReturnType<typeof fitCompositionText>>;
-    try {
-      dark = await fitCompositionText(copy[key], box.width, box.height, max, min, '#000000', bold);
-    } catch (error) {
-      if (error instanceof ApiError && error.code === 'visual_composition_invalid') throw reelsCopyRejected();
-      throw error;
-    }
-    if (!dark) continue;
-    const mask = await sharp(dark.data).toColourspace('srgb').ensureAlpha().raw().toBuffer();
+  for (const { box, text } of fitted) {
+    const mask = await sharp(text.data).extractChannel('alpha').toColourspace('b-w').raw().toBuffer();
     let darkest = 1;
     let brightest = 0;
-    for (let y = 0; y < dark.height; y++) {
-      for (let x = 0; x < dark.width; x++) {
-        if (mask[(y * dark.width + x) * 4 + 3] < 220) continue;
+    for (let y = 0; y < text.height; y++) {
+      for (let x = 0; x < text.width; x++) {
+        if (mask[y * text.width + x] < 220) continue;
         const offset = ((box.top + y) * width + box.left + x) * 3;
         const luminance = 0.2126 * linearColor[pixels[offset]] + 0.7152 * linearColor[pixels[offset + 1]] + 0.0722 * linearColor[pixels[offset + 2]];
         darkest = Math.min(darkest, luminance);
@@ -116,11 +141,21 @@ export async function composeScheduledReelsCopy(
     }
     const darkContrast = (darkest + 0.05) / 0.05;
     const lightContrast = 1.05 / (brightest + 0.05);
-    if (darkest > brightest || Math.max(darkContrast, lightContrast) < 4.5) throw reelsCopyRejected();
-    const rendered = darkContrast >= lightContrast
-      ? dark
-      : await fitCompositionText(copy[key], box.width, box.height, dark.fontSize, dark.fontSize, '#FFFFFF', bold);
-    layers.push({ input: rendered!.data, left: box.left, top: box.top });
+    if (darkest <= brightest && Math.max(darkContrast, lightContrast) >= 4.5) {
+      layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, darkContrast >= lightContrast ? 0 : 255));
+      continue;
+    }
+    const paddedWidth = text.width + OUTLINE * 2;
+    const paddedHeight = text.height + OUTLINE * 2;
+    const alpha = Buffer.alloc(paddedWidth * paddedHeight);
+    for (let y = 0; y < text.height; y++) {
+      mask.copy(alpha, (y + OUTLINE) * paddedWidth + OUTLINE, y * text.width, (y + 1) * text.width);
+    }
+    // libvips erosion expands the brighter alpha pixels into their darker neighbors.
+    const stroke = await sharp(alpha, { raw: { width: paddedWidth, height: paddedHeight, channels: 1 } })
+      .erode(OUTLINE).toColourspace('b-w').raw().toBuffer();
+    layers.push(glyphLayer(stroke, paddedWidth, paddedHeight, box.left - OUTLINE, box.top - OUTLINE, 0));
+    layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, 255));
   }
   return sharp(pixels, { raw: { width, height, channels: 3 } }).composite(layers).jpeg({ quality: 96 }).toBuffer();
 }

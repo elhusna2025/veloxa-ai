@@ -6,6 +6,8 @@ import { createSocialContent } from './content';
 import { publishSocialContent } from './publishing';
 import { ApiError } from './http';
 import { MetaRequestError } from './meta-graph';
+import { renderReelsVideo } from './reels-renderer';
+import { prepareScheduledReelsCopy } from './content-compositor';
 import type { publishMetaReel } from './meta-reels';
 import { BRAND_PRESETS, generateBrandContentDraft } from '../veloxa-engine';
 
@@ -174,7 +176,7 @@ test('saved DNA reaches all four Reels scene render calls without changing voice
  let seen=0;await f.create({renderImage:async params=>{seen++;assert.deepEqual(params.brandPalette,['#167D8D','#FCAB20']);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(seen,4);assert.equal(f.generationCount(),1);
 });
 
-test('scheduled Reels verifies all editorial frames before rendering the video', async () => {
+test('scheduled Reels verifies all typeset frames before rendering the video', async () => {
  const f=fixture();
  const scene=await sharp({create:{width:720,height:1280,channels:3,background:'#abcdee'}}).jpeg().toBuffer();
  const verified:string[]=[];
@@ -182,7 +184,9 @@ test('scheduled Reels verifies all editorial frames before rendering the video',
   source:'autonomous_agent',
   renderImage:async params=>{
    assert.equal(params.scheduledEditorial,true);
-   assert.equal(params.sceneOnly,false);
+   assert.equal(params.sceneOnly,true);
+   assert.equal(params.scheduledReelsPhotoOnly,true);
+   assert.ok(params.scheduledReelsCopyBounds?.headline);
    assert.equal(params.aspectRatio,'9:16');
    if(params.title!=='Langkah 4')assert.equal(params.cta,'');
    return scene;
@@ -238,8 +242,8 @@ test('scheduled Reels repairs the rejected frame with exact text and uses that m
    },
   });
   assert.deepEqual(rejected,['Langkah 2']);
-  assert.deepEqual(repaired.sort(),retry?['Langkah 1','Langkah 2','Langkah 2','Langkah 3','Langkah 4']:['Langkah 2']);
-  assert.deepEqual(simplified,retry?['Langkah 2']:[]);
+  assert.deepEqual(repaired.sort(),['Langkah 1','Langkah 2','Langkah 2','Langkah 3','Langkah 4']);
+  assert.deepEqual(simplified,['Langkah 2']);
   assert.equal(draft.renderedVideo?.durationSeconds,48);
  }
 });
@@ -262,7 +266,7 @@ test('scheduled Reels checks the original logo and screenshot on the final frame
   renderImage:async()=>scene,
   verifyArtwork:async(image,params,beforeOriginalAssets)=>{
    assert.ok(beforeOriginalAssets);
-   if (!params.scheduledReelsPhotoOnly) assert.deepEqual(beforeOriginalAssets, scene);
+   assert.deepEqual(beforeOriginalAssets, scene);
    const {data,info} = await sharp(image).raw().toBuffer({resolveWithObject:true});
    assert.equal(info.width,720);
    assert.equal(info.height,1280);
@@ -282,17 +286,81 @@ test('scheduled Reels checks the original logo and screenshot on the final frame
  assert.equal([...f.database.values.keys()].some(key => key.includes('/social_drafts/')), false);
 });
 
-test('scheduled Reels recovery never renders or saves a video when the exact text lacks contrast', async () => {
+test('mixed light and dark behind one line recovers without another image request and dispatches a real MP4 once', async () => {
  const f=fixture();
  const scene=await sharp({create:{width:1080,height:1920,channels:3,background:'white'}})
-  .composite([{input:{create:{width:900,height:1920,channels:3,background:'black'}},left:180,top:0}]).jpeg().toBuffer();
- await assert.rejects(f.create({
-  source:'autonomous_agent',recoverScheduledReelsArtwork:'simplified',
+  .composite([{input:{create:{width:920,height:1920,channels:3,background:'black'}},left:160,top:0}]).jpeg().toBuffer();
+ let photoRequests = 0;
+ const {draft} = await f.create({
+  source:'autonomous_agent',
+  renderImage:async()=>{photoRequests++;return scene;},
+  verifyArtwork:async(image,params,photo)=>{
+   assert.deepEqual(photo,scene);
+   const headline=params.scheduledReelsCopyBounds!.headline;
+   const top=Math.floor(headline.top*2/3);
+   const height=Math.ceil(headline.height*2/3);
+   const leftPixels=await sharp(image).extract({left:45,top,width:55,height}).raw().toBuffer();
+   const rightPixels=await sharp(image).extract({left:110,top,width:70,height}).raw().toBuffer();
+   assert.ok(leftPixels.some(pixel=>pixel<75),'black outline visible on the light side after JPEG encoding');
+   assert.ok(rightPixels.some(pixel=>pixel>220),'white letters visible on the dark side after JPEG encoding');
+   const unaffected=await sharp(image).extract({left:30,top:600,width:30,height:40}).raw().toBuffer();
+   assert.ok(unaffected.every(pixel=>pixel>248),'no panel or wash outside the letters');
+  },
+  renderVideo:renderReelsVideo,
+ });
+ assert.equal(photoRequests,4);
+ assert.ok(draft.renderedVideo!.durationSeconds>=20 && draft.renderedVideo!.durationSeconds<=60);
+ const sends: string[] = [];
+ const reelPublisher=async(params:Parameters<typeof publishMetaReel>[0])=>{
+  sends.push(params.channel);
+  assert.equal(params.videoBytes.subarray(4,8).toString(),'ftyp');
+  return {externalPostId:`test-${params.channel}`};
+ };
+ const publish=()=>publishSocialContent(f.request(draft.id),{...f.dependencies,reelPublisher});
+ assert.equal((await publish()).draft.status,'published');
+ await publish();
+ assert.deepEqual(sends,['facebook','instagram']);
+});
+
+test('scheduled Reels preserves wide headlines within safe areas and keeps overflow text whole', async () => {
+ const wideHeadline = Array(7).fill('WWWWWW').join(' ');
+ const longName = Array(10).fill('Worldwide').join(' ');
+ const { fitted, captionLines } = await prepareScheduledReelsCopy({
+  headline:wideHeadline, businessName:longName, cta:'', website:'',
+ }, true);
+ const headline = fitted.find(item => item.key === 'headline')!;
+ assert.ok(headline.text.fontSize >= 72);
+ assert.ok(headline.box.top + headline.text.height + 6 < 1038, 'no overlap with the screenshot frame');
+ assert.deepEqual(captionLines,[longName]);
+
+ const f = fixture();
+ const record = f.database.values.get(f.ref.path)!;
+ const snapshot = JSON.parse(record.snapshotJson);
+ snapshot.brand.businessName = longName;
+ record.snapshotJson = JSON.stringify(snapshot);
+ const scene = await sharp({create:{width:720,height:1280,channels:3,background:'white'}}).jpeg().toBuffer();
+ const firstSentence = 'Catat transaksi dengan rapi.';
+ const {draft} = await f.create({
+  source:'autonomous_agent',
+  generate:async input=>{
+   const draft = generateBrandContentDraft(input);
+   draft.caption = `${firstSentence} Penjualan ${'penjualan '.repeat(214).trim()}.`;
+   draft.videoScenes = Array.from({length:4}, (_, index)=>({
+    sceneNumber:index+1, timeRange:'00:00', visualDirection:'Kasir mencatat transaksi',
+    voiceover:'Mulai dengan mencatat penjualan dan pembelian.', textOverlay:wideHeadline,
+   }));
+   return {draft,engineMode:'deterministic_local'};
+  },
   renderImage:async()=>scene,
-  verifyArtwork:async()=>assert.fail('contrast check should stop verification'),
-  renderVideo:async()=>assert.fail('unreadable frames must not be rendered'),
- }),error=>error instanceof ApiError&&error.code==='scheduled_artwork_rejected');
- assert.equal(f.blobs.size,0);
+  verifyArtwork:async(_,params)=>{
+   assert.equal(params.scheduledReelsCopyBounds?.businessName,undefined);
+   assert.ok(params.scheduledReelsCopyBounds?.headline);
+  },
+ });
+ assert.ok(draft.caption.includes(firstSentence));
+ assert.equal(draft.caption.split(longName).length,2);
+ assert.match(draft.caption,/Voiceover menggunakan suara AI\./);
+ assert.ok([...[draft.caption,draft.hashtags.join(' ')].filter(Boolean).join('\n\n')].length<=2200);
 });
 
 test('protected roles are applied to all four Reels images without entering image-edit references',async()=>{

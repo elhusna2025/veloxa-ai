@@ -3,7 +3,7 @@ import OpenAI, { toFile } from 'openai';
 import { MAX_CONTENT_REFERENCES, MAX_REFERENCE_IMAGE_BYTES, MAX_REFERENCE_TOTAL_BYTES } from '../content-reference-options';
 import sharp from 'sharp';
 import { ApiError } from './http';
-import { CAROUSEL_ARTWORK, REELS_ARTWORK, scheduledReelsCopyAreas } from './content-compositor';
+import { CAROUSEL_ARTWORK, REELS_ARTWORK } from './content-compositor';
 
 export interface SocialPostImageParams {
   businessName: string;
@@ -20,6 +20,7 @@ export interface SocialPostImageParams {
   scheduledEditorial?: boolean;
   scheduledArtworkRepair?: boolean;
   scheduledReelsPhotoOnly?: boolean;
+  scheduledReelsCopyBounds?: Record<string, { left: number; top: number; width: number; height: number }>;
   sceneReferenceLabels?: string[];
   carouselSlide?: boolean;
   hasOriginalScreenshot?: boolean;
@@ -75,13 +76,12 @@ export function scheduledArtworkCopy(params: SocialPostImageParams) {
 
 function buildPrompt(params: SocialPostImageParams): string {
   if (params.scheduledReelsPhotoOnly) {
-    const { website, cta, ...headingAreas } = scheduledReelsCopyAreas(Boolean(params.hasOriginalLogo));
     return [
       'Create a naturally lit 9:16 full-bleed editorial photograph for this Reels scene. Output only the photograph. Do not draw captions, letters, numbers, watermarks, logos, readable screen text, overlays, text panels, or placeholders. The app adds the exact marketing copy later.',
       'In the following rectangles on the 1080 × 1920 master, leave natural, softly lit, consistently pale space like a plain wall. Keep faces, products, hands, bright reflections, and dark edges outside these areas. Give the subject a clear, realistic place in the rest of the frame. Use the attached references and brand colors to guide the scene.',
       ...(params.scheduledArtworkRepair ? ['Use a simpler, wider composition. Frame one clear focal action with the subject fully visible. Keep a single softly lit, plain natural surface behind all copy areas, and give the original assets their own unobstructed space. Keep the subject, brand colors, and selected references.'] : []),
       JSON.stringify({
-        copyAreas: { ...headingAreas, ...(params.cta ? { cta } : {}), ...(params.website ? { website } : {}) },
+        copyAreas: params.scheduledReelsCopyBounds,
         ...(params.hasOriginalLogo ? { reservedLogo: REELS_ARTWORK.logo } : {}),
         ...(params.hasOriginalScreenshot ? { reservedScreenshot: REELS_ARTWORK.screenshot } : {}),
         subject: params.title, narrationContext: params.hook, sceneDirection: params.visualDirection,
