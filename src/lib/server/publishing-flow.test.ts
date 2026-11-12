@@ -107,7 +107,7 @@ function fixture() {
     renderImage?: (params: SocialPostImageParams) => Promise<Buffer>;
     verifyArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyArtwork'];
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction, carouselPlan: options.carouselPlan }) }), {
-    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source:options.source, verifyArtwork:options.verifyArtwork,
+    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source:options.source, verifyArtwork:options.verifyArtwork, verifyScript: async () => {},
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -854,6 +854,7 @@ test('scheduled feed artwork uses the full editorial image and checks every slid
   for (const format of ['single_post', 'carousel'] as const) {
     const f = fixture();
     const reviewed: string[] = [];
+    const finalImages: Buffer[] = [];
     const {draft} = await f.create({
       format, source:'autonomous_agent',
       renderImage:async params=>{
@@ -862,13 +863,14 @@ test('scheduled feed artwork uses the full editorial image and checks every slid
         return scene;
       },
       verifyArtwork:async (image, params)=>{
-        assert.equal(image,scene);
         assert.equal(f.blobs.size,0);
         reviewed.push(params.title);
+        finalImages.push(image);
       },
     });
     assert.equal(reviewed.length,format==='carousel'?5:1);
     assert.equal(f.blobs.size,reviewed.length);
+    assert.deepEqual([...f.blobs.values()], finalImages);
     const record=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
     const pixel=await sharp(f.blobs.get(record.storagePath)!).extract({left:16,top:1300,width:1,height:1}).raw().toBuffer();
     assert.ok(pixel[0]<155 && pixel[1]<185 && pixel[2]<205);

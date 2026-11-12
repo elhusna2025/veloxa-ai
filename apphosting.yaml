@@ -4,7 +4,8 @@
 runConfig:
   maxInstances: 2
   minInstances: 0
-  memory: 512Mi
+  cpu: 2
+  memoryMiB: 1536
 
 env:
   - variable: VELOXA_SCHEDULER_EMAIL

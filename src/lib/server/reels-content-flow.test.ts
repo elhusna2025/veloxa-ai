@@ -8,6 +8,7 @@ import { ApiError } from './http';
 import { MetaRequestError } from './meta-graph';
 import { renderReelsVideo } from './reels-renderer';
 import { prepareScheduledReelsCopy } from './content-compositor';
+import { scheduledReelsCheckpoint, sweepExpiredReelsCheckpoints } from './scheduled-reels-checkpoint';
 import type { publishMetaReel } from './meta-reels';
 import { BRAND_PRESETS, generateBrandContentDraft } from '../veloxa-engine';
 
@@ -64,7 +65,7 @@ function fixture() {
     snapshotJson: JSON.stringify({ brand: { ...BRAND_PRESETS.cafe_fnb, workspaceId: ref.id } }) });
   for (const channel of ['facebook', 'instagram']) database.values.set(`${ref.path}/private_meta_connections/${channel}`, { channel, accountId: channel === 'facebook' ? '100' : '200', pageId: '100', accountName: 'Test account', handle: '@test', ['encryptedToken']: 'test-ciphertext', expiresAt: Date.now() + 60_000 });
   const blobs = new Map<string, Buffer>();
-  const storage = { name: 'test-bucket', file: (key: string) => ({ save: async (bytes: Buffer) => { blobs.set(key, bytes); }, download: async () => { const value = blobs.get(key); if (!value) throw new Error('missing media'); return [value]; } }) };
+  const storage = { name: 'test-bucket', file: (key: string) => ({ save: async (bytes: Buffer) => { blobs.set(key, bytes); }, download: async () => { const value = blobs.get(key); if (!value) throw new Error('missing media'); return [value]; }, delete: async () => { blobs.delete(key); } }) };
   const authorize = async (_request: Request, workspaceId: unknown) => {
     if (workspaceId !== ref.id) throw new ApiError(403, 'Forbidden workspace');
     return { ref, user: { uid: 'customer-a' }, workspaceId: ref.id, workspace: (await ref.get()).data()! };
@@ -75,6 +76,8 @@ function fixture() {
     format?: 'single_post' | 'carousel' | 'short_video';
     source?: 'autonomous_agent';
     verifyArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyArtwork'];
+    verifyScript?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyScript'];
+    scheduledDraft?: NonNullable<Parameters<typeof createSocialContent>[1]>['scheduledDraft'];
     recoverScheduledReelsArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['recoverScheduledReelsArtwork'];
     generateVoice?: NonNullable<Parameters<typeof createSocialContent>[1]>['generateVoice'];
     renderVideo?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderVideo'];
@@ -89,6 +92,8 @@ function fixture() {
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source: options.source, verifyArtwork: options.verifyArtwork,
     recoverScheduledReelsArtwork: options.recoverScheduledReelsArtwork,
+    verifyScript: options.verifyScript ?? (async () => {}),
+    scheduledDraft: options.scheduledDraft,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -246,6 +251,58 @@ test('scheduled Reels repairs the rejected frame with exact text and uses that m
   assert.deepEqual(simplified,['Langkah 2']);
   assert.equal(draft.renderedVideo?.durationSeconds,48);
  }
+});
+
+test('an ungrounded scheduled script stops before image or voice work starts', async () => {
+  const f = fixture();
+  let reviews = 0;
+  await assert.rejects(f.create({
+    source: 'autonomous_agent',
+    verifyScript: async ({ draft }) => {
+      reviews++;
+      assert.equal(draft.videoScenes?.length, 4);
+      throw new ApiError(422, 'Klaim belum didukung.', 'scheduled_script_rejected');
+    },
+    renderImage: async () => assert.fail('image generation must wait for script review'),
+    generateVoice: async () => assert.fail('voiceover must wait for script review'),
+  }), error => error instanceof ApiError && error.code === 'scheduled_script_rejected');
+  assert.equal(reviews, 1);
+  assert.equal(f.blobs.size, 0);
+});
+
+test('scheduled feed rejects added originals that cover copy and saves only a reviewed final image', async () => {
+  const f = fixture();
+  const id = '123e4567-e89b-42d3-a456-426614174103';
+  const storagePath = `workspaces/${f.ref.id}/vault/${id}.jpg`;
+  const logo = await sharp({ create: { width: 160, height: 80, channels: 3, background: '#cc3322' } }).jpeg().toBuffer();
+  const original = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#ffffff' } }).jpeg().toBuffer();
+  const repaired = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#abcdee' } }).jpeg().toBuffer();
+  f.database.values.set(`${f.ref.path}/server_assets/${id}`, { asset: { id, workspaceId: f.ref.id, title: 'Logo', mediaType: 'photo' }, storagePath });
+  f.blobs.set(storagePath, logo);
+  let accepted: Buffer | undefined;
+  const reviewed: string[] = [];
+  await f.create({
+    format: 'single_post',
+    source: 'autonomous_agent',
+    referenceAssetIds: [id],
+    referenceRoles: { [id]: 'logo' },
+    renderImage: async params => params.scheduledArtworkRepair ? repaired : original,
+    verifyArtwork: async (image, params, comparison) => {
+      assert.equal(f.blobs.size, 1);
+      const [red, , blue] = await sharp(image).extract({ left: 145, top: 100, width: 1, height: 1 }).raw().toBuffer();
+      assert.ok(red > 170 && blue < 85, 'the original logo is already present in the reviewed image');
+      reviewed.push(params.title);
+      if (!params.scheduledArtworkRepair) {
+        assert.equal(comparison, original);
+        throw new ApiError(422, 'Logo menutupi teks.', 'scheduled_artwork_rejected');
+      }
+      assert.equal(comparison, repaired);
+      accepted = image;
+    },
+  });
+  assert.equal(reviewed.length, 2);
+  assert.equal(reviewed[0], reviewed[1]);
+  assert.equal([...f.blobs.values()].at(-1), accepted);
 });
 
 test('scheduled Reels checks the original logo and screenshot on the final frame before encoding', async () => {
@@ -425,4 +482,72 @@ test('partial Reels retry sends only the failed channel and unknown delivery blo
   const reelPublisher:NonNullable<NonNullable<Parameters<typeof publishSocialContent>[1]>['reelPublisher']>=async p=>{sends.push(p.channel);if(p.channel==='instagram'&&!retry)throw new MetaRequestError('rejected');return{externalPostId:'confirmed'};};
   const first=await publishSocialContent(f.request(draft.id),{...f.dependencies,reelPublisher});assert.equal(first.draft.status,'partially_published');retry=true;await publishSocialContent(f.request(draft.id),{...f.dependencies,reelPublisher});assert.deepEqual(sends,['facebook','instagram','instagram']);assert.equal(f.count(),1);
   const unknown=fixture();const other=await unknown.create();let calls=0;const uncertain=async()=>{calls++;throw new MetaRequestError('uncertain',true);};const result=await publishSocialContent(unknown.request(other.draft.id),{...unknown.dependencies,reelPublisher:uncertain});assert.equal(result.draft.status,'needs_attention');assert.equal(unknown.count(),1);await assert.rejects(publishSocialContent(unknown.request(other.draft.id),{...unknown.dependencies,reelPublisher:uncertain}));assert.equal(calls,2);
+});
+
+test('a scheduled Reels retry reuses its approved script, good scenes and voiceover', async () => {
+  const f = fixture();
+  const job = f.database.collection('auto_content_rules').doc('rule').collection('jobs').doc('slot');
+  await job.create({ state: 'generating' });
+  const id = 'draft_scheduled-reel';
+  const photo = await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#daebe5' } }).jpeg().toBuffer();
+  const imageCalls = [0, 0, 0, 0];
+  let voiceCalls = 0;
+  let scriptChecks = 0;
+  let firstAttempt = true;
+  const options: NonNullable<Parameters<typeof f.create>[0]> = {
+    source: 'autonomous_agent',
+    scheduledDraft: { id, quotaJob: job as never, scheduledAt: Date.now(), persist: (ref, record) => ref.create(record).then(() => {}) },
+    verifyScript: async () => { scriptChecks++; },
+    renderImage: async ({ title }) => {
+      imageCalls[Number(title.split(' ').at(-1)) - 1]++;
+      return photo;
+    },
+    verifyArtwork: async (_image, { title }) => {
+      if (firstAttempt && title === 'Langkah 3') throw new ApiError(422, 'Visual ditolak', 'scheduled_artwork_rejected');
+    },
+    generateVoice: async script => {
+      voiceCalls++;
+      return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript: script, model: 'gpt-realtime-2.1-mini' };
+    },
+  };
+
+  await assert.rejects(f.create(options), error => error instanceof ApiError && error.code === 'scheduled_artwork_rejected');
+  assert.deepEqual(imageCalls, [1, 1, 2, 1]);
+  assert.equal(f.blobs.size, 5);
+  assert.ok([...f.blobs.keys()].every(path => path.startsWith('private_reels_checkpoints/')));
+  assert.equal(f.database.values.has(`${f.ref.path}/social_drafts/${id}`), false);
+
+  firstAttempt = false;
+  const result = await f.create({ ...options, recoverScheduledReelsArtwork: 'photo' });
+  assert.equal(result.draft.id, id);
+  assert.deepEqual(imageCalls, [1, 1, 3, 1]);
+  assert.equal(voiceCalls, 1);
+  assert.equal(scriptChecks, 1);
+  assert.equal(f.generateCalls(), 1);
+  assert.equal(f.generationCount(), 1);
+  assert.ok([...f.blobs.keys()].every(path => path.includes('/renders/')));
+});
+
+test('abandoned Reels checkpoints expire during the same day without touching active or live media', async () => {
+  const now = Date.parse('2026-11-13T03:00:00+07:00');
+  const folder = (expiry: number) => `private_reels_checkpoints/${String(expiry).padStart(16, '0')}/`;
+  const abandoned = `${folder(now - 1_000)}workspace/draft_example/frame-0.jpg`;
+  const current = `${folder(now + 1_000)}workspace/draft_current/frame-0.jpg`;
+  const published = 'workspaces/workspace/renders/final.jpg';
+  const deleted: string[] = [];
+  await sweepExpiredReelsCheckpoints(now, (() => ({
+    getFiles: async (options: { endOffset: string; prefix: string }) => {
+      assert.equal(options.prefix, 'private_reels_checkpoints/');
+      assert.equal(options.endOffset, folder(now));
+      return [[abandoned, current, published].map(name => ({ name, delete: async () => { deleted.push(name); } }))];
+    },
+  })) as never);
+  assert.deepEqual(deleted, [abandoned]);
+});
+
+test('Reels checkpoint rejects any index beyond its four scene files before storage or rendering', async () => {
+  const checkpoint = scheduledReelsCheckpoint(() => { throw new Error('Unexpected storage access'); },
+    'workspace', 'draft_example', Date.now(), { input: {}, fingerprint: 'test', images: [] });
+  const render = async () => { throw new Error('Unexpected render'); };
+  for (const index of [-1, 1.5, 4, Number.NaN]) await assert.rejects(checkpoint.frame(index, render), RangeError);
 });

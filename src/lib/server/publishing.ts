@@ -15,7 +15,7 @@ import { publishMetaReel } from './meta-reels';
 import { REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { readSocialAccounts, type StoredAccount } from './social-accounts';
-import { storedAccountTargets, assertTargetBinding } from './social-targets';
+import { storedAccountTargets, assertTargetBinding, type AccountTarget } from './social-targets';
 import type { ContentDraft, SubscriptionPlanId } from '../veloxa-types';
 
 export interface PublishReceipt {
@@ -26,6 +26,8 @@ export interface PublishReceipt {
   channel: MetaChannel;
   status: 'published' | 'failed' | 'unknown';
   externalPostId?: string;
+  providerContainerId?: string;
+  confirmedAt?: string;
   permalink?: string;
   error?: string;
   retryable?: boolean;
@@ -40,6 +42,19 @@ export function publicationState(receipts: PublishReceipt[]): ContentDraft['stat
   return receipts.some(receipt => receipt.status === 'published') ? 'partially_published' : 'publish_failed';
 }
 
+export function draftPublicationResult(draft:ContentDraft,targets:AccountTarget[],receipts:PublishReceipt[],state:ContentDraft['status'],confirmedAt=new Date()){
+  return clean({
+    ...draft,
+    status:state,
+    publishedAtWib:state==='published'&&receipts.every(receipt=>!receipt.providerContainerId||!!receipt.publishedAt)
+      ? confirmedAt.toLocaleString('id-ID',{timeZone:'Asia/Jakarta'})+' WIB':undefined,
+    channelStatuses:targets.map(target=>{
+      const receipt=receipts.find(item=>item.connectionId===target.connectionId);
+      return {...target,status:receipt?.status||'pending',permalink:receipt?.permalink,publishedAt:receipt?.publishedAt,note:receipt?.error};
+    }),
+  });
+}
+
 export async function publishSocialContent(request: Request, dependencies: {
   authorize?: typeof requireWorkspace;
   database?: ReturnType<typeof adminDb>;
@@ -51,6 +66,8 @@ export async function publishSocialContent(request: Request, dependencies: {
   /** Server-side continuation of an autonomous draft; never retry unknown or permanent outcomes. */
   retryTransientFailures?: boolean;
   stopOnUnknown?: boolean;
+  autonomyRun?: string;
+  persistReceipt?: (receipt:PublishReceipt,receipts:PublishReceipt[],remainingTargets:string[])=>Promise<void>;
   now?:()=>number;
 } = {}) {
   const input = publishInput.parse(await readJson(request));
@@ -128,7 +145,7 @@ export async function publishSocialContent(request: Request, dependencies: {
       tx.update(ref, { quotaUsed: used + 1 });
       reservedMonth = month;
     }
-    tx.set(jobRef, { state: 'processing', receipts, remainingTargets, quotaReserved: true, reservedMonth, startedAt: Date.now(), requestedBy: user.uid }, { merge: true });
+    tx.set(jobRef, { state: 'processing', receipts, remainingTargets, quotaReserved: true, reservedMonth, startedAt: Date.now(), requestedBy: user.uid, autonomyRun:dependencies.autonomyRun??null }, { merge: true });
     tx.update(draftRef, { 'draft.status': 'publishing' });
     return { alreadyPublished: false, receipts, remainingTargets };
   });
@@ -190,7 +207,10 @@ export async function publishSocialContent(request: Request, dependencies: {
     receipt={...receipt,connectionId:target.connectionId,accountId:target.accountId,accountName:target.accountName,handle:target.handle};
     receipts.push(clean(receipt));
     remainingTargets.splice(remainingTargets.indexOf(target.connectionId),1);
-    try { await jobRef.update({ receipts, remainingTargets }); }
+    try {
+      if(dependencies.persistReceipt)await dependencies.persistReceipt(receipt,receipts,remainingTargets);
+      else await jobRef.update({ receipts, remainingTargets });
+    }
     catch { throw new ApiError(409, 'Hasil kirim belum tersimpan. Periksa akun Meta sebelum mencoba ulang.', 'delivery_unknown'); }
     if (receipt.status === 'published') {
       await ref.collection('private_meta_connections').doc(connection!.storageId).update({ lastPublishedAt: receipt.publishedAt }).catch(() => undefined);
@@ -200,10 +220,10 @@ export async function publishSocialContent(request: Request, dependencies: {
   }
   const hasMore=remainingTargets.length>0&&!receipts.some(receipt=>receipt.status==='unknown');
   const state:ContentDraft['status']=receipts.some(receipt=>receipt.status==='unknown')?'needs_attention':hasMore?'publish_queued':publicationState(receipts);
-  const updated: ContentDraft = clean({ ...draft, status: state, publishedAtWib: state === 'published' ? new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) + ' WIB' : undefined,
-    channelStatuses: targets.map(target=>{const receipt=receipts.find(item=>item.connectionId===target.connectionId);return {...target,status:receipt?.status||'pending',permalink:receipt?.permalink,publishedAt:receipt?.publishedAt,note:receipt?.error};}) });
+  const updated=draftPublicationResult(draft,targets,receipts,state);
   await db.runTransaction(async tx => {
     const job = (await tx.get(jobRef)).data()!;
+    if(dependencies.autonomyRun&&(job?.state!=='processing'||job.autonomyRun!==dependencies.autonomyRun))throw new ApiError(409,'Proses publikasi sudah berpindah.','delivery_unknown');
     const reservedRef = ref.collection('publish_usage').doc(job.reservedMonth);
     const usage = (await tx.get(reservedRef)).data();
     // Definitive failure on every channel releases the reservation; unknown delivery keeps it.

@@ -79,3 +79,46 @@ test('repaired Reels reviews layout and unexpected copy on the original photo', 
   });
   assert.equal(calls.length, 3);
 });
+
+test('feed review uses exact final bytes, a same-sized comparison and selected reference thumbnails', async () => {
+  const original = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#902020' } }).jpeg().toBuffer();
+  const finished = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  const reference = await sharp({ create: { width: 1024, height: 768, channels: 3, background: '#209020' } }).jpeg().toBuffer();
+  const feed = {
+    ...params,
+    hasOriginalLogo: true,
+    hasOriginalScreenshot: true,
+    visualDirection: 'Kasir mencatat penjualan di toko.',
+    referenceImages: [reference],
+    sceneReferenceLabels: ['Ref 1: Foto toko'],
+    slideReferenceDirection: 'Pertahankan suasana toko dari referensi.',
+  };
+  type ImageInput = { detail: string; image_url: string };
+  type ReviewRequest = { instructions: string; input: [{ content: [{ text: string }, ImageInput, ImageInput, ImageInput] }] };
+  let inspected = false;
+  const client = {
+    responses: { create: async (request: ReviewRequest) => {
+      const [context, first, second, third] = request.input[0].content;
+      assert.equal(first.image_url, `data:image/jpeg;base64,${finished.toString('base64')}`);
+      assert.equal(first.detail, 'high');
+      const comparison = await sharp(Buffer.from(second.image_url.split(',')[1], 'base64')).metadata();
+      assert.equal(comparison.width, 1080);
+      assert.equal(comparison.height, 1350);
+      assert.equal(second.detail, 'high');
+      const thumbnail = await sharp(Buffer.from(third.image_url.split(',')[1], 'base64')).metadata();
+      assert.equal(thumbnail.width, 512);
+      assert.equal(thumbnail.height, 384);
+      assert.equal(third.detail, 'low');
+      const metadata = JSON.parse(context.text);
+      assert.equal(metadata.hasComparison, true);
+      assert.equal(metadata.scene.topic, feed.title);
+      assert.deepEqual(metadata.scene.referenceLabels, ['Ref 1: Foto toko']);
+      assert.equal(metadata.scene.slideDirection, feed.slideReferenceDirection);
+      assert.match(request.instructions, /illustrates the specific scene topic/);
+      inspected = true;
+      return { status: 'completed', output_text: JSON.stringify({ visibleCopy: copy, layoutPasses: false, layoutReason: 'Added logo obscures the main subject.' }) };
+    } },
+  } as never;
+  await assert.rejects(verifyScheduledArtwork(finished, feed, original, client), { code: 'scheduled_artwork_rejected' });
+  assert.equal(inspected, true);
+});

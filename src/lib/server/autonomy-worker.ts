@@ -18,8 +18,10 @@ import {publishMetaCarousel} from './meta-carousel';
 import {publishMetaReel} from './meta-reels';
 import {SUBSCRIPTION_PLANS} from '../veloxa-engine';
 import {wibMonth} from './clock';
-import {ruleCollection} from './autonomy-api';
-import {assertNoAutonomyDispatch,createAutonomyDispatch} from './autonomy-dispatch';
+import {runAutonomySchedulerTick} from './autonomy-scheduler';
+import {sweepExpiredReelsCheckpoints} from './scheduled-reels-checkpoint';
+import {assertNoAutonomyDispatch,createAutonomyDispatch,dispatchGuard,isDispatchFor,persistAutonomyReceipt,type AutonomyDispatchContext} from './autonomy-dispatch';
+import {reconcileDueAutonomyPublications,recoverInterruptedPublication} from './autonomy-publication-reconcile';
 type Database=ReturnType<typeof adminDb>;
 type RuleRef=FirebaseFirestore.DocumentReference;
 interface Dependencies{database?:Database;create?:typeof createSocialContent;publish?:typeof publishSocialContent;now?:()=>number}
@@ -31,6 +33,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
  const newDraftKey=`draft_${randomUUID()}`;
  const reset={processingJob:null,processingRun:null,processingUntil:0};
  let jobRef:RuleRef|undefined;let revision=initial.revision;let claimed=false;let generating=false;
+ let dispatchContext:AutonomyDispatchContext|undefined;
  try{
   const claim=await db.runTransaction(async tx=>{
    const raw=(await tx.get(ruleRef)).data();if(!raw?.enabled||raw.revision!==initial.revision)return null;
@@ -39,13 +42,8 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     const interrupted=ruleRef.collection('jobs').doc(raw.processingJob);
     const job=(await tx.get(interrupted)).data();
     if(raw.processingRun&&job?.state==='publishing'&&job.ruleRevision===raw.revision&&job.draftId===job.draftKey&&typeof job.draftId==='string'){
-     const ledger=db.collection('workspaces').doc(raw.workspaceId).collection('publish_jobs').doc(job.draftId);
-     const saved=(await tx.get(ledger)).data();
-     if(saved?.state==='published'&&Array.isArray(saved.receipts)&&saved.receipts.length&&saved.receipts.every((receipt:{status?:unknown;externalPostId?:unknown})=>receipt?.status==='published'&&typeof receipt.externalPostId==='string'&&!!receipt.externalPostId)){
-      tx.update(interrupted,{state:'published',receipts:saved.receipts,error:'',retryAt:null,finishedAt:now()});
-      tx.update(ruleRef,{...reset,pendingJob:null,nextDueMs:raw.nextSlotMs,lastError:'',...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1}:{})});
-      return null;
-     }
+     const workspace=db.collection('workspaces').doc(raw.workspaceId);
+     if(await recoverInterruptedPublication(tx,workspace,ruleRef,interrupted,raw,job,now()))return null;
     }
     // Only jobs with a fenced, atomic draft save are safe to recover after a worker crash.
     if(raw.processingRun&&job&&job.ruleRevision===raw.revision&&job.draftKey&&(job.state==='generating'||job.state==='prepared'&&job.draftId===job.draftKey)){
@@ -86,7 +84,9 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    }
    else if(previous)throw new ApiError(409,'Slot ini sudah pernah diproses. Periksa aktivitas sebelum mengulang.');
    const sequence=raw.sequence||0;
-   const input=autonomyContentInput(config,context.brand,retryGeneration?previous!.contentSequence:sequence,raw.recentTitles||[]);
+   const contentSequence=retryGeneration?previous!.contentSequence:sequence;
+   const input=autonomyContentInput(config,context.brand,contentSequence,raw.recentTitles||[]);
+   const explicitTopic=config.sourceMode==='topics'?config.topics[contentSequence%config.topics.length]:undefined;
    const future=nextConfiguredAutonomySlot(config,now());
    if(!pending&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});return null;}
    const generationAttempts=retryGeneration?(previous!.generationAttempts||1)+1:previous?.generationAttempts||1;
@@ -99,7 +99,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,...(!pending?{nextSlotMs:future,sequence:sequence+1}:{})});
    const recoverScheduledReelsArtwork=retryGeneration&&input.format==='short_video'&&previous?.reelsArtworkRecovery
     ? (generationAttempts===2?'photo':'simplified') as 'photo'|'simplified' : undefined;
-   return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork};
+   return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork,explicitTopic};
   });
   if(!claim)return{state:'idle'};jobRef=claim.job;claimed=true;revision=claim.raw.revision;
   const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const ws=(await tx.get(claim.ref)).data();if(!ws||ws.ownerUid!==claim.raw.ownerUid)throw new ApiError(403,'Pemilik workspace berubah.');const {context}=await resolveBusinessContext(claim.ref,ws,claim.raw.businessId,tx);if(await profileFingerprint(context.brand)!==claim.raw.profileFingerprint)throw new ApiError(409,'Profil berubah saat proses berjalan. Tinjau draf sebelum terbit.');const accounts=readSocialAccounts((await tx.get(claim.ref.collection('private_meta_connections'))).docs);if(claim.config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah. Pengiriman dihentikan.');for(const assetId of new Set([...claim.config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){const asset=(await tx.get(claim.ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,claim.ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==claim.raw.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');}return ws;};
@@ -110,7 +110,8 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    generating=true;
    const result=await(deps.create||createSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({...claim.input,expectedProfileFingerprint:claim.raw.profileFingerprint})}),{
     authorize,source:'autonomous_agent',scheduledRepairBudget:()=>started+235_000-now(),recoverScheduledReelsArtwork:claim.recoverScheduledReelsArtwork,
-    scheduledDraft:{id:claim.draftKey,...(claim.input.format==='short_video'?{quotaJob:claim.job}:{}),persist:async(draftRef,record)=>db.runTransaction(async tx=>{
+    scheduledExplicitTopic:claim.explicitTopic,
+    scheduledDraft:{id:claim.draftKey,...(claim.input.format==='short_video'?{quotaJob:claim.job,scheduledAt:claim.scheduledAt}:{}),persist:async(draftRef,record)=>db.runTransaction(async tx=>{
      await checkActive(tx);
      tx.create(draftRef,record);
      tx.update(claim.job,{draftId:claim.draftKey,topic:record.draft.title,state:'prepared'});
@@ -136,27 +137,37 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    if(!claim.pendingDraft)tx.update(claim.job,{draftId,topic:title,state:'publishing'});
   });
   // Claim the durable dispatch fence atomically with activation/account checks.
-  const guardedFetch=createAutonomyDispatch(claim.ref,checkActive,fetch,()=>started+255_000-now());
-  const result=await(deps.publish||publishSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({workspaceId:claim.ref.id,draftId})}),{authorize,database:db,retryTransientFailures:claim.retryPublication,stopOnUnknown:true,publisher:params=>publishMetaImage(params,{fetcher:guardedFetch}),carouselPublisher:params=>publishMetaCarousel(params,{fetcher:guardedFetch}),reelPublisher:params=>publishMetaReel(params,{fetcher:guardedFetch})});
+  const dispatch={workspaceId:claim.ref.id,ruleId:ruleRef.id,jobId:claim.job.id,draftId,revision,run:executionId};
+  dispatchContext=dispatch;
+  const guardedFetch=createAutonomyDispatch(claim.ref,checkActive,fetch,()=>started+255_000-now(),dispatch);
+  const result=await(deps.publish||publishSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({workspaceId:claim.ref.id,draftId})}),{
+   authorize,database:db,retryTransientFailures:claim.retryPublication,stopOnUnknown:true,autonomyRun:executionId,
+   persistReceipt:(receipt,receipts,remaining)=>persistAutonomyReceipt(claim.ref,dispatch,receipt,receipts,remaining),
+   publisher:params=>publishMetaImage(params,{fetcher:guardedFetch}),carouselPublisher:params=>publishMetaCarousel(params,{fetcher:guardedFetch}),reelPublisher:params=>publishMetaReel(params,{fetcher:guardedFetch}),
+  });
   const outcome=result.hasMore?'queued':result.draft.status==='published'?'published':result.draft.status==='needs_attention'?'needs_attention':'failed';
   const state=await db.runTransaction(async tx=>{
    const current=(await tx.get(ruleRef)).data();
    if(current?.processingJob!==jobRef!.id||current.processingRun!==executionId)return outcome;
    const active=current.enabled&&current.revision===revision;
+   const guard=outcome==='needs_attention'?(await tx.get(dispatchGuard(claim.ref))).data():undefined;
+   const checking=isDispatchFor(guard,dispatch)&&['instagram_container','facebook_reel'].includes(guard?.kind);
    const transient=outcome==='failed'&&result.receipts.some(receipt=>receipt.status==='failed'&&receipt.retryable===true);
    const retryAt=active&&transient?recoveryTime('publication',claim.publicationAttempts,claim.scheduledAt,now(),current.nextSlotMs):null;
    const state=retryAt?'retry_publication':!active&&outcome==='queued'?'cancelled':outcome;
    const queued=state==='queued'||state==='retry_publication';
-   const error=state==='retry_publication'?'Gangguan sementara. Veloxa akan mencoba lagi hanya untuk akun yang belum menerima konten.':
+   const error=checking?'Veloxa sedang memeriksa hasil pengiriman sebelumnya.':
+    state==='retry_publication'?'Gangguan sementara. Veloxa akan mencoba lagi hanya untuk akun yang belum menerima konten.':
     state==='needs_attention'||state==='failed'?'Publikasi belum lengkap. Periksa hasil per akun di aktivitas dan Studio.':'';
-   tx.update(jobRef!,{state,draftId,receipts:JSON.parse(JSON.stringify(result.receipts)),retryAt,error,finishedAt:queued?null:now()});
+   tx.update(jobRef!,{state,draftId,receipts:JSON.parse(JSON.stringify(result.receipts)),retryAt,error,finishedAt:queued||checking?null:now()});
    if(!active){tx.update(ruleRef,reset);return state;}
    const hold=state==='needs_attention'||state==='failed'&&!transient;
    tx.update(ruleRef,{
     ...reset,
     pendingJob:queued?jobRef!.id:null,
+    pendingReconciliation:checking?jobRef!.id:null,
     nextDueMs:retryAt??(queued?now()+60000:current.nextSlotMs),
-    ...(!queued&&(hold||current.nextSlotMs===null)?{enabled:false,revision:revision+1}:{}),
+    ...(!checking&&!queued&&(hold||current.nextSlotMs===null)?{enabled:false,revision:revision+1}:{}),
     lastError:!queued&&(hold||current.nextSlotMs===null)?error:'',
     ...(title?{recentTitles:[title,...(current.recentTitles||[])].slice(0,10)}:{}),
    });
@@ -164,6 +175,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
   });
   return{state,draftId};
  }catch(error){
+  if(!claimed&&error instanceof ApiError&&error.code==='autonomy_dispatch_in_progress')return{state:'idle'};
   const message=error instanceof ApiError?error.message:'Proses otomatis belum selesai. Periksa draf dan akun sosial sebelum mengaktifkan kembali.';
   const recoverable=claimed&&generating&&canRetryGeneration(error);
   const failure=generating&&error instanceof GenerationStageError
@@ -178,6 +190,13 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    if(current.revision!==revision){
     if(ownsJob){tx.update(jobRef!,{state:generating?'cancelled':state,error:message,finishedAt:now()});tx.update(ruleRef,reset);}
     return generating?'cancelled':state;
+   }
+   if(dispatchContext&&ownsJob&&(!(error instanceof ApiError)||error.code==='delivery_unknown')){
+    const slot=(await tx.get(jobRef!)).data();
+    if(slot?.state==='publishing'&&slot.draftId===dispatchContext.draftId&&slot.draftKey===dispatchContext.draftId){
+     const workspace=db.collection('workspaces').doc(dispatchContext.workspaceId);
+     if(await recoverInterruptedPublication(tx,workspace,ruleRef,jobRef!,current,slot,now()))return state;
+    }
    }
    if(recoverable&&ownsJob){
     const job=(await tx.get(jobRef!)).data()!;
@@ -196,20 +215,30 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     });
     return nextState;
    }
-   if(jobRef&&ownsJob)tx.update(jobRef,{state,error:message,finishedAt:now(),...failure});
+   const guard=dispatchContext&&ownsJob?(await tx.get(dispatchGuard(db.collection('workspaces').doc(dispatchContext.workspaceId)))).data():undefined;
+   const checking=!!dispatchContext&&isDispatchFor(guard,dispatchContext)&&guard?.phase==='final'&&!!guard?.kind;
+   if(jobRef&&ownsJob)tx.update(jobRef,{state,error:checking?'Veloxa sedang memeriksa hasil pengiriman sebelumnya.':message,finishedAt:checking?null:now(),...failure});
    else if(current.pendingJob){
     const pending=ruleRef.collection('jobs').doc(current.pendingJob);
     if((await tx.get(pending)).exists)tx.update(pending,{state:'failed',retryAt:null,error:message,finishedAt:now()});
    }
-   tx.update(ruleRef,{...reset,enabled:false,revision:revision+1,pendingJob:null,lastError:message});
+   tx.update(ruleRef,{
+    ...reset,pendingJob:null,pendingReconciliation:checking?jobRef!.id:null,
+    ...(checking?{nextDueMs:current.nextSlotMs,lastError:'Hasil pengiriman sedang dikonfirmasi.'}:{enabled:false,revision:revision+1,lastError:message}),
+   });
    return state;
   }).catch(()=>'needs_attention');
   return{state:resolved,error:message};
  }
 }
-export async function tickAutonomy(){
- const db=adminDb();
- const due=await ruleCollection().where('enabled','==',true).where('nextDueMs','<=',Date.now()).orderBy('nextDueMs','asc').limit(1).get();
- await db.collection('system_operations').doc('organic_scheduler').set({at:Date.now()});
- if(due.empty)return{state:'idle',processed:0};const result=await processAutonomyRule(due.docs[0].ref);return{...result,processed:1};
+export async function tickAutonomy() {
+ const db = adminDb();
+ return runAutonomySchedulerTick({
+  db,
+  process: ref => processAutonomyRule(ref, { database: db }),
+  reconcile: async (database, now) => {
+   const [resolved] = await Promise.all([reconcileDueAutonomyPublications(database, now), sweepExpiredReelsCheckpoints(now)]);
+   return resolved;
+  },
+ });
 }
