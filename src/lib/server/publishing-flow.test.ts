@@ -104,8 +104,9 @@ function fixture() {
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: ContentAgentParams) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
     renderImage?: (params: SocialPostImageParams) => Promise<Buffer>;
+    verifyArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyArtwork'];
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, businessId:options.businessId, selectedConnectionIds:options.selectedConnectionIds, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(options.businessId&&options.businessId!=='primary'?database.values.get(`${ref.path}/business_contexts/${options.businessId}`)?.brand||JSON.parse(database.values.get(ref.path)!.snapshotJson).brand:JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic ?? 'Promo akhir pekan',sourceMode:options.sourceMode,offeringIds:options.offeringIds,contentIntent:options.contentIntent, format: options.format || 'single_post', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction, carouselPlan: options.carouselPlan }) }), {
-    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source:options.source,
+    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source:options.source, verifyArtwork:options.verifyArtwork,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -606,20 +607,45 @@ test('carousel generation renders and stores five ordered slides while consuming
   assert.equal(f.generateCalls(), 1);
 });
 
-test('autonomous carousel uses scene-only images and renders text before unattended publication', async () => {
+test('scheduled feed artwork uses the full editorial image and checks every slide before saving', async () => {
+  const scene = await sharp({create:{width:1080,height:1350,channels:3,background:'#82A0B2'}}).jpeg().toBuffer();
+  for (const format of ['single_post', 'carousel'] as const) {
+    const f = fixture();
+    const reviewed: string[] = [];
+    const {draft} = await f.create({
+      format, source:'autonomous_agent',
+      renderImage:async params=>{
+        assert.equal(params.sceneOnly,false);
+        assert.equal(params.scheduledEditorial,true);
+        return scene;
+      },
+      verifyArtwork:async (image, params)=>{
+        assert.equal(image,scene);
+        assert.equal(f.blobs.size,0);
+        reviewed.push(params.title);
+      },
+    });
+    assert.equal(reviewed.length,format==='carousel'?5:1);
+    assert.equal(f.blobs.size,reviewed.length);
+    const record=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
+    const pixel=await sharp(f.blobs.get(record.storagePath)!).extract({left:16,top:1300,width:1,height:1}).raw().toBuffer();
+    assert.ok(pixel[0]<155 && pixel[1]<185 && pixel[2]<205);
+  }
+});
+
+test('an unverified scheduled slide stops the whole batch before saving any media or draft', async () => {
   const f = fixture();
   const scene = await sharp({create:{width:1080,height:1350,channels:3,background:'#82A0B2'}}).jpeg().toBuffer();
-  const {draft} = await f.create({
+  await assert.rejects(f.create({
     format:'carousel',
     source:'autonomous_agent',
-    renderImage:async params=>{
-      assert.equal(params.sceneOnly,true);
-      return scene;
+    renderImage:async()=>scene,
+    verifyArtwork:async(_image, params)=>{
+      if (params.title==='Headline 3') throw new ApiError(422,'Visual otomatis perlu diperiksa.','scheduled_artwork_rejected');
     },
-  });
-  const {storagePaths}=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
-  const pixel=await sharp(f.blobs.get(storagePaths[0])!).extract({left:16,top:1300,width:1,height:1}).raw().toBuffer();
-  assert.ok(pixel[0]>235 && pixel[1]>235 && pixel[2]>235);
+  }), error => error instanceof ApiError && error.code==='scheduled_artwork_rejected');
+  assert.equal(f.blobs.size,0);
+  assert.equal([...f.database.values.keys()].some(key=>key.startsWith(`${f.ref.path}/social_drafts/`)),false);
 });
 
 test('carousel rejects a source asset before generation or quota use', async () => {

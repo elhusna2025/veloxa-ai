@@ -22,6 +22,7 @@ import type { GenerationProgress, GenerationStage } from '../content-generation'
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
 import { generateContentWithSavedAgent } from './content-agent';
 import { generateSocialPostImage } from './content-image';
+import { verifyScheduledArtwork } from './scheduled-artwork-review';
 import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { renderReelsVideo } from './reels-renderer';
 import { buildRenderedVisualSvg } from '../veloxa-visual-renderer';
@@ -71,6 +72,7 @@ export async function createSocialContent(request: Request, dependencies: {
   storage?: ReturnType<typeof adminBucket>;
   generate?: typeof generateContentWithSavedAgent;
   renderImage?: typeof generateSocialPostImage;
+  verifyArtwork?: typeof verifyScheduledArtwork;
   generateVoice?: typeof generateReelsVoiceover;
   renderVideo?: typeof renderReelsVideo;
   onProgress?: (progress: GenerationProgress) => void;
@@ -121,13 +123,15 @@ export async function createSocialContent(request: Request, dependencies: {
   if (input.referenceAssetIds?.length) progress('references');
   const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage,context.id);
   const carousel = input.format === 'carousel';
-  // Studio lets the user review model-rendered copy. Scheduled posts can
-  // publish unattended, so their copy is always rendered by the compositor.
-  const editorialCarousel = carousel && dependencies.source !== 'autonomous_agent';
+  const scheduledEditorial = dependencies.source === 'autonomous_agent';
   const labelReference = (item: typeof references[number]) => `Ref ${references.indexOf(item) + 1}: ${item.title}`;
   const visualReferences = references.filter(item => referenceRoles[item.id] === 'visual');
   const screenshotReferences = visualReferences.filter(item => item.category === 'screenshot');
   const originalAssets=references.filter(item=>referenceRoles[item.id]!=='visual').map(item=>({id:item.id,role:referenceRoles[item.id] as 'logo'|'screenshot',bytes:item.bytes}));
+  if (scheduledEditorial && brand.logoAssetId && !references.some(item => item.id === brand.logoAssetId) && !originalAssets.some(asset => asset.role === 'logo')) {
+    const [logo] = await loadContentReferences(ref, workspaceId, [brand.logoAssetId], dependencies.storage, context.id);
+    originalAssets.push({ id: logo.id, role: 'logo', bytes: logo.bytes });
+  }
   const referenceImageParams = references.length ? {
     ...(visualReferences.length ? { referenceImages: visualReferences.map(item => item.bytes), sceneReferenceLabels: visualReferences.map(labelReference) } : {}),
     referenceInstruction: input.referenceInstruction || topic,
@@ -150,7 +154,7 @@ export async function createSocialContent(request: Request, dependencies: {
   if (references.length) {
     draft.usedRealAssetIds = references.filter(item => !carouselPlan || referenceRoles[item.id] !== 'visual' || carouselPlan.some(slide => slide.assetIds.includes(item.id))).map(item => item.id);
   }
-  if (references.length || carouselPlan || (editorialCarousel && input.referenceInstruction)) draft.referenceInstruction = input.referenceInstruction || topic;
+  if (references.length || carouselPlan || (carousel && input.referenceInstruction)) draft.referenceInstruction = input.referenceInstruction || topic;
   const targetBindings=selectedAccounts.map(toAccountTarget);
   draft.publishTargets=targetBindings;
   draft.targetChannels=[...new Set(targetBindings.map(target=>target.channel))];
@@ -158,7 +162,7 @@ export async function createSocialContent(request: Request, dependencies: {
   if(input.sourceAssetId){
     draft.visualText=[brand.businessName,brand.businessName.slice(0,2).toUpperCase(),brand.city,brand.defaultCta.slice(0,48),draft.slides?.[0]?.badgeText||'CAROUSEL · FEED 4:5'];
   }else{
-    const ctas=carousel?[brand.defaultCta||'Simpan']:input.format==='short_video'?Array.from({length:4},(_,index)=>index===3?brand.defaultCta||'Simpan tips ini':`${index+1}/4`):[brand.defaultCta||'Selengkapnya'];
+    const ctas=carousel?[brand.defaultCta||'Simpan']:input.format==='short_video'?Array.from({length:4},(_,index)=>index===3?brand.defaultCta||'Simpan tips ini':scheduledEditorial?'':`${index+1}/4`).filter(Boolean):[brand.defaultCta||'Selengkapnya'];
     draft.visualText=[brand.businessName,visualWebsite(brand.websiteUrl),...ctas.map(shortVisualCta)];
   }
   if(forbiddenContentMatches(draft,brand.forbiddenWords).length)throw new GenerationStageError(new ApiError(409,'Teks visual memuat kata yang dihindari dalam profil bisnis. Periksa panduan konten dan CTA sebelum membuat ulang.','content_policy_violation'),'compositing');
@@ -167,7 +171,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const visualPlan: Parameters<typeof generateSocialPostImage>[0][]=[];
   if(input.format==='short_video'){
     if(!draft.videoScenes||draft.videoScenes.length!==4)throw new ApiError(502,'Naskah Reels belum lengkap.','invalid_content_agent_response');
-    visualPlan.push(...draft.videoScenes.map((scene,index)=>({businessName:brand.businessName,title:scene.textOverlay,hook:scene.voiceover,cta:index===3?brand.defaultCta||'Simpan tips ini':`${index+1}/4`,aspectRatio:'9:16' as const,visualDirection:scene.visualDirection,...imageContextParams,...paletteParams,...referenceImageParams})));
+    visualPlan.push(...draft.videoScenes.map((scene,index)=>({businessName:brand.businessName,title:scene.textOverlay,hook:scene.voiceover,cta:index===3?brand.defaultCta||'Simpan tips ini':scheduledEditorial?'':`${index+1}/4`,aspectRatio:'9:16' as const,visualDirection:scene.visualDirection,...imageContextParams,...paletteParams,...referenceImageParams})));
   }else if(input.format==='carousel'){
     const slides = draft.slides;
     if (!slides || slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
@@ -201,15 +205,15 @@ export async function createSocialContent(request: Request, dependencies: {
         businessName: brand.businessName,
         title: slide.headline,
         hook: slide.body,
-        cta: editorialCarousel ? shortVisualCta(cta) : cta,
-        ...(editorialCarousel && finalSlide ? {website:visualWebsite(brand.websiteUrl)} : {}),
-        ...(editorialCarousel && originalAssets.some(asset=>asset.role==='logo') ? {hasOriginalLogo:true} : {}),
+        cta: shortVisualCta(cta),
+        ...(finalSlide ? {website:visualWebsite(brand.websiteUrl)} : {}),
+        ...(originalAssets.some(asset=>asset.role==='logo') ? {hasOriginalLogo:true} : {}),
         carouselSlide: true,
         hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
         visualDirection: slide.visualDirection,
         ...imageContextParams,
         ...paletteParams,
-        ...(references.length || carouselPlan || (editorialCarousel && input.referenceInstruction) ? {
+        ...(references.length || carouselPlan || input.referenceInstruction ? {
           referenceInstruction: brief,
           ...(slideBrief ? {slideReferenceDirection: slideBrief} : {}),
           ...(attached.length ? {referenceImages: attached.map(item => item.bytes),sceneReferenceLabels: attached.map(labelReference)} : {}),
@@ -220,14 +224,30 @@ export async function createSocialContent(request: Request, dependencies: {
   }else if(!input.sourceAssetId){
     visualPlan.push({businessName:brand.businessName,title:draft.title,hook:draft.hook,cta:brand.defaultCta||'Selengkapnya',...imageContextParams,...paletteParams,...referenceImageParams});
   }
-  try{for(const params of visualPlan)await preflightSocialVisualText({...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
+  if (!scheduledEditorial) {
+    try{for(const params of visualPlan)await preflightSocialVisualText({...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
+  }
   const renderVisual:typeof generateSocialPostImage=async params=>{
-    const scene=await(dependencies.renderImage||generateSocialPostImage)({...params,sceneOnly:!editorialCarousel});
+    const editorial = carousel || scheduledEditorial;
+    const imageParams = scheduledEditorial ? {
+      ...params,
+      scheduledEditorial: true,
+      cta: shortVisualCta(params.cta),
+      website: params.cta ? visualWebsite(brand.websiteUrl) : undefined,
+      hasOriginalLogo: originalAssets.some(asset => asset.role === 'logo'),
+      hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
+    } : params;
+    const scene=await(dependencies.renderImage||generateSocialPostImage)({...imageParams,sceneOnly:!editorial});
     if(stage!=='compositing')progress('compositing');
     let composed:Buffer;
     try{
-     if (editorialCarousel) return await finishEditorialCarousel(scene,originalAssets);
-     composed=await composeSocialVisual(scene,{...params,websiteUrl:brand.websiteUrl,originalAssets});
+     if (scheduledEditorial) await (dependencies.verifyArtwork || verifyScheduledArtwork)(scene,imageParams);
+     if (editorial) {
+       composed = await finishEditorialCarousel(scene,originalAssets,params.aspectRatio==='9:16');
+       if (params.aspectRatio !== '9:16') return composed;
+     } else {
+       composed=await composeSocialVisual(scene,{...params,websiteUrl:brand.websiteUrl,originalAssets});
+     }
     }catch(error){throw new GenerationStageError(error,'compositing');}
     return sharp(composed).resize(params.aspectRatio==='9:16'?720:1080,params.aspectRatio==='9:16'?1280:1350).jpeg({quality:94}).toBuffer();
   };

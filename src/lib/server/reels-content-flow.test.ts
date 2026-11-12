@@ -71,6 +71,8 @@ function fixture() {
   let generateCalls = 0;
   const create = async (options: {
     format?: 'single_post' | 'carousel' | 'short_video';
+    source?: 'autonomous_agent';
+    verifyArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyArtwork'];
     generateVoice?: NonNullable<Parameters<typeof createSocialContent>[1]>['generateVoice'];
     renderVideo?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderVideo'];
     topic?: string;
@@ -80,9 +82,9 @@ function fixture() {
     referenceRoles?:import('../content-reference-roles').ContentReferenceRoles;
     onProgress?: (event: { stage: string }) => void;
     generate?: (input: Parameters<typeof generateBrandContentDraft>[0]) => Promise<{ draft: ReturnType<typeof generateBrandContentDraft>; engineMode: 'deterministic_local' }>;
-    renderImage?: (params: { businessName: string; title: string; hook: string; cta: string; visualDirection?:string; businessContext?:import('../content-business-context').VisualBusinessContext; brandPalette?:string[] }) => Promise<Buffer>;
+    renderImage?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderImage'];
   } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
-    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress,
+    authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source: options.source, verifyArtwork: options.verifyArtwork,
     generate: async input => {
       generateCalls++;
       if (options.generate) return options.generate(input);
@@ -168,6 +170,33 @@ test('no-reference Reels forwards business description and scene directions to a
 test('saved DNA reaches all four Reels scene render calls without changing voice settings',async()=>{
  const f=fixture();const record=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(record.snapshotJson);snapshot.brand={...snapshot.brand,useBrandPalette:true,primaryColorHex:'#167D8D',accentColorHex:'#FCAB20'};record.snapshotJson=JSON.stringify(snapshot);
  let seen=0;await f.create({renderImage:async params=>{seen++;assert.deepEqual(params.brandPalette,['#167D8D','#FCAB20']);return sharp({create:{width:10,height:10,channels:3,background:'white'}}).jpeg().toBuffer();}});assert.equal(seen,4);assert.equal(f.generationCount(),1);
+});
+
+test('scheduled Reels verifies all editorial frames before rendering the video', async () => {
+ const f=fixture();
+ const scene=await sharp({create:{width:720,height:1280,channels:3,background:'#abcdee'}}).jpeg().toBuffer();
+ const verified:string[]=[];
+ const {draft}=await f.create({
+  source:'autonomous_agent',
+  renderImage:async params=>{
+   assert.equal(params.scheduledEditorial,true);
+   assert.equal(params.sceneOnly,false);
+   assert.equal(params.aspectRatio,'9:16');
+   if(params.title!=='Langkah 4')assert.equal(params.cta,'');
+   return scene;
+  },
+  verifyArtwork:async(_,params)=>{verified.push(params.title);},
+  renderVideo:async({images})=>{
+   assert.equal(verified.length,4);
+   for(const image of images){
+    const dimensions=await sharp(image).metadata();
+    assert.equal(dimensions.width,720);
+    assert.equal(dimensions.height,1280);
+   }
+   return{mp4:Buffer.from('test-video'),poster:scene,width:720,height:1280,durationSeconds:25,mimeType:'video/mp4'};
+  },
+ });
+ assert.equal(draft.videoScenes?.length,4);
 });
 
 test('protected roles are applied to all four Reels images without entering image-edit references',async()=>{

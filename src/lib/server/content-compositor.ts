@@ -16,6 +16,10 @@ export const CAROUSEL_ARTWORK = {
  logo: {left: 64, top: 56, width: 168, height: 90},
  screenshot: {left: 500, top: 866, width: 520, height: 224},
 } satisfies Record<OriginalVisualAsset['role'], Rect>;
+export const REELS_ARTWORK = {
+ logo: {left: 70, top: 224, width: 168, height: 90},
+ screenshot: {left: 180, top: 1050, width: 620, height: 224},
+} satisfies Record<OriginalVisualAsset['role'], Rect>;
 
 async function placeOriginalAsset(asset: OriginalVisualAsset, box: Rect, deviceFrame: boolean): Promise<OverlayOptions[]> {
  const fitted = await sharp(asset.bytes,{limitInputPixels:30_000_000}).rotate().resize(box.width,box.height,{fit:'inside',withoutEnlargement:true}).png().toBuffer({resolveWithObject:true});
@@ -30,10 +34,11 @@ async function placeOriginalAsset(asset: OriginalVisualAsset, box: Rect, deviceF
  return [{input:frame,left:left-24,top:top-12}, image];
 }
 
-export async function finishEditorialCarousel(artwork: Buffer, assets: OriginalVisualAsset[]): Promise<Buffer> {
- const image = sharp(artwork,{limitInputPixels:30_000_000}).rotate().resize(1080,1350,{fit:'cover'});
+export async function finishEditorialCarousel(artwork: Buffer, assets: OriginalVisualAsset[], vertical = false): Promise<Buffer> {
+ const layout = vertical ? REELS_ARTWORK : CAROUSEL_ARTWORK;
+ const image = sharp(artwork,{limitInputPixels:30_000_000}).rotate().resize(1080,vertical?1920:1350,{fit:'cover'});
  if (assets.length) {
-  const overlays = await Promise.all(assets.map(asset => placeOriginalAsset(asset,CAROUSEL_ARTWORK[asset.role],asset.role==='screenshot')));
+  const overlays = await Promise.all(assets.map(asset => placeOriginalAsset(asset,layout[asset.role],asset.role==='screenshot')));
   image.composite(overlays.flat());
  }
  return image.jpeg({quality:94}).toBuffer();
