@@ -9,6 +9,7 @@ import { registerNewVeloxaAccount, signInWithEmailPasswordOrRegister, signInWith
 import { authCopy } from '@/lib/veloxa-auth-copy';
 import { loadSavedVeloxaLocale, saveVeloxaLocale, type VeloxaLocale } from '@/lib/veloxa-i18n';
 import { landingCopy } from '@/lib/veloxa-public-copy';
+import { SUBSCRIPTION_PLANS } from '@/lib/veloxa-engine';
 import styles from './VeloxaAuthScreen.module.css';
 
 type Method = 'email' | 'google';
@@ -130,7 +131,7 @@ export function VeloxaAuthScreen({ page }: { page: 'login' | 'register' }) {
             <div className={styles.intro}>
               <h1 id="veloxa-auth-title">{title}</h1>
               <p>{register ? copy.registerIntro : copy.loginIntro}</p>
-              {register && <p className={styles.trial}>{brand.trial}</p>}
+              {register && <p className={styles.trial}>{brand.trial(new Intl.NumberFormat(locale).format(SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota))}</p>}
             </div>
             {error && error !== 'consentRequired' && error !== 'passwordMismatch' && (
               <p ref={errorNotice} role="alert" tabIndex={-1} className={styles.error}>

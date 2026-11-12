@@ -27,7 +27,7 @@ export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanId, SubscriptionPlanSpec
     name: 'Veloxa Free Trial (Gratis)',
     tagline: 'Coba gratis seluruh fitur studio AI, Dual Brand Vault, 4 Sosmed & simulasi AI Meta Ads.',
     priceMonthlyIdr: 0,
-    monthlyPostQuota: 10,
+    monthlyPostQuota: 20,
     maxPostsPerDay: 2,
     allowedChannels: ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
     includesEventCampaigns: true,

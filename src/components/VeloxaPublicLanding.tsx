@@ -131,7 +131,7 @@ export function VeloxaPublicLanding({ locale }: { locale: VeloxaLocale }) {
                 <Link className={`veloxa-button-primary ${styles.roseButton}`} href="/register/">{copy.start}<ArrowRight size={18} aria-hidden="true" /></Link>
                 <a className={styles.textLink} href="/#contoh">{copy.examplesLink}<ArrowDown size={16} aria-hidden="true" /></a>
               </div>
-              <p className={styles.trialNote}><Check size={16} aria-hidden="true" />{copy.trial}</p>
+              <p className={styles.trialNote}><Check size={16} aria-hidden="true" />{copy.trial(new Intl.NumberFormat(locale).format(SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota))}</p>
             </div>
             <figure className={styles.heroVisual}>
               <div className={styles.visualOrbit} aria-hidden="true" />

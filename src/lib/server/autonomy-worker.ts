@@ -9,6 +9,7 @@ import {profileFingerprint} from '../profile-fingerprint';
 import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource} from '../autonomy-rules';
 import {readSocialAccounts} from './social-accounts';
 import {createSocialContent} from './content';
+import {GenerationStageError} from './content-generation-stream';
 import {publishSocialContent} from './publishing';
 import {publishMetaImage} from './meta-graph';
 import {publishMetaCarousel} from './meta-carousel';
@@ -73,9 +74,31 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
   return{state,draftId};
  }catch(error){
   const message=error instanceof ApiError?error.message:'Proses otomatis belum selesai. Periksa draf dan akun sosial sebelum mengaktifkan kembali.';
+  const visualRejected=claimed&&error instanceof GenerationStageError&&error.stage==='compositing'&&error.code==='scheduled_artwork_rejected';
+  const state=claimed&&!visualRejected?'needs_attention':'failed';
   // Saving the error is best effort. A failed write leaves the lease to stop unsafe retries.
-  await db.runTransaction(async tx=>{const current=(await tx.get(ruleRef)).data();if(jobRef)tx.set(jobRef,{state:claimed?'needs_attention':'failed',error:message,finishedAt:now()},{merge:true});if(jobRef&&current?.processingJob===jobRef.id&&current?.revision!==revision)tx.update(ruleRef,{processingJob:null,processingUntil:0});if(current?.revision===revision)tx.update(ruleRef,{enabled:false,revision:revision+1,processingJob:null,processingUntil:0,pendingJob:null,lastError:message});}).catch(()=>{});
-  return{state:'needs_attention',error:message};
+  await db.runTransaction(async tx=>{
+   const current=(await tx.get(ruleRef)).data();
+   if(jobRef)tx.set(jobRef,{state,error:message,finishedAt:now()},{merge:true});
+   if(!current)return;
+   const reset={processingJob:null,processingUntil:0};
+   const ownsJob=!!jobRef&&current.processingJob===jobRef.id;
+   if(current.revision!==revision){if(ownsJob)tx.update(ruleRef,reset);return;}
+   if(visualRejected){
+    if(!ownsJob)return;
+    const hasNextSlot=typeof current.nextSlotMs==='number';
+    tx.update(ruleRef,{
+     ...reset,
+     pendingJob:null,
+     nextDueMs:hasNextSlot?current.nextSlotMs:null,
+     lastError:hasNextSlot?'':message,
+     ...(hasNextSlot?{}:{enabled:false,revision:revision+1}),
+    });
+    return;
+   }
+   tx.update(ruleRef,{...reset,enabled:false,revision:revision+1,pendingJob:null,lastError:message});
+  }).catch(()=>{});
+  return{state:visualRejected?'failed':'needs_attention',error:message};
  }
 }
 export async function tickAutonomy(){

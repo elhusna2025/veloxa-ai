@@ -11,7 +11,8 @@ import { changeWorkspacePhotoState, listWorkspacePhotos, persistWorkspacePhoto, 
 import { publishSocialContent } from './publishing';
 import { ApiError } from './http';
 import { MetaRequestError } from './meta-graph';
-import { BRAND_PRESETS, generateBrandContentDraft } from '../veloxa-engine';
+import { BRAND_PRESETS, generateBrandContentDraft, SUBSCRIPTION_PLANS } from '../veloxa-engine';
+import { wibMonth } from './clock';
 
 /** Transactional in-memory Firebase test adapter. No Firebase/Meta network calls occur. */
 class Database {
@@ -224,9 +225,48 @@ test('autonomy concurrent ticks claim once and use server generation/publisher w
  const first=processAutonomyRule(f.ruleRef as never,deps);while(!creates)await new Promise(resolve=>setImmediate(resolve));assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');release();assert.equal((await first).state,'published');assert.equal(creates,1);assert.equal(publishes,1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,true);assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');assert.equal(creates,1);
 });
 
-test('autonomy stops publication on pause, profile change, moved account, owner change and exhausted quota',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const change of['pause','profile','account','owner','quota']as const){const f=await autonomyFixture();let creates=0,publishes=0;if(change==='quota')f.database.values.set(`${f.ref.path}/publish_usage/${new Date(Date.now()+7*3600000).toISOString().slice(0,7)}`,{count:10});const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,create:(async()=>{creates++;if(change==='pause'){const rule=f.database.values.get(f.ruleRef.path)!;rule.enabled=false;rule.revision++;}if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='other';if(change==='account')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];if(change==='profile'){const ws=f.database.values.get(f.ref.path)!;const value=JSON.parse(ws.snapshotJson);value.brand.businessDescription='Changed';ws.snapshotJson=JSON.stringify(value);}return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{draft:{status:'published'},receipts:[]};})as never});assert.notEqual(result.state,'published');assert.equal(publishes,0);assert.equal(creates,change==='quota'?0:1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);assert.equal(f.database.values.get(f.ruleRef.path)!.processingJob,null);}});
+test('autonomy stops publication on pause, profile change, moved account, owner change and exhausted quota',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const change of['pause','profile','account','owner','quota']as const){const f=await autonomyFixture();let creates=0,publishes=0;if(change==='quota')f.database.values.set(`${f.ref.path}/publish_usage/${wibMonth()}`,{count:SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota});const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,create:(async()=>{creates++;if(change==='pause'){const rule=f.database.values.get(f.ruleRef.path)!;rule.enabled=false;rule.revision++;}if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='other';if(change==='account')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];if(change==='profile'){const ws=f.database.values.get(f.ref.path)!;const value=JSON.parse(ws.snapshotJson);value.brand.businessDescription='Changed';ws.snapshotJson=JSON.stringify(value);}return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{draft:{status:'published'},receipts:[]};})as never});assert.notEqual(result.state,'published');assert.equal(publishes,0);assert.equal(creates,change==='quota'?0:1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);assert.equal(f.database.values.get(f.ruleRef.path)!.processingJob,null);}});
 
 test('autonomy resumes only confirmed queued draft; unknown delivery is paused and never regenerated',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const unknown of[false,true]){const f=await autonomyFixture();let creates=0,publishes=0,clock=Date.now();const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{hasMore:!unknown&&publishes===1,draft:{status:unknown?'needs_attention':publishes===1?'publish_queued':'published'},receipts:[]};})as never};const first=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(first.state,unknown?'needs_attention':'queued');clock+=61000;const last=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(last.state,unknown?'inactive':'published');assert.equal(creates,1);assert.equal(publishes,unknown?1:2);}});
+
+test('autonomy records an unsent visual rejection and continues to the next dated slot', async () => {
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const {GenerationStageError}=await import('./content-generation-stream');
+ const firstSlot=Date.parse('2026-11-12T05:00:00Z');
+ const secondSlot=Date.parse('2026-11-12T06:00:00Z');
+ for(const rejectLast of [false,true]){
+  const f=await autonomyFixture();
+  let clock=firstSlot+1000;
+  const created:string[]=[];
+  let published=0;
+  Object.assign(f.rule,{config:{...f.config,days:['Kam'],timesWib:['12:00','13:00'],formats:['carousel','short_video'],endsOnWib:'2026-11-12'},nextSlotMs:firstSlot,nextDueMs:firstSlot});
+  const deps={
+   database:f.database as never,
+   now:()=>clock,
+   create:(async(request:Request)=>{
+    const {format}=await request.json();
+    created.push(format);
+    if(format==='carousel'||rejectLast)throw new GenerationStageError(new ApiError(422,'Visual otomatis perlu diperiksa.','scheduled_artwork_rejected'),'compositing');
+    return{draft:{id:'draft_reels',title:'Arus kas'}};
+   })as never,
+   publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
+  };
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');
+  const firstJob=f.database.values.get(`${f.ruleRef.path}/jobs/slot_${firstSlot}`)!;
+  assert.equal(firstJob.state,'failed');
+  assert.equal(firstJob.draftId,undefined);
+  const afterFirst=f.database.values.get(f.ruleRef.path)!;
+  assert.equal(afterFirst.enabled,true);
+  assert.equal(afterFirst.nextDueMs,secondSlot);
+  assert.equal(afterFirst.processingJob,null);
+  assert.equal(published,0);
+  clock=secondSlot+1000;
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,rejectLast?'failed':'published');
+  assert.deepEqual(created,['carousel','short_video']);
+  assert.equal(published,rejectLast?0:1);
+  assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);
+ }
+});
 
 test('the last dated slot completes its queued publication and then turns the rule off',async()=>{
  const {processAutonomyRule}=await import('./autonomy-worker');
@@ -588,6 +628,26 @@ test('create real JPEG -> save authoritative draft -> publish both channels -> r
   assert.equal(result.draft.status, 'published'); assert.equal(f.count(), 1);
   const again = await publishSocialContent(f.request(draft.id), { ...f.dependencies, publisher });
   assert.equal(again.draft.status, 'published'); assert.deepEqual(calls, ['facebook', 'instagram']); assert.equal(f.count(), 1);
+});
+
+test('a legacy Free Trial workspace can use its 20th publication but cannot use a 21st', async () => {
+  const f = fixture();
+  f.database.write(f.ref, { quotaLimit: 10 });
+  f.database.values.set(`${f.ref.path}/publish_usage/${wibMonth()}`, { count: 19 });
+  const twentieth = (await f.create()).draft;
+  const twentyFirst = (await f.create()).draft;
+  let calls = 0;
+  const publisher = async ({ channel }: { channel: string }) => {
+    calls++;
+    return { externalPostId: `remote-${channel}`, permalink: `https://example.test/${channel}` };
+  };
+  const dependencies = { ...f.dependencies, publisher };
+  const result = await publishSocialContent(f.request(twentieth.id), dependencies);
+  assert.equal(result.draft.status, 'published');
+  assert.equal(result.quotaUsed, 20);
+  await assert.rejects(publishSocialContent(f.request(twentyFirst.id), dependencies), { code: 'quota_exhausted' });
+  assert.equal(calls, 2);
+  assert.equal(f.count(), 20);
 });
 
 test('carousel generation renders and stores five ordered slides while consuming one generation quota', async () => {

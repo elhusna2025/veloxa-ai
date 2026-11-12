@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, CalendarDays, CheckCircle2, Facebook, Instagram,
 import { landingCopy } from '@/lib/veloxa-public-copy';
 import { workflowCopy } from '@/lib/veloxa-public-workflow-copy';
 import { mobileWelcomeCopy } from '@/lib/veloxa-mobile-welcome-copy';
+import { SUBSCRIPTION_PLANS } from '@/lib/veloxa-engine';
 import type { VeloxaLocale } from '@/lib/veloxa-i18n';
 import styles from './VeloxaMobileWelcome.module.css';
 
@@ -141,7 +142,7 @@ export function VeloxaMobileWelcome({ locale }: { locale: VeloxaLocale }) {
                 <Heading>{title}</Heading>
                 <p className={styles.description}>{description}</p>
                 {index === 3 && <p className={styles.note}>{workflow.availability}</p>}
-                {index === last && <p className={styles.note}>{landing.trial}</p>}
+                {index === last && <p className={styles.note}>{landing.trial(format.format(SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota))}</p>}
               </div>
             </article>
           );

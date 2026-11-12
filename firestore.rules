@@ -538,7 +538,8 @@ service cloud.firestore {
 
     function initialTrial(data) {
       return data.get('subscriptionPlanId', 'free_trial') == 'free_trial' &&
-        data.get('quotaLimit', 10) == 10 && data.get('quotaUsed', 0) == 0;
+        // Older clients still write 10. The server enforces the plan quota independently.
+        data.get('quotaLimit', 20) in [10, 20] && data.get('quotaUsed', 0) == 0;
     }
 
     // 1. Users Collection
