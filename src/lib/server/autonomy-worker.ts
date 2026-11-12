@@ -6,7 +6,7 @@ import {isWorkspacePhoto} from './brand-assets';
 import {assetBusiness} from '../business-context';
 import {resolveBusinessContext} from './business-contexts';
 import {profileFingerprint} from '../profile-fingerprint';
-import {autonomyConfigSchema,autonomyContentInput,nextAutonomySlot,validateAutonomySource} from '../autonomy-rules';
+import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource} from '../autonomy-rules';
 import {readSocialAccounts} from './social-accounts';
 import {createSocialContent} from './content';
 import {publishSocialContent} from './publishing';
@@ -32,11 +32,12 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const {context}=await resolveBusinessContext(ref,ws,raw.businessId,tx);if(await profileFingerprint(context.brand)!==raw.profileFingerprint)throw new ApiError(409,'Profil bisnis berubah. Tinjau dan aktifkan kembali aturan dengan profil terbaru.');validateAutonomySource(config,context.brand);
    const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);if(config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah atau izinnya berakhir. Periksa akun sebelum melanjutkan.');
    const pending=typeof raw.pendingJob==='string'?raw.pendingJob:null;
+   if(!pending&&raw.nextSlotMs===null){tx.update(ruleRef,{enabled:false,revision:raw.revision+1,nextDueMs:null});return null;}
    if(!pending){const plan=SUBSCRIPTION_PLANS[Object.hasOwn(SUBSCRIPTION_PLANS,String(ws.subscriptionPlanId))?ws.subscriptionPlanId as keyof typeof SUBSCRIPTION_PLANS:'free_trial'];const used=Number((await tx.get(ref.collection('publish_usage').doc(wibMonth()))).data()?.count||0);if(!Number.isSafeInteger(used)||used<0||used>=plan.monthlyPostQuota)throw new ApiError(429,'Kuota publikasi bulan ini habis. Aturan dijeda sebelum membuat konten.');if(config.connectionIds.some(id=>!plan.allowedChannels.includes(accounts.find(account=>account.connectionId===id)!.channel)))throw new ApiError(403,'Kanal tujuan tidak tersedia dalam paket workspace.');}const slot=raw.nextSlotMs;if(!pending&&slot>now())return null;const id=pending||'slot_'+slot;const job=ruleRef.collection('jobs').doc(id);const previous=(await tx.get(job)).data();
    if(pending){if(!previous?.draftId||previous.state!=='queued'||previous.ruleRevision!==raw.revision)throw new ApiError(409,'Antrean publikasi perlu diperiksa; tidak dikirim ulang otomatis.');}
    else if(previous)throw new ApiError(409,'Slot ini sudah pernah diproses. Periksa aktivitas sebelum mengulang.');
-   const sequence=raw.sequence||0;const input=autonomyContentInput(config,context.brand,sequence,raw.recentTitles||[]);const future=nextAutonomySlot(config,now());
-   if(!pending&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future});return null;}
+   const sequence=raw.sequence||0;const input=autonomyContentInput(config,context.brand,sequence,raw.recentTitles||[]);const future=nextConfiguredAutonomySlot(config,now());
+   if(!pending&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});return null;}
    if(!pending)tx.create(job,{state:'generating',scheduledAt:slot,createdAt:now(),ruleRevision:raw.revision,topic:input.topic,format:input.format});else tx.update(job,{state:'publishing'});
    tx.update(ruleRef,{processingJob:id,processingUntil:now()+15*60000,pendingJob:null,...(!pending?{nextSlotMs:future,nextDueMs:now()+15*60000,sequence:sequence+1}:{})});
    return{raw,config,ref,job,input,pendingDraft:previous?.draftId as string|undefined};
@@ -52,7 +53,23 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
   const guardedFetch=createAutonomyDispatch(claim.ref,checkActive);
   const result=await(deps.publish||publishSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({workspaceId:claim.ref.id,draftId})}),{authorize,database:db,publisher:params=>publishMetaImage(params,{fetcher:guardedFetch}),carouselPublisher:params=>publishMetaCarousel(params,{fetcher:guardedFetch}),reelPublisher:params=>publishMetaReel(params,{fetcher:guardedFetch})});
   const state=result.hasMore?'queued':result.draft.status==='published'?'published':result.draft.status==='needs_attention'?'needs_attention':'failed';
-  await db.runTransaction(async tx=>{const current=(await tx.get(ruleRef)).data();const unchanged=current?.revision===revision;tx.update(jobRef!,{state,draftId,receipts:JSON.parse(JSON.stringify(result.receipts)),finishedAt:now()});if(current?.processingJob===jobRef!.id)tx.update(ruleRef,{processingJob:null,processingUntil:0,...(unchanged?{pendingJob:state==='queued'?jobRef!.id:null,nextDueMs:state==='queued'?now()+60000:current.nextSlotMs,...(['failed','needs_attention'].includes(state)?{enabled:false,revision:revision+1,lastError:'Publikasi belum lengkap. Periksa hasil per akun di aktivitas dan Studio.'}:{}),...(title?{recentTitles:[title,...(current.recentTitles||[])].slice(0,10)}:{})}:{})});});
+  await db.runTransaction(async tx=>{
+   const current=(await tx.get(ruleRef)).data();
+   tx.update(jobRef!,{state,draftId,receipts:JSON.parse(JSON.stringify(result.receipts)),finishedAt:now()});
+   if(current?.processingJob!==jobRef!.id)return;
+   const reset={processingJob:null,processingUntil:0};
+   if(current.revision!==revision){tx.update(ruleRef,reset);return;}
+   const queued=state==='queued';
+   const failed=state==='failed'||state==='needs_attention';
+   tx.update(ruleRef,{
+    ...reset,
+    pendingJob:queued?jobRef!.id:null,
+    nextDueMs:queued?now()+60000:current.nextSlotMs,
+    ...(!queued&&(failed||current.nextSlotMs===null)?{enabled:false,revision:revision+1}:{}),
+    ...(failed?{lastError:'Publikasi belum lengkap. Periksa hasil per akun di aktivitas dan Studio.'}:{}),
+    ...(title?{recentTitles:[title,...(current.recentTitles||[])].slice(0,10)}:{}),
+   });
+  });
   return{state,draftId};
  }catch(error){
   const message=error instanceof ApiError?error.message:'Proses otomatis belum selesai. Periksa draf dan akun sosial sebelum mengaktifkan kembali.';

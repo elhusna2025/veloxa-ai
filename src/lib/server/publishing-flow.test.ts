@@ -228,6 +228,26 @@ test('autonomy stops publication on pause, profile change, moved account, owner 
 
 test('autonomy resumes only confirmed queued draft; unknown delivery is paused and never regenerated',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const unknown of[false,true]){const f=await autonomyFixture();let creates=0,publishes=0,clock=Date.now();const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{hasMore:!unknown&&publishes===1,draft:{status:unknown?'needs_attention':publishes===1?'publish_queued':'published'},receipts:[]};})as never};const first=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(first.state,unknown?'needs_attention':'queued');clock+=61000;const last=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(last.state,unknown?'inactive':'published');assert.equal(creates,1);assert.equal(publishes,unknown?1:2);}});
 
+test('the last dated slot completes its queued publication and then turns the rule off',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ const finalSlot=Date.parse('2026-11-12T06:00:00Z');
+ let clock=finalSlot+1000, creates=0, publishes=0;
+ Object.assign(f.rule,{config:{...f.config,days:['Kam'],timesWib:['12:00','13:00'],endsOnWib:'2026-11-12'},nextSlotMs:finalSlot,nextDueMs:finalSlot});
+ const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;return{draft:{id:'draft_auto',title:'Arus kas'}};})as never,publish:(async()=>{publishes++;return{hasMore:publishes===1,draft:{status:publishes===1?'publish_queued':'published'},receipts:[]};})as never};
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'queued');
+ assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,true);
+ clock+=61000;
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ const rule=f.database.values.get(f.ruleRef.path)!;
+ assert.equal(rule.enabled,false);
+ assert.equal(rule.nextSlotMs,null);
+ assert.equal(rule.nextDueMs,null);
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'inactive');
+ assert.equal(creates,1);
+ assert.equal(publishes,2);
+});
+
 test('durable dispatch fence serializes pause and account/profile mutations until leased HTTP send drains',async()=>{
  const {createAutonomyDispatch,dispatchGuard}=await import('./autonomy-dispatch');const{publicRule}=await import('./autonomy-api');const{updateBusiness}=await import('./business-contexts');const{disconnectSocialAccount}=await import('./social-connections');const f=await autonomyFixture();
  let sends=0,release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);const sender=createAutonomyDispatch(f.ref as never,async tx=>{const r=(await tx.get(f.ruleRef as unknown as FirebaseFirestore.DocumentReference)).data();if(!r?.enabled)throw new ApiError(409,'Aturan dijeda');},(async()=>{sends++;await gate;return new Response('{"id":"provider-post"}');})as typeof fetch);

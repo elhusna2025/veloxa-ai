@@ -10,7 +10,7 @@ import {profileFingerprint} from '../profile-fingerprint';
 import {readSocialAccounts} from './social-accounts';
 import {isWorkspacePhoto} from './brand-assets';
 import {assetBusiness} from '../business-context';
-import {autonomyConfigSchema,nextAutonomySlot,validateAutonomySource,type AutoContentRule,type AutoContentStatus} from '../autonomy-rules';
+import {autonomyConfigSchema,nextConfiguredAutonomySlot,validateAutonomySource,type AutoContentRule,type AutoContentStatus} from '../autonomy-rules';
 export const ruleKey=(workspaceId:string,id:string)=>createHash('sha256').update(JSON.stringify([workspaceId,id])).digest('hex');
 export function ruleCollection(){return adminDb().collection('auto_content_rules');}
 export function publicRule(raw:FirebaseFirestore.DocumentData|undefined):AutoContentRule|null{if(!raw)return null;return{revision:raw.revision,enabled:raw.enabled,config:raw.config,nextSlotMs:raw.nextSlotMs,lastError:raw.lastError||'',processingJob:raw.processingJob||null,processingUntil:raw.processingUntil||0,pausePending:!raw.enabled&&!!raw.processingJob,sequence:raw.sequence||0};}
@@ -30,6 +30,8 @@ export async function updateAutonomy(request:Request,deps:{authorize?:typeof req
   // Validate every reference before committing or activating; no public URL or profile snapshot writes.
   for(const assetId of config.referenceAssetIds){const asset=(await tx.get(ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==id)throw new ApiError(409,'Salah satu referensi tidak tersedia pada bisnis ini.');}
   if(stored?.processingJob)throw new ApiError(409,'Proses sebelumnya masih berjalan. Jeda dan tunggu hasilnya sebelum mengubah atau mengaktifkan aturan.');
-  const now=Date.now();const nextSlotMs=nextAutonomySlot(config,now);const next={...(stored||{}),workspaceId:ref.id,businessId:id,ownerUid:user.uid,config,revision:(stored?.revision||0)+1,enabled:input.action==='activate',profileFingerprint:await profileFingerprint(context.brand),nextSlotMs,nextDueMs:nextSlotMs,sequence:stored?.sequence||0,updatedAt:now,lastError:'',pendingJob:null,processingJob:null,processingUntil:0};tx.set(ruleRef,next);return next;
+  const now=Date.now();const nextSlotMs=nextConfiguredAutonomySlot(config,now);
+  if(nextSlotMs===null)throw new ApiError(400,'Tidak ada slot tersisa hingga tanggal terakhir.');
+  const next={...(stored||{}),workspaceId:ref.id,businessId:id,ownerUid:user.uid,config,revision:(stored?.revision||0)+1,enabled:input.action==='activate',profileFingerprint:await profileFingerprint(context.brand),nextSlotMs,nextDueMs:nextSlotMs,sequence:stored?.sequence||0,updatedAt:now,lastError:'',pendingJob:null,processingJob:null,processingUntil:0};tx.set(ruleRef,next);return next;
  });return{rule:publicRule(result)};
 }
