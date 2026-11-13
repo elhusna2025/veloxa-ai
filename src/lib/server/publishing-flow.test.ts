@@ -1329,11 +1329,11 @@ test('performance planner reads historical post metrics through original targets
  const{planBusinessAds}=await import('./ad-planning');for(const legacyReceipt of[false,true]){const f=await adFixture();delete(f.source.publishTargets[0]as any).connectionId;delete(f.source.channelStatuses[0]as any).connectionId;const stored=f.database.values.get(`${f.ref.path}/social_drafts/${f.source.id}`)!;stored.draft=f.source;const receipt=f.database.values.get(`${f.ref.path}/publish_jobs/${f.source.id}`)!.receipts[0];receipt.channel='instagram';if(legacyReceipt)delete receipt.connectionId;let reads=0;const result=await planBusinessAds(f.req({mode:'performance'}),{authorize:f.authorize as never,decrypt:()=> 'private-test',graph:(async()=>{reads++;return{like_count:7,comments_count:1};})as never,suggest:async()=>f.strategy});assert.equal(reads,1);assert.equal(result.metrics[0].likes,7);assert.equal(result.sourceDraftId,f.source.id);assert.equal(f.count(),0);}
 });
 
-function adsFixture() {
+function adsFixture(subscriptionPlanId = 'free_trial') {
   const f = fixture();
   const now = Date.now();
   const ws = f.database.values.get(f.ref.path)!;
-  ws.subscriptionPlanId = 'pro_1500k';
+  ws.subscriptionPlanId = subscriptionPlanId;
   ws.subscriptionPaidUntilMs = now + 60_000;
   const destination = 'https://www.example.com/';
   const plan = {
@@ -1422,7 +1422,7 @@ function adsFixture() {
   return { ...f, ws, now, writes, post, get, deps, remote, plan, failPrepare: () => { failAdSet = true; } };
 }
 
-test('Meta Ads prepares at most one fully paused campaign and activates the spend gate last', async () => {
+test('Free Trial prepares a single paused Meta campaign and requires confirmation to activate it', async () => {
   const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
   const f = adsFixture();
   const first = await getMetaAds(f.get(), f.deps);
@@ -1453,15 +1453,25 @@ test('Meta Ads prepares at most one fully paused campaign and activates the spen
   const receipt = [...f.database.values.entries()].find(([key]) => key.includes('/meta_ads_executions/'))?.[1];
   assert.deepEqual(receipt?.insights, result.campaigns[0].insights);
 
-  f.ws.subscriptionPaidUntilMs = f.now - 1;
-  assert.equal((await getMetaAds(f.get(), f.deps)).canPrepare, false);
   f.database.values.delete(f.ref.path + '/meta_ads_credentials/current');
   assert.equal((await mutateMetaAds(f.post('pause'), f.deps)).campaign.status, 'paused');
   assert.equal(f.remote.campaign.status, 'PAUSED');
   assert.equal(receipt?.pauseGrant?.encryptedToken, 'ads-ciphertext');
   const updated = [...f.database.values.entries()].find(([key]) => key.includes('/meta_ads_executions/'))?.[1];
   assert.equal(updated?.pauseGrant, null);
-  await assert.rejects(mutateMetaAds(f.post('activate'), f.deps), /Paket workspace/);
+  await assert.rejects(mutateMetaAds(f.post('activate'), f.deps), /Hubungkan kembali Meta Ads/);
+});
+
+test('Meta campaigns remain available on paid plans and when a paid subscription expires', async () => {
+  const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
+  for (const plan of ['starter_500k', 'growth_1000k', 'pro_1500k']) {
+    const f = adsFixture(plan);
+    assert.equal((await getMetaAds(f.get(), f.deps)).canPrepare, true);
+    assert.equal((await mutateMetaAds(f.post(), f.deps)).campaign.status, 'paused');
+    f.ws.subscriptionPaidUntilMs = f.now - 1;
+    assert.equal((await getMetaAds(f.get(), f.deps)).canPrepare, true);
+    assert.equal((await mutateMetaAds(f.post('activate'), f.deps)).campaign.status, 'active');
+  }
 });
 
 test('Meta Ads blocks mutable targeting, non-owner execution and ambiguous remote creation', async () => {

@@ -282,7 +282,7 @@ export const VELOXA_I18N_COPY: Record<VeloxaLocale, VeloxaLandingCopy> = {
     pricingQuotaLabel: 'Kuota Produksi & Tayang',
     pricingChannelsLabel: 'Kanal Sosial Media',
     pricingEventModeLabel: 'Mode Kampanye Event (H-30 s.d. Hari-H)',
-    pricingMetaAdsLabel: 'AI Agent Meta Ads & Auto-Optimizer',
+    pricingMetaAdsLabel: 'Kampanye Meta Ads',
     pricingIncluded: 'Termasuk Penuh',
     pricingNotIncluded: 'Tidak Termasuk',
     workspaceTabs: {
@@ -371,7 +371,7 @@ export const VELOXA_I18N_COPY: Record<VeloxaLocale, VeloxaLandingCopy> = {
     pricingQuotaLabel: 'Monthly Content Quota',
     pricingChannelsLabel: 'Connected Channels',
     pricingEventModeLabel: 'Event Countdown Mode (T-30 to Event Day)',
-    pricingMetaAdsLabel: 'AI Meta Ads Agent & Auto-Optimizer',
+    pricingMetaAdsLabel: 'Meta Ads campaigns',
     pricingIncluded: 'Included',
     pricingNotIncluded: 'Not Included',
     workspaceTabs: {
@@ -460,7 +460,7 @@ export const VELOXA_I18N_COPY: Record<VeloxaLocale, VeloxaLandingCopy> = {
     pricingQuotaLabel: 'Cuota Mensual de Contenido',
     pricingChannelsLabel: 'Canales Conectados',
     pricingEventModeLabel: 'Modo Campaña de Eventos (Cuenta Regresiva)',
-    pricingMetaAdsLabel: 'Agente IA Meta Ads y Auto-Optimizador',
+    pricingMetaAdsLabel: 'Campañas de Meta Ads',
     pricingIncluded: 'Incluido',
     pricingNotIncluded: 'No Incluido',
     workspaceTabs: {
@@ -549,7 +549,7 @@ export const VELOXA_I18N_COPY: Record<VeloxaLocale, VeloxaLandingCopy> = {
     pricingQuotaLabel: 'حصة المحتوى الشهرية',
     pricingChannelsLabel: 'القنوات المتصلة',
     pricingEventModeLabel: 'وضع حملات الفعاليات والعد التنازلي',
-    pricingMetaAdsLabel: 'وكيل إعلانات Meta Ads والتحسين التلقائي',
+    pricingMetaAdsLabel: 'حملات إعلانات Meta',
     pricingIncluded: 'مشمول بالكامل',
     pricingNotIncluded: 'غير مشمول',
     workspaceTabs: {
@@ -638,7 +638,7 @@ export const VELOXA_I18N_COPY: Record<VeloxaLocale, VeloxaLandingCopy> = {
     pricingQuotaLabel: '月間コンテンツ制作枠',
     pricingChannelsLabel: '対応SNSチャネル',
     pricingEventModeLabel: 'イベントカウントダウンモード',
-    pricingMetaAdsLabel: 'AI Meta広告エージェント＆自動最適化',
+    pricingMetaAdsLabel: 'Meta 広告キャンペーン',
     pricingIncluded: '標準搭載',
     pricingNotIncluded: '非対応',
     workspaceTabs: {
@@ -727,7 +727,7 @@ export const VELOXA_I18N_COPY: Record<VeloxaLocale, VeloxaLandingCopy> = {
     pricingQuotaLabel: '월간 콘텐츠 발행 쿼터',
     pricingChannelsLabel: '연동 소셜 채널',
     pricingEventModeLabel: '이벤트 카운트다운 캠페인 모드',
-    pricingMetaAdsLabel: 'AI Meta Ads 에이전트 & 자동 최적화',
+    pricingMetaAdsLabel: 'Meta 광고 캠페인',
     pricingIncluded: '포함됨',
     pricingNotIncluded: '미포함',
     workspaceTabs: {

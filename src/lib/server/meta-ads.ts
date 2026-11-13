@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { draftBusiness, type BusinessContext } from '../business-context';
 import type { MetaAdsDashboard, MetaAdsExecution } from '../meta-ads';
 import type { ContentDraft } from '../veloxa-types';
-import { effectiveWorkspacePlan } from '../subscription';
 import { requireWorkspace, workspaceIdSchema } from './auth';
 import { resolveBusinessContext } from './business-contexts';
 import { adminBucket } from './firebase';
@@ -50,7 +49,6 @@ const minute = 60_000;
 const operationTimeout = 5 * minute;
 const executionRef = (ref: Ref, businessId: string, id: string) => ref.collection('meta_ads_executions').doc(createHash('sha256').update(JSON.stringify([businessId, id])).digest('hex'));
 const credentialRef = (ref: Ref) => ref.collection('meta_ads_credentials').doc('current');
-const canPrepare = (workspace: Data, now: number) => effectiveWorkspacePlan(workspace, now) === 'pro_1500k';
 const isOperationInProgress = (row: Data) => ['preparing', 'activating', 'pausing'].includes(row.status);
 
 function publicExecution(row: Data, now: number): MetaAdsExecution {
@@ -117,7 +115,7 @@ export async function getMetaAds(request: Request, deps: Dependencies = {}): Pro
   const credential = readCredential(stored.data(), workspace.ownerUid, now);
   const campaigns = rows.docs.map(doc => publicExecution(doc.data(), now)).sort((a, b) => b.updatedAt - a.updatedAt);
   const result: MetaAdsDashboard = {
-    canManage: owner, canPrepare: owner && canPrepare(workspace, now), connection: credential.status,
+    canManage: owner, canPrepare: owner, connection: credential.status,
     ...(credential.missing && { missingScopes: credential.missing }),
     accounts: [], identities: pages.map(page => ({ connectionId: page.connectionId, name: page.accountName })), campaigns,
   };
@@ -148,10 +146,6 @@ export async function getMetaAds(request: Request, deps: Dependencies = {}): Pro
 
 function assertOwner(workspace: Data | undefined, uid: string) {
   if (!workspace || workspace.ownerUid !== uid) throw new ApiError(403, 'Hanya pemilik workspace yang dapat mengelola kampanye Meta Ads.', 'forbidden');
-}
-
-function assertEntitlement(workspace: Data, now: number) {
-  if (!canPrepare(workspace, now)) throw new ApiError(403, 'Paket workspace tidak mencakup pengelolaan kampanye Meta Ads.', 'meta_ads_plan_required');
 }
 
 function savedPlan(workspace: Data, ref: Ref, id: string, context: BusinessContext) {
@@ -197,7 +191,6 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
   const campaign = executionRef(ref, context.id, input.planId);
   const existing = (await campaign.get()).data();
   if (existing) return publicExecution(existing, now());
-  assertEntitlement(workspace, now());
   const plan = savedPlan(workspace, ref, input.planId, context);
   if (!plan.destinationAccounts.some(account => account.connectionId === input.connectionId && account.channel === 'facebook')) {
     throw new ApiError(409, 'Facebook Page perlu dipilih pada rancangan bisnis ini.', 'meta_ads_page_mismatch');
@@ -245,7 +238,6 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
     if (row) return row;
     const latest = (await tx.get(ref)).data();
     assertOwner(latest, user.uid);
-    assertEntitlement(latest!, now());
     const latestGrant = (await tx.get(credentialRef(ref))).data();
     const latestContext = (await resolveBusinessContext(ref, latest!, context.id, tx)).context;
     if (latest!.snapshotJson !== workspace.snapshotJson || latestContext.revision !== context.revision || latestGrant?.encryptedToken !== grant.data()?.encryptedToken || !(await listIdentities(ref, latestContext, now(), tx)).some(item => item.connectionId === page.connectionId)) {
@@ -335,7 +327,6 @@ async function changeCampaignStatus(args: Workspace, context: BusinessContext, i
     if (!row || !metaNumericId.safeParse(row.campaignId).success || row.businessId !== context.id) throw new ApiError(404, 'Kampanye Meta belum tersedia untuk bisnis ini.');
     if (isOperationInProgress(row) && Number(row.updatedAt) + operationTimeout >= now()) throw new ApiError(409, 'Operasi kampanye sedang berjalan. Muat ulang status sebentar lagi.');
     if (activate) {
-      assertEntitlement(workspace!, now());
       const currentContext = (await resolveBusinessContext(ref, workspace!, context.id, tx)).context;
       const pages = await listIdentities(ref, currentContext, now(), tx);
       if (row.status !== 'paused' || row.ownerUid !== user.uid || !row.adSetId || !row.adId || !row.creativeId || row.endsAt <= now() || !pages.some(item => item.connectionId === row.connectionId && item.accountId === row.pageId)) {
@@ -365,7 +356,6 @@ async function changeCampaignStatus(args: Workspace, context: BusinessContext, i
       const [latest, grant] = await Promise.all([ref.get(), credentialRef(ref).get()]);
       const workspace = latest.data();
       assertOwner(workspace, user.uid);
-      assertEntitlement(workspace!, now());
       const { context: latestContext } = await resolveBusinessContext(ref, workspace!, context.id);
       if (readCredential(grant.data(), user.uid, now()).token !== credential.token || !(await listIdentities(ref, latestContext, now())).some(item => item.connectionId === row.connectionId && item.accountId === row.pageId)) {
         throw new ApiError(409, 'Koneksi atau identitas Facebook berubah sebelum aktivasi.');

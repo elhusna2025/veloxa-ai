@@ -17,7 +17,7 @@ Platform SaaS **100% TypeScript** lintas 3 platform (**Web**, **Android**, dan *
      - **AI Media Buyer Auto-Optimizer:** Mematikan variasi iklan yang mahal secara otomatis dan mengalihkan 100% anggaran ke variasi pemenang.
 
 2. **Role: SUPER ADMIN Command Center (Pemilik SaaS)**
-   - Mengelola 3 paket langganan (**Starter Rp500.000**, **Growth Rp1.000.000**, **Pro + AI Meta Ads Rp1.500.000**).
+   - Mengelola 3 paket langganan (**Starter Rp500.000**, **Growth Rp1.000.000**, **Pro Rp1.500.000**).
    - Memantau **MRR**, **Biaya API aktual vs Pendapatan**, **Gross Margin (~84%)**, dan pemakaian kuota tiap pelanggan.
    - Mengelola **Brankas API & OAuth Terpusat** (OpenAI, Meta App, TikTok App, Google OAuth, Midtrans/Xendit).
 

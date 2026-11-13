@@ -978,7 +978,7 @@ export default function VeloxaAiPlatformPage() {
               {/* ====================================================================
                  TAB 5: AI AGENT MARKETING · META ADS ARCHITECT & AUTO-OPTIMIZER
                  ==================================================================== */}
-              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} drafts={drafts.filter(item=>draftBusiness(item)===activeBusinessId)} onBusyChange={setBusinessSaving} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan} onBilling={() => setBillingOpen(true)}/>}
+              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} drafts={drafts.filter(item=>draftBusiness(item)===activeBusinessId)} onBusyChange={setBusinessSaving} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan}/>}
             </VeloxaWorkspaceShell>
           )}
 
@@ -1126,7 +1126,7 @@ export default function VeloxaAiPlatformPage() {
               >
                 <option value="starter_500k">Starter (Rp500rb/bln)</option>
                 <option value="growth_1000k">Growth (Rp1jt/bln)</option>
-                <option value="pro_1500k">Pro + Meta Ads (Rp1,5jt/bln)</option>
+                <option value="pro_1500k">Pro (Rp1,5jt/bln)</option>
               </VeloxaSelect>
             </div>
           </div>

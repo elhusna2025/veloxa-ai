@@ -6,7 +6,6 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import {
   BRAND_PRESETS,
-  SUBSCRIPTION_PLANS,
   buildMetaAdCampaignPlan,
   canConsumePostingQuota,
   extractStyleDnaFromReference,
@@ -228,14 +227,7 @@ export const designVeloxaMetaAdCampaign = onCall(
       planId?: SubscriptionPlanId;
     };
 
-    const workspace = await requireWorkspaceAccess(request, brand?.workspaceId);
-    const planId = effectiveWorkspacePlan(workspace);
-    if (!SUBSCRIPTION_PLANS[planId]?.includesMetaAdsAgent) {
-      throw new HttpsError(
-        'permission-denied',
-        'Fitur AI Agent Marketing Meta Ads tersedia pada paket Veloxa Pro (Rp1.500.000/bulan).',
-      );
-    }
+    await requireWorkspaceAccess(request, brand?.workspaceId);
 
     const plan = buildMetaAdCampaignPlan({
       brand: brand || BRAND_PRESETS.running_event,

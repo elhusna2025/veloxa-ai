@@ -95,14 +95,13 @@ function CampaignConfirmation({ action, accountName, busy, onCancel, onConfirm }
   </dialog>;
 }
 
-export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled = false, onBusyChange, onBilling, request = veloxaApi }: {
+export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled = false, onBusyChange, request = veloxaApi }: {
   business: BusinessContext;
   plans: MetaAdCampaignPlan[];
   drafts: ContentDraft[];
   ready: boolean;
   disabled?: boolean;
   onBusyChange?: (busy: boolean) => void;
-  onBilling: () => void;
   request?: typeof veloxaApi;
 }) {
   const { t, locale } = useWorkspaceCopy(workspaceCatalog);
@@ -234,7 +233,8 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
   return <section className="veloxa-panel space-y-4 p-4 sm:p-6" aria-labelledby="meta-execution-title">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 id="meta-execution-title" className="flex items-center gap-2 text-xl font-semibold"><Megaphone size={20} aria-hidden="true" /> {t('Kampanye Meta')}</h2>
-        <p className="mt-2 text-sm text-neutral-600">{t('Siapkan rancangan di Meta, lalu tinjau anggaran sebelum mengaktifkan.')}</p></div>
+        <p className="mt-2 text-sm text-neutral-600">{t('Siapkan rancangan di Meta, lalu tinjau anggaran sebelum mengaktifkan.')}</p>
+        <p className="mt-1 text-sm text-neutral-600">{t('Tersedia di semua paket, termasuk Free Trial. Biaya tayang dibebankan ke akun iklan yang dipilih.')}</p></div>
       <button type="button" className="veloxa-button-secondary" disabled={!ready || loading || busy} onClick={refresh}><RefreshCw size={16} aria-hidden="true" />{t('Muat ulang')}</button>
     </div>
     {loading && <p role="status" className="text-sm text-neutral-600">{t('Memeriksa akun iklan dan kampanye…')}</p>}
@@ -259,13 +259,6 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
         {connected ? <Unlink2 size={16} aria-hidden="true" /> : <Link2 size={16} aria-hidden="true" />}
         {t(connected ? 'Putuskan koneksi' : dashboard.connection === 'disconnected' ? 'Hubungkan akun iklan' : 'Hubungkan kembali akun iklan')}
       </button>}
-    </div>}
-    {dashboard?.canManage && !dashboard.canPrepare && <div className="flex flex-col items-start gap-3 rounded-lg border border-[var(--ws-border,#eadce3)] bg-[var(--ws-soft,#faf2f5)] p-4 sm:flex-row sm:justify-between">
-      <div className="min-w-0">
-        <h3 className="font-semibold">{t('Paket Pro untuk menjalankan kampanye')}</h3>
-        <p className="mt-1 text-sm text-neutral-600">{t('Anda bisa menghubungkan akun dan menyimpan rancangan dengan paket saat ini. Paket Pro diperlukan untuk mengirim rancangan ke Meta dan mengaktifkan kampanye.')}</p>
-      </div>
-      <button type="button" className="veloxa-button-secondary shrink-0" onClick={onBilling} disabled={busy}>{t('Lihat paket')}</button>
     </div>}
     {canPrepare && !!accounts.length && !dashboard.identities.length && <p className="text-sm text-neutral-600">{t('Tautkan Halaman Facebook yang bisa Anda kelola ke bisnis ini.')}</p>}
     {canPrepare && !!accounts.length && !!dashboard.identities.length && <div className="space-y-3 rounded-lg border border-neutral-200 p-4">
