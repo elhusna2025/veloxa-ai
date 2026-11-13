@@ -5,7 +5,7 @@ import { instagramLoginConfig, isInstagramLoginConfigured, INSTAGRAM_LOGIN_SCOPE
 import { ApiError } from './http';
 import { disconnectSocialAccount } from './social-connections';
 import { readSocialAccounts } from './social-accounts';
-import { disconnectMeta, selectMetaPage, beginMetaOAuth, finishMetaOAuth, META_SCOPES } from './meta-oauth';
+import { disconnectMeta, selectMetaPage, beginMetaOAuth, finishMetaOAuth, META_SCOPES, META_ADS_SCOPES } from './meta-oauth';
 
 const keys = ['INSTAGRAM_LOGIN_ENABLED','META_APP_ID','META_APP_SECRET','INSTAGRAM_LOGIN_CONFIG_ID','INSTAGRAM_LOGIN_REDIRECT_URI','META_REDIRECT_URI'] as const;
 const appCredential='unit-app-placeholder'; const credential='unit-business-placeholder';
@@ -276,6 +276,44 @@ test('fresh Meta OAuth after disconnect stores a selectable current-generation P
   assert.equal(f.db.values.get(f.ref.path+'/meta_authorizations/500').metaGeneration,1);
   const result=await selectMetaPage(f.request,f.ref.id,'500',f.deps);assert.equal(result.connections[0].channel,'facebook');
  }finally{restore();}
+});
+
+test('Meta Ads OAuth isolates publishing grants and preserves a working authorization if a permission is declined', async () => {
+  const restore = configure();
+  try {
+    const f = fixture();
+    const publishedConnection = structuredClone(f.db.values.get(f.ref.path + '/private_meta_connections/facebook'));
+    const begin = async () => {
+      const start = new URL((await beginMetaOAuth(f.request, f.ref.id, f.deps, 'ads')).url);
+      assert.equal(start.searchParams.get('scope'), META_ADS_SCOPES.join(','));
+      return new URL('https://veloxa.example.test/api/veloxa/meta/callback?' + new URLSearchParams({ state: start.searchParams.get('state')!, code: 'ads-code' }));
+    };
+    let granted = META_ADS_SCOPES;
+    let calls = 0;
+    const fetcher: typeof fetch = async input => {
+      calls++;
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/oauth/access_token')) return Response.json({ access_token: credential, expires_in: 3600 });
+      if (url.pathname.endsWith('/debug_token')) return Response.json({ data: { is_valid: true, app_id: '999', expires_at: Math.floor(Date.now() / 1000) + 3600, data_access_expires_at: 0 } });
+      assert.match(url.pathname, /\/me\/permissions$/);
+      return Response.json({ data: granted.map(permission => ({ permission, status: 'granted' })) });
+    };
+    const callback = await begin();
+    await assert.rejects(finishMetaOAuth(callback, { ...f.deps, fetcher }), /Sesi koneksi/);
+    assert.equal(calls, 0);
+    const oauth = { ...f.deps, fetcher };
+    await finishMetaOAuth(callback, oauth, 'ads');
+    await assert.rejects(finishMetaOAuth(callback, oauth, 'ads'), /Sesi koneksi/);
+    const path = f.ref.path + '/meta_ads_credentials/current';
+    const valid = structuredClone(f.db.values.get(path));
+    assert.equal(valid.encryptedToken, 'encrypted-for-' + f.ref.id + '/meta_ads');
+    assert.deepEqual(valid.scopes, META_ADS_SCOPES);
+    assert.deepEqual(f.db.values.get(f.ref.path + '/private_meta_connections/facebook'), publishedConnection);
+    assert.equal([...f.db.values.keys()].some(key => key.includes('/meta_authorizations/')), false);
+    granted = META_ADS_SCOPES.filter(scope => scope !== 'ads_management');
+    await assert.rejects(finishMetaOAuth(await begin(), oauth, 'ads'), /Izin untuk Meta Ads/);
+    assert.deepEqual(f.db.values.get(path), valid);
+  } finally { restore(); }
 });
 
 test('proxy callback origins cannot change the configured public redirect or account binding',async()=>{

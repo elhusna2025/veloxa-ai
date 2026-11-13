@@ -16,14 +16,16 @@ export function ruleCollection(){return adminDb().collection('auto_content_rules
 export function publicRule(raw:FirebaseFirestore.DocumentData|undefined):AutoContentRule|null{if(!raw)return null;return{revision:raw.revision,enabled:raw.enabled,config:raw.config,nextSlotMs:raw.nextSlotMs,lastError:raw.lastError||'',processingJob:raw.processingJob||null,processingUntil:raw.processingUntil||0,pausePending:!raw.enabled&&!!raw.processingJob,sequence:raw.sequence||0};}
 const target=z.object({workspaceId:workspaceIdSchema,businessId:z.string()});
 const actionInput=target.extend({expectedRevision:z.number().int().nonnegative(),action:z.enum(['save','activate','pause']),config:autonomyConfigSchema.optional()}).strict();
-export async function schedulerHealth() {
- const heartbeat = (await adminDb().collection('system_operations').doc('organic_scheduler').get()).data();
+export function schedulerHeartbeat(heartbeat: FirebaseFirestore.DocumentData | undefined, now = Date.now(), configured = !!process.env.VELOXA_SCHEDULER_EMAIL && !!process.env.VELOXA_SCHEDULER_AUDIENCE) {
  const lastTickAt = typeof heartbeat?.at === 'number' ? heartbeat.at : null;
  // Older deployments only recorded the start heartbeat.
  const lastCompletedAt = typeof heartbeat?.completedAt === 'number' ? heartbeat.completedAt
   : heartbeat?.tickLeaseId === undefined ? lastTickAt : null;
- const configured = !!process.env.VELOXA_SCHEDULER_EMAIL && !!process.env.VELOXA_SCHEDULER_AUDIENCE;
- return { schedulerReady: configured && lastCompletedAt !== null && Date.now() - lastCompletedAt < 10 * 60_000, lastTickAt };
+ return { schedulerReady: configured && lastCompletedAt !== null && now - lastCompletedAt < 10 * 60_000, lastTickAt, lastCompletedAt, configured };
+}
+export async function schedulerHealth() {
+ const { schedulerReady, lastTickAt } = schedulerHeartbeat((await adminDb().collection('system_operations').doc('organic_scheduler').get()).data());
+ return { schedulerReady, lastTickAt };
 }
 export async function listAutonomy(request:Request,workspaceId:unknown,rawId:unknown):Promise<AutoContentStatus>{const body=target.parse({workspaceId,businessId:rawId});const id=businessId(body.businessId);const{ref,workspace,user}=await requireWorkspace(request,body.workspaceId);await resolveBusinessContext(ref,workspace,id);const ruleRef=ruleCollection().doc(ruleKey(ref.id,id));const [rule,activity,health]=await Promise.all([ruleRef.get(),ruleRef.collection('jobs').orderBy('createdAt','desc').limit(20).get(),schedulerHealth()]);return{rule:publicRule(rule.data()),jobs:activity.docs.map(doc=>({id:doc.id,...doc.data()})) as AutoContentStatus['jobs'],canManage:workspace.ownerUid===user.uid,...health};}
 export async function updateAutonomy(request:Request,deps:{authorize?:typeof requireWorkspace;health?:typeof schedulerHealth;database?:ReturnType<typeof adminDb>}={}){

@@ -17,6 +17,7 @@ import {publishMetaImage} from './meta-graph';
 import {publishMetaCarousel} from './meta-carousel';
 import {publishMetaReel} from './meta-reels';
 import {SUBSCRIPTION_PLANS} from '../veloxa-engine';
+import {effectiveWorkspacePlan} from '../subscription';
 import {assertPublicationCapacity,readPublicationQuota} from './publication-quota';
 import {runAutonomySchedulerTick} from './autonomy-scheduler';
 import {sweepExpiredReelsCheckpoints} from './scheduled-reels-checkpoint';
@@ -77,7 +78,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const previous=(await tx.get(job)).data();
    const future=nextConfiguredAutonomySlot(config,now());
    if(!pending&&!previous){
-    const planId=Object.hasOwn(SUBSCRIPTION_PLANS,String(ws.subscriptionPlanId))?ws.subscriptionPlanId as keyof typeof SUBSCRIPTION_PLANS:'free_trial';
+    const planId=effectiveWorkspacePlan(ws,now());
     const quota=await readPublicationQuota(ref,planId,tx,new Date(now()));
     try { assertPublicationCapacity(quota); }
     catch(error) {

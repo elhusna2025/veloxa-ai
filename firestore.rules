@@ -256,7 +256,7 @@ service cloud.firestore {
         hasRequiredFields(['ownerUid', 'name', 'category']) &&
         hasOnlyAllowedFields([
           'id', 'ownerUid', 'memberUids', 'name', 'category', 'slug', 'logoUrl',
-          'timezone', 'currency', 'subscriptionPlanId', 'quotaUsed', 'quotaLimit',
+          'timezone', 'currency', 'subscriptionPlanId', 'subscriptionPaidUntilMs', 'quotaUsed', 'quotaLimit',
           'autonomyEnabled', 'onboardingStep', 'onboardingCompleted', 'city',
           'targetAudience', 'toneOfVoice', 'primaryColor', 'accentColor',
           'selectedChannels', 'snapshotJson', 'snapshotRevision', 'trialEndsAt', 'createdAt', 'updatedAt'
@@ -271,6 +271,7 @@ service cloud.firestore {
         isValidOptionalString(data, 'timezone', 1, 64) &&
         isValidOptionalString(data, 'currency', 1, 16) &&
         isValidOptionalString(data, 'subscriptionPlanId', 1, 64) &&
+        (!('subscriptionPaidUntilMs' in data) || (data.subscriptionPaidUntilMs is int && data.subscriptionPaidUntilMs > 0)) &&
         isValidOptionalNumber(data, 'quotaUsed', 0, 10000000) &&
         isValidOptionalNumber(data, 'quotaLimit', 0, 10000000) &&
         isValidOptionalBool(data, 'autonomyEnabled') &&
@@ -575,11 +576,12 @@ service cloud.firestore {
 
       allow create: if isAuthenticated() &&
         request.resource.data.get('ownerUid', '') == request.auth.uid && initialTrial(request.resource.data) &&
+        !('subscriptionPaidUntilMs' in request.resource.data) &&
         request.resource.data.get('snapshotRevision', 0) == 1 && isValidWorkspace(request.resource.data);
       allow update: if isAuthenticated() &&
         !exists(/databases/$(database)/documents/workspaces/$(workspaceId)/server_operation_guards/organic_dispatch) &&
         (resource.data.ownerUid == request.auth.uid || isSuperAdmin()) &&
-        areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt', 'subscriptionPlanId', 'quotaLimit', 'quotaUsed']) &&
+        areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt', 'subscriptionPlanId', 'subscriptionPaidUntilMs', 'quotaLimit', 'quotaUsed']) &&
         validSnapshotUpdate() && isValidWorkspace(request.resource.data);
 
       allow delete: if isSuperAdmin();

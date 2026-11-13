@@ -1,4 +1,9 @@
-import { noStoreJson } from '@/lib/server/http';
-export async function POST() {
-  return noStoreJson({ ok: false, error: 'Pembayaran belum diaktifkan. Integrasi Duitku sedang disiapkan.', code: 'billing_pending' }, 501);
+import { confirmDuitkuPayment } from '@/lib/server/billing';
+import { errorResponse, noStoreJson } from '@/lib/server/http';
+
+export const runtime = 'nodejs';
+
+export async function POST(request: Request) {
+  try { return noStoreJson(await confirmDuitkuPayment(request)); }
+  catch (error) { return errorResponse(error); }
 }

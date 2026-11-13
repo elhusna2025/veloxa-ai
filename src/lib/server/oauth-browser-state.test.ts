@@ -7,7 +7,7 @@ const b = Buffer.alloc(32, 2).toString('base64url');
 const authorize = (state: string) => 'https://www.facebook.com/dialog/oauth?' + new URLSearchParams({ state });
 const callback = (state: string, cookie?: string) => new Request('http://127.0.0.1:8080/api/veloxa/instagram/callback/?' + new URLSearchParams({ state }), { headers: cookie ? { cookie } : {} });
 test('OAuth state uses a host-only secure HttpOnly Lax cookie and supports proxy callbacks', () => {
-  for (const flow of ['instagram','meta'] as const) {
+  for (const flow of ['instagram','meta','meta_ads'] as const) {
     const response = attachOAuthBrowserState(NextResponse.json({ ok: true }), authorize(a), flow);
     const cookie = response.headers.get('set-cookie')!;
     assert.match(cookie, /__Host-veloxa_/);assert.match(cookie, /HttpOnly/);assert.match(cookie, /Secure/);assert.match(cookie, /SameSite=lax/i);assert.match(cookie, /Path=\//);assert.match(cookie, /Max-Age=600/);assert.doesNotMatch(cookie, /Domain=/i);
@@ -21,6 +21,9 @@ test('a state from another browser, another flow, or duplicate cookies cannot au
   assert.throws(() => verifyOAuthBrowserState(callback(a), 'instagram'));
   assert.throws(() => verifyOAuthBrowserState(callback(b, cookie), 'instagram'));
   assert.throws(() => verifyOAuthBrowserState(callback(a, cookie), 'meta'));
+  const adsCookie = attachOAuthBrowserState(NextResponse.json({}), authorize(a), 'meta_ads').headers.get('set-cookie')!.split(';')[0];
+  assert.throws(() => verifyOAuthBrowserState(callback(a, adsCookie), 'meta'));
+  verifyOAuthBrowserState(callback(a, adsCookie), 'meta_ads');
   assert.throws(() => verifyOAuthBrowserState(callback(a, cookie + '; ' + cookie), 'instagram'));
   assert.throws(() => verifyOAuthBrowserState(callback('invalid', cookie), 'instagram'));
 });

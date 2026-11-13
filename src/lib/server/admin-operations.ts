@@ -5,6 +5,7 @@ import {
   type AdminPauseAudit, type AdminReceipt, type AdminRule, type AdminWorkspace, type AdminWorkspaceDetail, type AdminWorkspacePage,
 } from '../admin-operations';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
+import { effectiveWorkspacePlan } from '../subscription';
 import { requirePlatformOperator, requireUser, workspaceIdSchema } from './auth';
 import { ruleKey, schedulerHealth } from './autonomy-api';
 import { loadBusinessContexts } from './business-contexts';
@@ -28,9 +29,8 @@ const pauseInput = z.object({
 const pageCursor = z.tuple([z.string().max(1500), workspaceIdSchema]);
 const millis = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 const plain = (value: unknown, fallback = '') => typeof value === 'string' && value.trim() ? value.trim().slice(0, 150) : fallback;
-const planId = (value: unknown) => typeof value === 'string' && Object.hasOwn(SUBSCRIPTION_PLANS, value) ? value as keyof typeof SUBSCRIPTION_PLANS : 'free_trial';
 const workspaceSummary = (id: string, row: Data): AdminWorkspace => ({
-  id, name: plain(row.name, id), plan: SUBSCRIPTION_PLANS[planId(row.subscriptionPlanId)].name, onboarded: row.onboardingCompleted === true,
+  id, name: plain(row.name, id), plan: SUBSCRIPTION_PLANS[effectiveWorkspacePlan(row)].name, onboarded: row.onboardingCompleted === true,
 });
 
 function allowedPermalink(value: unknown): string | null {
@@ -59,7 +59,7 @@ export function adminReceipts(value: unknown): AdminReceipt[] {
   });
 }
 
-function ruleIssue(value: unknown): string | null {
+export function ruleIssue(value: unknown): string | null {
   const error = plain(value);
   if (!error) return null;
   if (/kuota publikasi/i.test(error)) return 'Kuota publikasi habis. Periksa paket dan pemakaian workspace.';
@@ -159,7 +159,7 @@ const priority = (state: string) => ['needs_attention', 'reconciling'].includes(
 const fallbackRootLimit = 25;
 const fallbackJobLimit = 50;
 
-async function readWithIndexFallback<T>(indexed: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+export async function readWithIndexFallback<T>(indexed: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
   try { return await indexed(); }
   catch (error) {
     const { code, message } = error as { code?: number | string; message?: string };
@@ -262,7 +262,7 @@ async function listWorkspaces(db: Firestore, params: URLSearchParams): Promise<A
   let query: Query = term ? root.orderBy('name').orderBy(FieldPath.documentId()).startAt(term).endAt(term + '\uf8ff') : root.orderBy(FieldPath.documentId());
   if (after && (term ? !after[0].startsWith(term) : after[0] !== '')) throw new ApiError(400, 'Halaman tidak valid.');
   if (after) query = term ? query.startAfter(...after) : query.startAfter(after[1]);
-  const view = (query: Query) => query.select('name','subscriptionPlanId','onboardingCompleted');
+  const view = (query: Query) => query.select('name','subscriptionPlanId','subscriptionPaidUntilMs','onboardingCompleted');
   const [page, exact] = await Promise.all([
     view(query).limit(WORKSPACE_PAGE + 1).get(),
     term && !after && workspaceIdSchema.safeParse(term).success
@@ -280,8 +280,8 @@ async function workspaceDetail(db: Firestore, workspaceId: string): Promise<Admi
   const ref = db.collection('workspaces').doc(workspaceId);
   const raw = (await ref.get()).data();
   if (!raw) throw new ApiError(404, 'Workspace tidak ditemukan.');
-  const plan = planId(raw.subscriptionPlanId);
-  const auditQuery = db.collection('platform_admin_audit').where('workspaceId', '==', workspaceId);
+  const plan = effectiveWorkspacePlan(raw);
+  const auditQuery = db.collection('platform_admin_audit').where('workspaceId', '==', workspaceId).where('action', '==', 'autonomy.pause');
   const [publication, generation, docs, profile, audit] = await Promise.all([
     readPublicationQuota(ref, plan),
     generationQuotaStatus(ref, workspaceId, plan),

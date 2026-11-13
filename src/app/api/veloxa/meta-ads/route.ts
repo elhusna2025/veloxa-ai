@@ -1,4 +1,16 @@
-import { noStoreJson } from '@/lib/server/http';
-export async function POST() {
-  return noStoreJson({ ok: false, error: 'Eksekusi iklan belum diaktifkan. Fokus saat ini adalah publikasi organik Instagram/Facebook.', code: 'not_implemented' }, 501);
+import { errorResponse, noStoreJson } from '@/lib/server/http';
+import { getMetaAds, mutateMetaAds } from '@/lib/server/meta-ads';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 180;
+
+export async function GET(request: Request) {
+  try { return noStoreJson(await getMetaAds(request)); }
+  catch (error) { return errorResponse(error); }
+}
+
+export async function POST(request: Request) {
+  try { return noStoreJson(await mutateMetaAds(request)); }
+  catch (error) { return errorResponse(error); }
 }

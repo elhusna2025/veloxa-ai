@@ -1328,3 +1328,162 @@ test('ad planner rejects stale ownership, profile and tokens after AI; concurren
 test('performance planner reads historical post metrics through original targets, including legacy channel-only receipts',async()=>{
  const{planBusinessAds}=await import('./ad-planning');for(const legacyReceipt of[false,true]){const f=await adFixture();delete(f.source.publishTargets[0]as any).connectionId;delete(f.source.channelStatuses[0]as any).connectionId;const stored=f.database.values.get(`${f.ref.path}/social_drafts/${f.source.id}`)!;stored.draft=f.source;const receipt=f.database.values.get(`${f.ref.path}/publish_jobs/${f.source.id}`)!.receipts[0];receipt.channel='instagram';if(legacyReceipt)delete receipt.connectionId;let reads=0;const result=await planBusinessAds(f.req({mode:'performance'}),{authorize:f.authorize as never,decrypt:()=> 'private-test',graph:(async()=>{reads++;return{like_count:7,comments_count:1};})as never,suggest:async()=>f.strategy});assert.equal(reads,1);assert.equal(result.metrics[0].likes,7);assert.equal(result.sourceDraftId,f.source.id);assert.equal(f.count(),0);}
 });
+
+function adsFixture() {
+  const f = fixture();
+  const now = Date.now();
+  const ws = f.database.values.get(f.ref.path)!;
+  ws.subscriptionPlanId = 'pro_1500k';
+  ws.subscriptionPaidUntilMs = now + 60_000;
+  const destination = 'https://www.example.com/';
+  const plan = {
+    id: 'adcamp_traffic', workspaceId: f.ref.id, businessId: 'primary', campaignName: 'Uji kunjungan website',
+    objective: 'WEBSITE_CONVERSIONS', destinationUrlOrWa: destination, promotedOfferingTitle: 'Produk uji',
+    originatedFromOrganicDraftId: 'draft_ads', destinationAccounts: [{ connectionId: 'facebook_100', channel: 'facebook' }],
+    demographics: { ageMin: 21, ageMax: 55, genders: 'all', locations: [{ cityOrPinName: 'Indonesia', radiusKm: 30 }] },
+    budget: { appliedDailyBudgetIdr: 25_000, durationDays: 3, totalBudgetIdr: 75_000 },
+  };
+  ws.snapshotJson = JSON.stringify({ brand: { ...BRAND_PRESETS.cafe_fnb, workspaceId: f.ref.id, websiteUrl: destination }, metaAdCampaigns: [plan] });
+  f.database.values.set(f.ref.path + '/business_contexts/primary', { revision: 1, connectionIds: ['facebook_100'] });
+  f.database.values.set(f.ref.path + '/meta_ads_credentials/current', {
+    authorizedBy: 'customer-a', scopes: ['ads_management', 'ads_read', 'pages_show_list'], expiresAt: 0, encryptedToken: 'ads-ciphertext',
+  });
+  const storagePath = 'workspaces/' + f.ref.id + '/renders/draft_ads.jpg';
+  f.database.values.set(f.ref.path + '/social_drafts/draft_ads', {
+    storagePath, draft: {
+      id: 'draft_ads', workspaceId: f.ref.id, businessId: 'primary', format: 'single_post', caption: 'Caption asli',
+      renderedMedia: { mimeType: 'image/jpeg' },
+    },
+  });
+  f.blobs.set(storagePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  const writes: { path: string; values: Record<string, string> }[] = [];
+  const adAccount = { account_id: '55', account_status: 1, name: 'Akun IDR', currency: 'IDR', user_tasks: ['ADVERTISE'] };
+  const remote = {
+    campaign: { id: '101', account_id: '55', status: 'PAUSED', objective: 'OUTCOME_TRAFFIC', special_ad_categories: [] },
+    adSet: { id: '102', account_id: '55', campaign_id: '101', status: 'PAUSED', lifetime_budget: '', end_time: '', targeting: {} },
+    ad: { id: '104', account_id: '55', adset_id: '102', status: 'PAUSED', creative: { id: '103' } },
+    creative: { id: '103', object_story_spec: {} },
+  };
+  let failAdSet = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.host, 'graph.facebook.com');
+    assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer fake-ads-token');
+    const path = url.pathname.replace(/^\/v\d+\.0\//, '');
+    if (init?.method === 'POST') {
+      const values = Object.fromEntries(init.body as URLSearchParams);
+      writes.push({ path, values });
+      switch (path) {
+        case 'act_55/adimages': {
+          const file = (init.body as FormData).get('filename');
+          assert.ok(file instanceof Blob && file.type === 'image/jpeg');
+          return Response.json({ images: { 'veloxa.jpg': { hash: 'a'.repeat(32) } } });
+        }
+        case 'act_55/campaigns': return Response.json({ id: '101' });
+        case 'act_55/adsets': {
+          if (failAdSet) throw new Error('unknown delivery');
+          Object.assign(remote.adSet, { lifetime_budget: values.lifetime_budget, end_time: values.end_time, targeting: JSON.parse(values.targeting) });
+          return Response.json({ id: '102' });
+        }
+        case 'act_55/adcreatives':
+          remote.creative.object_story_spec = JSON.parse(values.object_story_spec);
+          return Response.json({ id: '103' });
+        case 'act_55/ads': return Response.json({ id: '104' });
+        case '101': remote.campaign.status = values.status; return Response.json({ success: true });
+        case '102': remote.adSet.status = values.status; return Response.json({ success: true });
+        case '104': remote.ad.status = values.status; return Response.json({ success: true });
+      }
+    }
+    switch (path) {
+      case 'me/adaccounts': return Response.json({ data: [adAccount] });
+      case 'act_55': return Response.json(adAccount);
+      case 'act_55/promote_pages': return Response.json({ data: [{ id: '100' }] });
+      case '101/adsets': return Response.json({ data: [{ id: '102' }] });
+      case '102/ads': return Response.json({ data: [{ id: '104' }] });
+      case '101/insights': return Response.json({ data: [{ spend: '1234', impressions: '84', clicks: '7' }] });
+      case '101': return Response.json({ ...remote.campaign, effective_status: remote.campaign.status });
+      case '102': return Response.json(remote.adSet);
+      case '103': return Response.json(remote.creative);
+      case '104': return Response.json(remote.ad);
+    }
+    throw new Error('Unexpected Meta path ' + path);
+  };
+  const deps = { ...f.dependencies, now: () => now, fetcher, decrypt: (ciphertext: string, aad: string) => {
+    assert.equal(ciphertext, 'ads-ciphertext');
+    assert.equal(aad, f.ref.id + '/meta_ads');
+    return 'fake-ads-token';
+  } };
+  const post = (action = 'prepare', fields: Record<string, unknown> = {}) => new Request('https://test.example/api', {
+    method: 'POST', body: JSON.stringify({ workspaceId: f.ref.id, businessId: 'primary', planId: plan.id, action,
+      ...(action === 'prepare' ? { adAccountId: '55', connectionId: 'facebook_100', specialAdCategory: 'NONE' } : { confirm: true }), ...fields,
+    }),
+  });
+  const get = () => new Request('https://test.example/api?workspaceId=' + f.ref.id + '&businessId=primary');
+  return { ...f, ws, now, writes, post, get, deps, remote, plan, failPrepare: () => { failAdSet = true; } };
+}
+
+test('Meta Ads prepares at most one fully paused campaign and activates the spend gate last', async () => {
+  const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
+  const f = adsFixture();
+  const first = await getMetaAds(f.get(), f.deps);
+  assert.equal(first.canPrepare, true);
+  assert.equal(first.connection, 'connected');
+  assert.equal(first.accounts[0].eligible, true);
+  assert.equal(first.identities[0].connectionId, 'facebook_100');
+  await Promise.all([mutateMetaAds(f.post(), f.deps), mutateMetaAds(f.post(), f.deps)]);
+  assert.deepEqual(f.writes.map(item => item.path), ['act_55/adimages', 'act_55/campaigns', 'act_55/adsets', 'act_55/adcreatives', 'act_55/ads']);
+  assert.equal(f.writes.filter(item => item.values.status === 'PAUSED').length, 3);
+  assert.equal(f.writes[2].values.lifetime_budget, '75000');
+  assert.deepEqual(JSON.parse(f.writes[2].values.targeting).geo_locations, { countries: ['ID'] });
+  assert.equal(JSON.parse(f.writes[3].values.object_story_spec).link_data.message, 'Caption asli');
+  const paused = (await mutateMetaAds(f.post(), f.deps)).campaign;
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.totalBudgetIdr, 75_000);
+  assert.equal(paused.title, f.plan.campaignName);
+  await assert.rejects(mutateMetaAds(f.post('activate', { confirm: false }), f.deps));
+  assert.equal(f.writes.length, 5);
+
+  const active = (await mutateMetaAds(f.post('activate'), f.deps)).campaign;
+  assert.equal(active.status, 'active');
+  assert.deepEqual(f.writes.slice(5).map(item => [item.path, item.values.status]), [['104', 'ACTIVE'], ['102', 'ACTIVE'], ['101', 'ACTIVE']]);
+  const result = await getMetaAds(f.get(), f.deps);
+  assert.deepEqual(result.campaigns[0].insights, { spendIdr: 1234, impressions: 84, clicks: 7, asOf: f.now });
+  assert.equal(result.campaigns[0].effectiveStatus, 'ACTIVE');
+  assert.equal(JSON.stringify(result).includes('ads-ciphertext'), false);
+  const receipt = [...f.database.values.entries()].find(([key]) => key.includes('/meta_ads_executions/'))?.[1];
+  assert.deepEqual(receipt?.insights, result.campaigns[0].insights);
+
+  f.ws.subscriptionPaidUntilMs = f.now - 1;
+  assert.equal((await getMetaAds(f.get(), f.deps)).canPrepare, false);
+  f.database.values.delete(f.ref.path + '/meta_ads_credentials/current');
+  assert.equal((await mutateMetaAds(f.post('pause'), f.deps)).campaign.status, 'paused');
+  assert.equal(f.remote.campaign.status, 'PAUSED');
+  assert.equal(receipt?.pauseGrant?.encryptedToken, 'ads-ciphertext');
+  const updated = [...f.database.values.entries()].find(([key]) => key.includes('/meta_ads_executions/'))?.[1];
+  assert.equal(updated?.pauseGrant, null);
+  await assert.rejects(mutateMetaAds(f.post('activate'), f.deps), /Paket workspace/);
+});
+
+test('Meta Ads blocks mutable targeting, non-owner execution and ambiguous remote creation', async () => {
+  const { mutateMetaAds } = await import('./meta-ads');
+  const changed = adsFixture();
+  await mutateMetaAds(changed.post(), changed.deps);
+  Object.assign(changed.remote.adSet.targeting, { geo_locations: { countries: ['ID', 'MY'] } });
+  const result = await mutateMetaAds(changed.post('activate'), changed.deps);
+  assert.equal(result.campaign.status, 'attention');
+  assert.equal(changed.writes.some(item => item.values.status === 'ACTIVE'), false);
+
+  const ambiguous = adsFixture();
+  ambiguous.failPrepare();
+  const failed = await mutateMetaAds(ambiguous.post(), ambiguous.deps);
+  assert.equal(failed.campaign.status, 'attention');
+  assert.equal(failed.campaign.campaignId, '101');
+  const writeCount = ambiguous.writes.length;
+  assert.equal((await mutateMetaAds(ambiguous.post(), ambiguous.deps)).campaign.status, 'attention');
+  assert.equal(ambiguous.writes.length, writeCount);
+  await assert.rejects(mutateMetaAds(ambiguous.post('activate'), ambiguous.deps), /Kampanye harus lengkap/);
+  await assert.rejects(mutateMetaAds(ambiguous.post('pause'), {
+    ...ambiguous.deps, authorize: (async () => ({ ref: ambiguous.ref, user: { uid: 'not-owner' }, workspace: ambiguous.ws })) as never,
+  }), /Hanya pemilik/);
+  assert.equal((await mutateMetaAds(ambiguous.post('pause'), ambiguous.deps)).campaign.status, 'paused');
+});

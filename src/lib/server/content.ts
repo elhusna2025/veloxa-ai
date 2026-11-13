@@ -19,7 +19,7 @@ import { composeScheduledReelsCopy, composeSocialVisual, finishEditorialCarousel
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
-import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
+import { effectiveWorkspacePlan } from '../subscription';
 import { generateContentWithSavedAgent } from './content-agent';
 import { generateSocialPostImage, scheduledArtworkCopy } from './content-image';
 import { verifyScheduledArtwork } from './scheduled-artwork-review';
@@ -39,7 +39,7 @@ import { reserveGenerationAttempt, generationQuotaStatus } from './generation-po
 import { readPublicationQuota } from './publication-quota';
 import type { MetaConnection } from './meta-graph';
 import {parseAssetKind} from '../asset-kind';
-import type { BrandProfile, ContentDraft, SubscriptionPlanId } from '../veloxa-types';
+import type { BrandProfile, ContentDraft } from '../veloxa-types';
 
 export async function savePublicJpeg(workspaceId: string, section: 'renders' | 'vault', bytes: Buffer, bucket = adminBucket(), mimeType: 'image/jpeg' | 'video/mp4' = 'image/jpeg') {
   const path = `workspaces/${workspaceId}/${section}/${randomUUID()}.${mimeType === 'video/mp4' ? 'mp4' : 'jpg'}`;
@@ -158,7 +158,7 @@ export async function createSocialContent(request: Request, dependencies: {
   try { businessContext=buildVisualBusinessContext(brand,topic); } catch(error){throw new ApiError(409,error instanceof Error?error.message:'Periksa profil bisnis.','profile_context_invalid');}
   const imageContextParams={businessContext};
   const selected = await ref.collection('private_meta_connections').get();
-  const planId: SubscriptionPlanId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
+  const planId = effectiveWorkspacePlan(workspace);
   const selectedAccounts=selectDraftAccounts(readSocialAccounts(selected.docs),input.selectedConnectionIds,planId);
   try{assertBusinessTargets(contexts,context.id,selectedAccounts.map(account=>account.connectionId),input.businessId===undefined&&contexts.length===1&&context.revision===0);}catch(error){throw new ApiError(409,error instanceof Error?error.message:'Akun tidak sesuai bisnis.','business_target_mismatch');}
   const connections=selectedAccounts.map(publicConnection);
@@ -491,13 +491,13 @@ export async function createSocialContent(request: Request, dependencies: {
 
 export async function listSocialContent(request: Request, workspaceId: unknown) {
   const { ref, workspace, workspaceId: authorizedWorkspaceId } = await requireWorkspace(request, workspaceId);
-  const planId: SubscriptionPlanId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
+  const planId = effectiveWorkspacePlan(workspace);
   const [docs, publicationQuota, generationQuota] = await Promise.all([
     ref.collection('social_drafts').orderBy('createdAt', 'desc').limit(50).get(),
     readPublicationQuota(ref, planId),
     generationQuotaStatus(ref, authorizedWorkspaceId, planId),
   ]);
-  return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), quotaUsed: publicationQuota.used, publicationQuota, generationQuota };
+  return { drafts: docs.docs.map(doc => doc.data().draft as ContentDraft), planId, quotaUsed: publicationQuota.used, publicationQuota, generationQuota };
 }
 
 export async function listBrandPhotos(request: Request, workspaceId: unknown, includeTrash = false,selectedBusiness:unknown='primary') {

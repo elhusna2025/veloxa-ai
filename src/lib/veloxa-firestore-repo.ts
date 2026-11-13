@@ -11,6 +11,7 @@
  */
 
 import type { Auth } from 'firebase/auth';
+import { effectiveWorkspacePlan } from './subscription';
 import { SnapshotConflictError, SnapshotWriteQueue, snapshotRevision, nextSnapshotRevision } from './workspace-snapshot-revision';
 import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import {
@@ -811,7 +812,7 @@ export async function loadWorkspaceSnapshotFromStore(
           const cloudData = JSON.parse(rawDoc.snapshotJson) as PersistedWorkspaceSnapshot;
           if (cloudData?.brand?.workspaceId === workspaceId) {
             acceptVerifiedSnapshotRevision(workspaceId,snapshotRevision(rawDoc));
-            const { sanitized } = sanitizeLegacySeededSnapshot(cloudData);
+            const { sanitized } = sanitizeLegacySeededSnapshot({ ...cloudData, activePlanId: effectiveWorkspacePlan(rawDoc) });
             if (typeof window !== 'undefined' && typeof window.localStorage?.setItem === 'function') {
               try {
                 window.localStorage.setItem(storageKey, JSON.stringify(sanitized));
@@ -837,7 +838,7 @@ export async function loadWorkspaceSnapshotFromStore(
           selectedChannels: Array.isArray(rawDoc.selectedChannels)
             ? (rawDoc.selectedChannels as SocialChannelId[])
             : ['instagram', 'facebook', 'tiktok', 'youtube_shorts'],
-          planId: ((rawDoc.subscriptionPlanId as SubscriptionPlanId) || 'free_trial'),
+          planId: effectiveWorkspacePlan(rawDoc),
           ownerEmail: auth?.currentUser?.email || undefined,
           ownerName: auth?.currentUser?.displayName || undefined,
         });

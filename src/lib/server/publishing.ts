@@ -15,9 +15,10 @@ import { publishMetaCarousel } from './meta-carousel';
 import { publishMetaReel } from './meta-reels';
 import { REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
+import { effectiveWorkspacePlan } from '../subscription';
 import { readSocialAccounts, type StoredAccount } from './social-accounts';
 import { storedAccountTargets, assertTargetBinding, type AccountTarget } from './social-targets';
-import type { ContentDraft, SubscriptionPlanId } from '../veloxa-types';
+import type { ContentDraft } from '../veloxa-types';
 import { confirmedReceiptAt, type PublishReceipt } from './publication-receipt';
 export type { PublishReceipt } from './publication-receipt';
 const clean = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -91,7 +92,7 @@ export async function publishSocialContent(request: Request, dependencies: {
     const job = jobSnap.data();
     const workspace = wsSnap.data();
     if (!workspace || !hasWorkspaceAccess(user.uid, workspace, isVerifiedAdmin(user))) throw new ApiError(403, 'Akses workspace telah berubah.');
-    const planId = Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId as SubscriptionPlanId : 'free_trial';
+    const planId = effectiveWorkspacePlan(workspace);
     if (job?.state === 'processing' || job?.state === 'needs_attention' || dependencies.retryTransientFailures&&job?.state==='queued') throw new ApiError(409, 'Publikasi sedang diproses atau hasilnya perlu diperiksa di akun Meta. Jangan kirim ulang.', 'delivery_in_progress');
     const receipts = ((job?.receipts || []) as PublishReceipt[]).map(receipt=>{
       const matches=targets.filter(target=>receipt.connectionId?target.connectionId===receipt.connectionId:target.channel===receipt.channel);

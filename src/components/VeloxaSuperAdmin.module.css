@@ -88,6 +88,13 @@ button.stat:hover { border-color: var(--admin-plum); }
 .pauseAudit { display: grid; gap: .4rem; margin-top: .75rem; }
 .pauseAudit li { padding-block: .65rem; border-bottom: 1px solid var(--admin-line); }
 .pauseAudit li:last-child { border-bottom: 0; }
+.incidentTitle { display: flex; align-items: center; gap: .5rem; }
+.incidentTitle svg { flex: none; color: var(--admin-plum); }
+.rowActions button[aria-pressed="true"] { background: #f6e8ef; color: var(--admin-plum); }
+.incidentHistory, .incidentForm { width: 100%; }
+.incidentForm { display: grid; gap: .5rem; }
+.incidentForm label { font-weight: 600; }
+.incidentForm textarea { width: 100%; border: 1px solid #bfb0b9; padding: .6rem .7rem; border-radius: 8px; }
 @media (max-width: 479px) {
   .nav, .filters { display: grid; gap: .35rem; }
   .nav { grid-template-columns: repeat(2,minmax(0,1fr)); }

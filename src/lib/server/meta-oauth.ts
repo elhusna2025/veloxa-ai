@@ -13,6 +13,9 @@ import { readSocialAccounts, publicSocialAccount } from './social-accounts';
 import type { ChannelConnectionState } from '../veloxa-types';
 
 export const META_SCOPES = ['instagram_basic', 'instagram_content_publish', 'pages_read_engagement', 'pages_show_list', 'pages_manage_posts'];
+export const META_ADS_SCOPES = ['ads_management', 'ads_read', 'pages_show_list'];
+type MetaPurpose = 'organic' | 'ads';
+const scopesFor = (purpose: MetaPurpose) => purpose === 'ads' ? META_ADS_SCOPES : META_SCOPES;
 
 export function metaConfig() {
   const appId = process.env.META_APP_ID || process.env.META_INSTAGRAM_APP_ID || '';
@@ -31,20 +34,23 @@ export const oauthStateHash = (state: string) => createHash('sha256').update(sta
 type OAuthDeps = { authorize?: typeof requireWorkspace; database?: ReturnType<typeof adminDb>; fetcher?: typeof fetch; encrypt?: typeof encryptMetaToken };
 const readGeneration = (value: unknown) => value === undefined ? 0 : z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1).parse(value);
 
-export async function beginMetaOAuth(request: Request, workspaceId: unknown, deps: OAuthDeps = {}) {
-  const { user, ref } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
+export async function beginMetaOAuth(request: Request, workspaceId: unknown, deps: OAuthDeps = {}, purpose: MetaPurpose = 'organic') {
+  const { user, ref, workspace } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
+  if (purpose === 'ads' && workspace.ownerUid !== user.uid) throw new ApiError(403, 'Hanya pemilik workspace yang dapat menghubungkan Meta Ads.', 'forbidden');
   const config = metaConfig();
   (deps.encrypt || encryptMetaToken)('configuration-check', ref.id); // Fail before redirect if encryption is unavailable.
-  const generation = readGeneration((await ref.collection('integration_guards').doc('meta').get()).data()?.generation);
-  const configBinding = oauthStateHash(JSON.stringify([config.appId, config.redirectUri, META_SCOPES]));
+  const generation = readGeneration((await ref.collection('integration_guards').doc(purpose === 'ads' ? 'meta_ads' : 'meta').get()).data()?.generation);
+  const scopes = scopesFor(purpose);
+  const configBinding = oauthStateHash(JSON.stringify([config.appId, config.redirectUri, scopes]));
   const state = randomBytes(32).toString('base64url');
-  await (deps.database || adminDb()).collection('_meta_oauth_states').doc(oauthStateHash(state)).create({ uid: user.uid, workspaceId: ref.id, generation, configBinding, expiresAt: Date.now() + 10 * 60_000 });
+  const issuedAt = Date.now();
+  await (deps.database || adminDb()).collection('_meta_oauth_states').doc(oauthStateHash(state)).create({ uid: user.uid, workspaceId: ref.id, generation, configBinding, purpose, issuedAt, expiresAt: issuedAt + 10 * 60_000 });
   const authorize = new URL(`https://www.facebook.com/${graphVersion()}/dialog/oauth`);
-  authorize.search = new URLSearchParams({ client_id: config.appId, redirect_uri: config.redirectUri, response_type: 'code', scope: META_SCOPES.join(','), state, auth_type: 'rerequest' }).toString();
+  authorize.search = new URLSearchParams({ client_id: config.appId, redirect_uri: config.redirectUri, response_type: 'code', scope: scopes.join(','), state, auth_type: 'rerequest' }).toString();
   return { url: authorize.toString() };
 }
 
-export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}) {
+export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}, purpose: MetaPurpose = 'organic') {
   const state = z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(url.searchParams.get('state'));
   const config = metaConfig();
   // Firebase rewrites the incoming origin to Cloud Run. Never use that origin for redirects;
@@ -55,16 +61,16 @@ export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}) {
   const actor = await db.runTransaction(async tx => {
     const snap = await tx.get(stateRef);
     const data = snap.data();
-    if (!data || data.expiresAt < Date.now() || data.configBinding !== oauthStateHash(JSON.stringify([config.appId, config.redirectUri, META_SCOPES]))) throw new ApiError(400, 'Sesi koneksi berakhir. Mulai kembali dari Veloxa.');
+    if (!data || data.expiresAt < Date.now() || (data.purpose ?? 'organic') !== purpose || data.configBinding !== oauthStateHash(JSON.stringify([config.appId, config.redirectUri, scopesFor(purpose)]))) throw new ApiError(400, 'Sesi koneksi berakhir. Mulai kembali dari Veloxa.');
     tx.delete(stateRef);
-    return data as { uid: string; workspaceId: string; generation?: number };
+    return data as { uid: string; workspaceId: string; generation?: number; issuedAt?: number };
   });
   if (url.searchParams.has('error')) throw new ApiError(400, 'Izin Meta belum diberikan.');
   const code = z.string().min(1).max(4096).parse(url.searchParams.get('code'));
   const workspaceRef = db.collection('workspaces').doc(actor.workspaceId);
   const workspace = (await workspaceRef.get()).data();
   if (!workspace || workspace.ownerUid !== actor.uid) throw new ApiError(403, 'Pemilik workspace berubah. Mulai koneksi kembali.');
-  const metaGuard = workspaceRef.collection('integration_guards').doc('meta');
+  const metaGuard = workspaceRef.collection('integration_guards').doc(purpose === 'ads' ? 'meta_ads' : 'meta');
   if (readGeneration((await metaGuard.get()).data()?.generation) !== (actor.generation ?? 0)) throw new ApiError(409, 'Koneksi Meta telah dibatalkan. Mulai kembali.', 'reconnect_required');
   const short = await graphRequest<{ access_token?: string }>('oauth/access_token', '', 'POST', { client_id: config.appId, client_secret: config.appSecret, redirect_uri: config.redirectUri, code }, deps.fetcher);
   if (!short.access_token) throw new ApiError(502, 'Meta tidak memberikan token login.');
@@ -80,6 +86,25 @@ export async function finishMetaOAuth(url: URL, deps: OAuthDeps = {}) {
   if (expiresAt && expiresAt <= Date.now()) throw new ApiError(400, 'Token Meta telah berakhir.');
   const permissions = await graphRequest<{ data: { permission: string; status: string }[] }>('me/permissions', token, 'GET', {}, deps.fetcher);
   const scopes = permissions.data.filter(p => p.status === 'granted').map(p => p.permission);
+  if (purpose === 'ads') {
+    const credential = workspaceRef.collection('meta_ads_credentials').doc('current');
+    const hasRequiredScopes = META_ADS_SCOPES.every(scope => scopes.includes(scope));
+    await db.runTransaction(async tx => {
+      const [latest, guard, current] = await Promise.all([tx.get(workspaceRef), tx.get(metaGuard), tx.get(credential)]);
+      const previous = current.data();
+      if (latest.data()?.ownerUid !== actor.uid || readGeneration(guard.data()?.generation) !== (actor.generation ?? 0) || Number(previous?.issuedAt || 0) > (actor.issuedAt || 0)) {
+        throw new ApiError(409, 'Sesi Meta Ads telah berubah. Mulai koneksi kembali.', 'reconnect_required');
+      }
+      if (!hasRequiredScopes && previous?.authorizedBy === actor.uid && previous.encryptedToken && (previous.expiresAt === 0 || previous.expiresAt > Date.now())) return;
+      tx.set(credential, {
+        scopes: scopes.filter(scope => META_ADS_SCOPES.includes(scope)), expiresAt,
+        authorizedBy: actor.uid, issuedAt: actor.issuedAt || 0, authorizedAt: Date.now(),
+        ...(hasRequiredScopes && { encryptedToken: (deps.encrypt || encryptMetaToken)(token, `${actor.workspaceId}/meta_ads`) }),
+      });
+    });
+    if (!hasRequiredScopes) throw new ApiError(403, 'Izin untuk Meta Ads belum lengkap.', 'meta_ads_permissions_missing');
+    return { origin: config.origin, workspaceId: actor.workspaceId };
+  }
   if (META_SCOPES.some(scope => !scopes.includes(scope))) throw new ApiError(400, 'Berikan seluruh izin Page dan publikasi Instagram saat menghubungkan ulang.');
   const selectedIds = (debug.data.granular_scopes || []).filter(grant => grant.scope === 'pages_manage_posts').flatMap(grant => grant.target_ids || []);
   const pages = await discoverMetaPages(token, selectedIds, (path, values) => graphRequest(path, token, 'GET', values, deps.fetcher));

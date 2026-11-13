@@ -8,12 +8,13 @@ import { commitWorkspaceSnapshot, buildRealInitialWorkspaceSnapshot, loadWorkspa
 import { SnapshotConflictError } from './workspace-snapshot-revision';
 const enabled=process.env.VELOXA_FIRESTORE_EMULATOR_HOST;
 test('real Firestore emulator: CAS two tabs, legacy migration, blind writes, tenant isolation and entitlements',{skip:!enabled},async()=>{
- assert.equal(enabled,'127.0.0.1:8787'); // Never connect this fixture to a live project.
+ assert.match(enabled!,/^127\.0\.0\.1:\d{1,5}$/); // Never connect this fixture to a live project.
+ const port=Number(enabled!.split(':')[1]);
  const projectId='demo-veloxa-consistency';const suffix=Date.now();
  const ownerUid=`owner-test-${suffix}`;const newUid=`registration-${suffix}`;
  const actors=[{sub:ownerUid},{sub:ownerUid},{sub:'outside-user'},{sub:newUid},{sub:'operator-test',role:'admin'}];
  const apps=actors.map((_,index)=>initializeApp({projectId,apiKey:'demo-key',appId:'demo'},`actor-${index}-${suffix}`));
- const databases=apps.map((app,index)=>{const db=getFirestore(app);connectFirestoreEmulator(db,'127.0.0.1',8787,{mockUserToken:{...actors[index],email:'fixture@example.test',firebase:{identities:{},sign_in_provider:'password'}}});return db;});
+ const databases=apps.map((app,index)=>{const db=getFirestore(app);connectFirestoreEmulator(db,'127.0.0.1',port,{mockUserToken:{...actors[index],email:'fixture@example.test',firebase:{identities:{},sign_in_provider:'password'}}});return db;});
  const [a,b,outsider,newDb,operatorDb]=databases;const id=buildWorkspaceIdForUid(ownerUid);
  const snapshot=buildRealInitialWorkspaceSnapshot({workspaceId:id,businessName:'Usaha Awal',city:'Indonesia',category:'software_saas',planId:'free_trial'});
  try{
@@ -26,23 +27,31 @@ test('real Firestore emulator: CAS two tabs, legacy migration, blind writes, ten
   await assert.rejects(setDoc(doc(b,'workspaces',id),{snapshotJson:JSON.stringify(snapshot)},{merge:true}),/permission|denied/i);
   await assert.rejects(setDoc(doc(b,'workspaces',id),{snapshotJson:JSON.stringify(snapshot),snapshotRevision:8},{merge:true}),/permission|denied/i);
   await assert.rejects(setDoc(doc(a,'workspaces',id),{quotaUsed:999},{merge:true}),/permission|denied/i);
+  await assert.rejects(setDoc(doc(a,'workspaces',id),{subscriptionPaidUntilMs:1794500000000},{merge:true}),/permission|denied/i);
   await assert.rejects(getDoc(doc(outsider,'workspaces',id)),/permission|denied/i);
   await assert.rejects(setDoc(doc(a,'platform_configs','generation_any'),{mode:'development',enabled:true}),/permission|denied/i);
-  for (const ref of [doc(operatorDb,'private_admin_settings','global'),doc(operatorDb,'private_admin_settings','global','revisions','1'),doc(operatorDb,'platform_admin_audit','test'),doc(operatorDb,'workspaces',id,'publish_daily_usage','2026-11-13')]) {
+  for (const ref of [doc(operatorDb,'private_admin_settings','global'),doc(operatorDb,'private_admin_settings','global','revisions','1'),doc(operatorDb,'platform_admin_audit','test'),doc(operatorDb,'workspaces',id,'publish_daily_usage','2026-11-13'),doc(operatorDb,'workspaces',id,'private_billing_invoices','invoice'),doc(operatorDb,'workspaces',id,'private_billing_state','checkout_production'),doc(operatorDb,'workspaces',id,'private_billing_monthly','2026-11'),doc(operatorDb,'private_billing_order_index','invoice')]) {
    await assert.rejects(setDoc(ref,{count:0}),/permission|denied/i);
    await assert.rejects(getDoc(ref),/permission|denied/i);
   }
   const saved=(await getDoc(doc(a,'workspaces',id))).data()!;assert.equal(saved.name,'Profil Terbaru');assert.equal(saved.snapshotRevision,2);assert.equal(saved.quotaUsed,0);
-  const guardUrl=`http://127.0.0.1:8787/v1/projects/${projectId}/databases/(default)/documents/workspaces/${id}/server_operation_guards/organic_dispatch`;
+  const workspaceUrl=`http://${enabled}/v1/projects/${projectId}/databases/(default)/documents/workspaces/${id}`;
+  const guardUrl=`${workspaceUrl}/server_operation_guards/organic_dispatch`;
   const locked=await fetch(guardUrl,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields:{leaseId:{stringValue:'in-flight-fixture'}}})});assert.equal(locked.ok,true);
   await assert.rejects(setDoc(doc(a,'workspaces',id),{city:'Cannot change during send'},{merge:true}),/permission|denied/i);
   await assert.rejects(setDoc(doc(a,'workspaces',id,'server_operation_guards','organic_dispatch'),{leaseId:'override'}),/permission|denied/i);
   assert.equal((await fetch(guardUrl,{method:'DELETE',headers:{Authorization:'Bearer owner'}})).ok,true);
   await setDoc(doc(a,'workspaces',id),{slug:'us aha',logoUrl:'https://example.test/logo.png',timezone:'Asia/Jakarta',currency:'IDR',onboardingStep:2,onboardingCompleted:true,primaryColor:'#0061AD',accentColor:'#FFFFFF',trialEndsAt:'2027-01-01T00:00:00.000Z'},{merge:true});
   assert.equal(await commitWorkspaceSnapshot(a,id,changed,ownerUid,2),2);
+  const paidUntil=Date.now()+86_400_000;
+  const grant=await fetch(`${workspaceUrl}?updateMask.fieldPaths=subscriptionPaidUntilMs&updateMask.fieldPaths=subscriptionPlanId`,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields:{subscriptionPlanId:{stringValue:'starter_500k'},subscriptionPaidUntilMs:{integerValue:String(paidUntil)}}})});
+  assert.equal(grant.ok,true);
+  await setDoc(doc(a,'workspaces',id),{city:'Surabaya'},{merge:true});
+  assert.equal((await getDoc(doc(a,'workspaces',id))).data()?.subscriptionPaidUntilMs,paidUntil);
+  await assert.rejects(setDoc(doc(operatorDb,'workspaces',id),{subscriptionPaidUntilMs:paidUntil+86_400_000},{merge:true}),/permission|denied/i);
   const legacyId=`ws_legacy_${suffix}`;const legacy={...snapshot,brand:{...snapshot.brand,workspaceId:legacyId}};
   const fields={ownerUid:{stringValue:ownerUid},name:{stringValue:'Usaha Lama'},category:{stringValue:'custom'},subscriptionPlanId:{stringValue:'free_trial'},quotaUsed:{integerValue:'0'},quotaLimit:{integerValue:'10'},snapshotJson:{stringValue:JSON.stringify(legacy)}};
-  const seeded=await fetch(`http://127.0.0.1:8787/v1/projects/${projectId}/databases/(default)/documents/workspaces/${legacyId}`,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields})});assert.equal(seeded.ok,true);
+  const seeded=await fetch(`http://${enabled}/v1/projects/${projectId}/databases/(default)/documents/workspaces/${legacyId}`,{method:'PATCH',headers:{Authorization:'Bearer owner','Content-Type':'application/json'},body:JSON.stringify({fields})});assert.equal(seeded.ok,true);
   const edited={...legacy,brand:{...legacy.brand,businessName:'Migrasi Aman'}};
   assert.equal(await commitWorkspaceSnapshot(a,legacyId,edited,ownerUid,0),1);
   const migrated=(await getDoc(doc(a,'workspaces',legacyId))).data()!;assert.equal(migrated.name,'Migrasi Aman');assert.equal(migrated.quotaLimit,10);assert.equal(migrated.ownerUid,ownerUid);

@@ -105,7 +105,7 @@ async function run() {
       assert.equal(await page.locator('button[type="submit"]').isEnabled(), true);
       assert.equal(await page.getByText(/instruksi reset akan dikirim ke/i).count(), 0);
     });
-    await check('real server APIs reject anonymous requests and deferred operations do not return success', async () => {
+    await check('real server APIs reject anonymous requests and invalid provider callbacks', async () => {
       for (const endpoint of ['meta/start', 'content', 'publish']) {
         const response = await context.request.post(`${base}/api/veloxa/${endpoint}`, { data: { workspaceId: 'test-workspace', draftId: 'draft_test', topic: 'Test' } });
         assert.equal(response.status(), endpoint === 'publish' ? 400 : 401); // strict schema rejects extra input before authentication
@@ -113,10 +113,15 @@ async function run() {
       }
       const publish = await context.request.post(`${base}/api/veloxa/publish`, { data: { workspaceId: 'test-workspace', draftId: 'draft_test' } });
       assert.equal(publish.status(), 401);
-      for (const endpoint of ['billing-webhook', 'meta-ads']) {
-        const response = await context.request.post(`${base}/api/veloxa/${endpoint}`, { data: {} });
-        assert.equal(response.status(), 501); assert.equal((await response.json()).ok, false);
-      }
+      const ads = await context.request.get(`${base}/api/veloxa/meta-ads/?workspaceId=test-workspace&businessId=primary`);
+      assert.equal(ads.status(), 401);
+      const prepare = await context.request.post(`${base}/api/veloxa/meta-ads/`, {
+        data: { workspaceId: 'test-workspace', businessId: 'primary', action: 'prepare', planId: 'adcamp_test', adAccountId: '123', connectionId: 'facebook_456', specialAdCategory: 'NONE' },
+      });
+      assert.equal(prepare.status(), 401);
+      const callback = await context.request.post(`${base}/api/veloxa/billing-webhook/`, { form: {} });
+      assert.ok([400, 401, 403, 501, 503].includes(callback.status()), `Unexpected callback response ${callback.status()}`);
+      assert.equal((await callback.json()).ok, false);
     });
     await check('no unhandled browser exceptions occur', async () => assert.deepEqual(pageErrors, []));
   } finally {

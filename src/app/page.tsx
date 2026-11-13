@@ -1,6 +1,7 @@
 'use client';
 import { VeloxaSelect } from '@/components/VeloxaSelect';
 import { VeloxaSuperAdmin } from '@/components/VeloxaSuperAdmin';
+import { VeloxaBillingDialog } from '@/components/VeloxaBillingDialog';
 
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -160,10 +161,6 @@ const CHANNEL_META: Record<
   },
 };
 
-function formatIdr(value: number): string {
-  return 'Rp' + Math.round(value).toLocaleString('id-ID');
-}
-
 export default function VeloxaAiPlatformPage() {
   const router = useRouter();
   const [activeRole, setActiveRole] = useState<VeloxaRole>('user');
@@ -262,7 +259,6 @@ export default function VeloxaAiPlatformPage() {
   // Stage 1-5 Native <dialog> Modal Refs (modern-web-guidance: dialog)
   const onboardingDialogRef = useRef<HTMLDialogElement | null>(null);
   const oauthDialogRef = useRef<HTMLDialogElement | null>(null);
-  const billingDialogRef = useRef<HTMLDialogElement | null>(null);
   const authDialogRef = useRef<HTMLDialogElement | null>(null);
   const logoutConfirmDialogRef = useRef<HTMLDialogElement | null>(null);
   const hasHydratedCloudWorkspaceRef = useRef<string | null>(null);
@@ -300,13 +296,7 @@ export default function VeloxaAiPlatformPage() {
   const [editingMetaAdAccountId, setEditingMetaAdAccountId] = useState<string>('');
   const [oauthPopupStatus, setOauthPopupStatus] = useState<string | null>(null);
 
-  // Stage 4: Billing & QRIS Checkout State
-  const [selectedCheckoutPlanId, setSelectedCheckoutPlanId] =
-    useState<SubscriptionPlanId>('pro_1500k');
-  const [paymentMethodTab, setPaymentMethodTab] = useState<'qris' | 'va_bca'>('qris');
-  const [billingReceipts, setBillingReceipts] = useState<
-    Array<{ id: string; workspaceName: string; planName: string; amountIdr: number; paidAtWib: string }>
-  >([]);
+  const [billingOpen, setBillingOpen] = useState(false);
 
   useEffect(() => {
     setLocale(loadSavedVeloxaLocale());
@@ -369,7 +359,7 @@ export default function VeloxaAiPlatformPage() {
 
       const [metaResult, contentResult, mediaResult,businessResult] = await Promise.allSettled([
         veloxaApi<{ connections: ChannelConnectionState[] }>(`/api/veloxa/meta/accounts?workspaceId=${encodeURIComponent(targetWsId)}`),
-        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number; publicationQuota?: PublicationQuota; generationQuota?: GenerationQuota }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
+        veloxaApi<{ drafts: ContentDraft[]; quotaUsed: number; planId?: SubscriptionPlanId; publicationQuota?: PublicationQuota; generationQuota?: GenerationQuota }>(`/api/veloxa/content?workspaceId=${encodeURIComponent(targetWsId)}`),
         veloxaApi<{ assets: BrandVaultAsset[] }>(`/api/veloxa/media?workspaceId=${encodeURIComponent(targetWsId)}&includeTrash=1`),
         veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(targetWsId)}`),
       ]);
@@ -386,6 +376,7 @@ export default function VeloxaAiPlatformPage() {
       }
       if (contentResult.status === 'fulfilled') {
         const content = contentResult.value;
+        if (content.planId) setActivePlanId(content.planId);
         setDrafts(previous => [...content.drafts, ...previous.filter(draft => !content.drafts.some(item => item.id === draft.id)).map(draft => draft.renderedMedia ? draft : { ...draft, status: 'draft' as const, publishedAtWib: undefined, channelStatuses: draft.channelStatuses.map(item => ({ channel: item.channel, status: 'pending' as const })) })]);
         setPostsUsedThisMonth(content.quotaUsed); setPublicationQuota(content.publicationQuota ?? null); setGenerationQuota(content.generationQuota || null);
         setContentHistoryReady(true);
@@ -399,6 +390,21 @@ export default function VeloxaAiPlatformPage() {
       if (resourceIssues.length) setStatusBanner(resourceIssues.join(' '));
       if (epoch !== hydrationEpoch.current) return;
       const callback = new URL(window.location.href);
+      if (callback.searchParams.get('billing') === 'return') {
+        setActiveRole('user');
+        setBillingOpen(true);
+        callback.searchParams.delete('billing');
+        window.history.replaceState({}, '', callback.toString());
+      }
+      const adsCallback = callback.searchParams.get('metaAds');
+      if (adsCallback === 'connected' || adsCallback === 'failed') {
+        setActiveTab('meta_ads');
+        setStatusBanner(adsCallback === 'connected'
+          ? 'Koneksi iklan Meta tersimpan. Periksa akun iklan untuk bisnis aktif.'
+          : 'Koneksi iklan belum berhasil. Periksa izin akun iklan di Meta Ads.');
+        callback.searchParams.delete('metaAds');
+        window.history.replaceState({}, '', callback.toString());
+      }
       if (callback.searchParams.has('meta') || callback.searchParams.has('instagram')) {
         const directInstagram = callback.searchParams.has('instagram');
         setEditingChannel(directInstagram ? 'instagram' : 'facebook');
@@ -554,7 +560,7 @@ export default function VeloxaAiPlatformPage() {
 
   const handleConfirmQrisSubscriptionUpgrade = async () => {
     setStatusBanner('Pembayaran belum diaktifkan. Integrasi Duitku akan tersedia kemudian; paket Anda belum berubah.');
-    billingDialogRef.current?.close();
+    setBillingOpen(false);
   };
 
   const handleEmailSignInSubmit = async (e: React.FormEvent) => {
@@ -759,7 +765,7 @@ export default function VeloxaAiPlatformPage() {
               used={postsUsedThisMonth} quota={publicationQuota?.limit ?? currentPlan.monthlyPostQuota} locale={locale}
               onNavigate={navigateWorkspace} onCreate={() => navigateWorkspace('studio')}
               onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
-              onBilling={() => { setSelectedCheckoutPlanId(activePlanId); billingDialogRef.current?.showModal(); }}
+              onBilling={() => setBillingOpen(true)}
               onAccount={() => authDialogRef.current?.showModal()} onSignOut={handleRequestSignOutClick}
               onSync={() => void handleForceCloudSync()} onLocale={handleSelectLocale}
               isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => setActiveRole('admin')}
@@ -781,6 +787,7 @@ export default function VeloxaAiPlatformPage() {
                   drafts={businessDrafts}
                   onEditProfile={() => navigateWorkspace('brand_vault')}
                   onStudio={() => navigateWorkspace('studio')}
+                  onMetaAds={() => navigateWorkspace('meta_ads')}
                   onCreateContent={openStudioWithFormat}
                   onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
                   firstPost={{
@@ -1238,35 +1245,18 @@ export default function VeloxaAiPlatformPage() {
         }} />}
       </dialog>
 
-      {/* ========================================================================
-         STAGE 4 MODAL: QRIS & VIRTUAL ACCOUNT SUBSCRIPTION CHECKOUT (<dialog>)
-         ======================================================================== */}
-      <dialog
-        ref={billingDialogRef}
-        aria-labelledby="billing-dialog-title"
-        data-testid="billing-checkout-dialog"
-        className="w-full max-w-xl rounded-xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-          <div>
-            <span className="rounded-full border border-pink-200 bg-pink-50/70 px-2.5 py-0.5 text-xs font-semibold text-[#a92e5d]">
-              Paket & kuota
-            </span>
-            <h2 id="billing-dialog-title" className="mt-1 text-lg font-semibold text-neutral-900">
-              Paket workspace
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => billingDialogRef.current?.close()}
-            className="rounded-xl border border-neutral-200 px-2.5 py-1 text-sm font-medium text-neutral-600"
-          >
-            Tutup
-          </button>
-        </div>
-
-        <div className="mt-5 space-y-5"><p className="text-base leading-relaxed text-neutral-500">Bandingkan kuota paket untuk kebutuhan bisnis Anda. Aktivasi paket berbayar dan pembayaran belum tersedia.</p><div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{Object.values(SUBSCRIPTION_PLANS).map(plan => <button type="button" key={plan.id} data-testid={`select-plan-btn-${plan.id}`} aria-pressed={selectedCheckoutPlanId === plan.id} onClick={() => setSelectedCheckoutPlanId(plan.id)} className={`rounded-lg border p-4 text-left ${selectedCheckoutPlanId === plan.id ? 'border-[#bd416e] bg-[#faf2f5]' : 'border-neutral-200 bg-white'}`}><p className="text-base font-medium">{plan.name}</p><p className="mt-2 text-lg font-semibold">{formatIdr(plan.priceMonthlyIdr)}<span className="text-sm font-normal text-neutral-500">{plan.id === 'free_trial' ? ' / uji coba' : ' / bulan'}</span></p><p className="mt-2 text-sm text-neutral-500">{plan.monthlyPostQuota} publikasi</p></button>)}</div><div className="flex flex-wrap justify-end gap-3 border-t border-neutral-100 pt-4"><button type="button" onClick={() => billingDialogRef.current?.close()} className="veloxa-button-secondary">Tutup</button><button type="button" disabled data-testid="confirm-qris-payment-btn" className="veloxa-button-primary">Pembayaran belum tersedia</button></div></div>
-      </dialog>
+      {authUser && <VeloxaBillingDialog
+        key={authUser.uid + ':' + workspaceBrand.workspaceId}
+        workspaceId={workspaceBrand.workspaceId}
+        open={billingOpen}
+        onClose={() => setBillingOpen(false)}
+        onPlan={data => {
+          setActivePlanId(data.workspace.planId);
+          setPostsUsedThisMonth(data.publication.used);
+          setPublicationQuota(data.publication);
+          setGenerationQuota(data.generation);
+        }}
+      />}
 
       {/* ========================================================================
          STAGE 5A MODAL: FIREBASE AUTHENTICATION (GOOGLE & EMAIL/PASSWORD LOGIN)
@@ -1295,7 +1285,7 @@ export default function VeloxaAiPlatformPage() {
           </button>
         </div>
 
-        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><button type="button" onClick={() => { authDialogRef.current?.close(); setActiveTab('brand_vault'); }} className="veloxa-button-secondary">Edit profil bisnis</button><button type="button" onClick={() => { setSelectedCheckoutPlanId(activePlanId); authDialogRef.current?.close(); billingDialogRef.current?.showModal(); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
+        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><button type="button" onClick={() => { authDialogRef.current?.close(); setActiveTab('brand_vault'); }} className="veloxa-button-secondary">Edit profil bisnis</button><button type="button" onClick={() => { authDialogRef.current?.close(); setBillingOpen(true); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
       </dialog>
 
       <PublishReviewDialog draft={drafts.find(draft => draft.id === publishReviewDraftId) || null} brandName={brand.businessName} onCancel={() => setPublishReviewDraftId(null)} onConfirm={() => { if (publishReviewDraftId) void confirmPublishDraftNow(publishReviewDraftId); }} />

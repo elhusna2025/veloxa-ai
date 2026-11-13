@@ -6,6 +6,7 @@ import {
   type AdminQuotaOverrides, type AdminSettingsAudit, type AdminSettingsView,
 } from '../admin-settings';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
+import { effectiveWorkspacePlan } from '../subscription';
 import type { SubscriptionPlanId } from '../veloxa-types';
 import { requirePlatformOperator, requireUser, workspaceIdSchema } from './auth';
 import { adminDb } from './firebase';
@@ -180,7 +181,7 @@ export async function getAdminSettings(request: Request, deps: Dependencies = {}
   const common = { revision, models: state.models, audit, availableModels: allowed, defaultModels,
     effectiveModels: { ...defaultModels, ...activeModels(state.models, allowed) } };
   if (!workspaceId) return { ...common, scope: 'global', plans: planIds.map(id => planSettings(id, state.plans[id])) };
-  const planId = planIdSchema.safeParse(workspace?.get('subscriptionPlanId')).data ?? 'free_trial';
+  const planId = effectiveWorkspacePlan(workspace?.data() ?? {});
   const plan = planSettings(planId, parsePlanQuota(global?.get('plans'), planId));
   const legacyUnlimited = legacy?.get('workspaceId') === workspaceId && legacy?.get('mode') === 'development' && legacy?.get('enabled') === true;
   const name: unknown = workspace?.get('name');

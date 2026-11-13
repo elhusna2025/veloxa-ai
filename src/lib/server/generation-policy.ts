@@ -1,5 +1,6 @@
 import type { DocumentReference, Transaction } from 'firebase-admin/firestore';
 import { SUBSCRIPTION_PLANS } from '../veloxa-engine';
+import { effectiveWorkspacePlan } from '../subscription';
 import type { SubscriptionPlanId } from '../veloxa-types';
 import type { GenerationQuota } from '../content-generation';
 import { ApiError } from './http';
@@ -40,8 +41,7 @@ export async function reserveGenerationAttempt(
     // The workspace, policy and counter share the same transaction as a new reservation.
     const workspace = (await tx.get(ref)).data();
     if (!workspace) throw new ApiError(409, 'Workspace tidak lagi tersedia.');
-    const currentPlan = typeof workspace.subscriptionPlanId === 'string' && Object.hasOwn(SUBSCRIPTION_PLANS, workspace.subscriptionPlanId)
-      ? workspace.subscriptionPlanId as SubscriptionPlanId : planId;
+    const currentPlan = workspace.subscriptionPlanId === undefined ? planId : effectiveWorkspacePlan(workspace);
     const policy = await generationPolicy(ref, workspaceId, currentPlan, tx);
     const job = scheduledJob ? (await tx.get(scheduledJob)).data() : undefined;
     if (scheduledJob && job?.state !== 'generating') {

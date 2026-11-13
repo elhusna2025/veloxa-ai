@@ -1,4 +1,5 @@
 import { hasWorkspaceAccess, isVerifiedAdmin } from '../../src/lib/veloxa-workspace-policy';
+import { effectiveWorkspacePlan } from '../../src/lib/subscription';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -130,7 +131,7 @@ export const generateVeloxaStudioDraft = onCall(
     };
 
     const workspace = await requireWorkspaceAccess(request, brand?.workspaceId);
-    const planId = (Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId : 'free_trial') as SubscriptionPlanId;
+    const planId = effectiveWorkspacePlan(workspace);
     const postsPublishedThisMonth = Number(workspace.quotaUsed || 0);
     const quotaCheck = canConsumePostingQuota({ planId, postsPublishedThisMonth });
     if (!quotaCheck.allowed) {
@@ -173,7 +174,7 @@ export const updateVeloxaAutonomyConfig = onCall({ region: REGION, memory: '512M
   }
 
   const workspace = await requireWorkspaceAccess(request, config.workspaceId);
-  const planId = (Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId : 'free_trial') as SubscriptionPlanId;
+  const planId = effectiveWorkspacePlan(workspace);
   const validation = validateAutonomyScheduleAgainstPlan(config, planId);
   const normalized: AutonomyConfig = {
     ...config,
@@ -228,7 +229,7 @@ export const designVeloxaMetaAdCampaign = onCall(
     };
 
     const workspace = await requireWorkspaceAccess(request, brand?.workspaceId);
-    const planId = (Object.hasOwn(SUBSCRIPTION_PLANS, String(workspace.subscriptionPlanId)) ? workspace.subscriptionPlanId : 'free_trial') as SubscriptionPlanId;
+    const planId = effectiveWorkspacePlan(workspace);
     if (!SUBSCRIPTION_PLANS[planId]?.includesMetaAdsAgent) {
       throw new HttpsError(
         'permission-denied',

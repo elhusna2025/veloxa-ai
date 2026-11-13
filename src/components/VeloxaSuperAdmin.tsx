@@ -6,9 +6,12 @@ import type { AdminJob, AdminOperations, AdminOverview, AdminRule, AdminWorkspac
 import { veloxaApi } from '@/lib/veloxa-api-client';
 import type { AdminSettingsView } from '@/lib/admin-settings';
 import { VeloxaAdminSettings } from './VeloxaAdminSettings';
+import { VeloxaAdminBilling } from './VeloxaAdminBilling';
+import { VeloxaAdminIntegrations } from './VeloxaAdminIntegrations';
+import { VeloxaAdminIncidents } from './VeloxaAdminIncidents';
 import styles from './VeloxaSuperAdmin.module.css';
 
-type View = 'overview' | 'workspaces' | 'workspace' | 'operations' | 'settings' | 'workspaceSettings';
+type View = 'overview' | 'workspaces' | 'workspace' | 'operations' | 'settings' | 'workspaceSettings' | 'billing' | 'integrations';
 type Filter = 'all' | 'attention' | 'recovery';
 type AdminData = AdminOverview | AdminOperations | AdminWorkspacePage | AdminWorkspaceDetail | AdminSettingsView;
 type AdminRequest = <T>(url: string, init?: RequestInit) => Promise<T>;
@@ -246,6 +249,7 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [discardTo, setDiscardTo] = useState<View | 'reload' | null>(null);
   const editingSettings = view === 'settings' || view === 'workspaceSettings';
+  const standalone = view === 'billing' || view === 'integrations';
   const params = new URLSearchParams(editingSettings ? undefined : { view });
   if (view === 'workspaceSettings') params.set('workspaceId', workspace);
   if (view === 'workspaces') { if (term) params.set('q',term); if (cursor) params.set('cursor',cursor); }
@@ -255,13 +259,14 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
   const key = path + '#' + refresh;
   const result = response?.key === key ? response : undefined;
   useEffect(() => {
+    if (standalone) return;
     const controller = new AbortController();
     void request<AdminData>(path, { signal: controller.signal }).then(
       data => { if (!controller.signal.aborted) setResponse({ key, data }); },
       error => { if (!controller.signal.aborted) setResponse({ key, error: error instanceof Error ? error.message : 'Coba muat ulang panel.' }); },
     );
     return () => controller.abort();
-  }, [key, path, request]);
+  }, [key, path, request, standalone]);
   const load = () => setRefresh(current => current + 1);
   const navigate = (next: View | 'reload') => {
     if (next === view) return;
@@ -273,18 +278,19 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
   const open = (id: string) => { setWorkspace(id); navigate('workspace'); };
   const operations = (state: Filter) => { setFilter(state); navigate('operations'); };
   const titles = { overview: 'Beranda', workspace: 'Detail Workspace', workspaces: 'Workspace', operations: 'Operasi Otonom',
-    settings: 'Pengaturan AI & kuota', workspaceSettings: 'Pengaturan workspace' };
+    settings: 'Pengaturan AI & kuota', workspaceSettings: 'Pengaturan workspace', billing: 'Langganan & biaya', integrations: 'Integrasi' };
   const sub = { overview: 'Lihat kesehatan platform dan pekerjaan yang perlu ditangani.', workspaces: 'Temukan workspace, paket, dan bisnis yang dikelola.',
     workspace: 'Periksa kuota, koneksi bisnis, dan hasil Otonom.', operations: 'Periksa status slot, hasil per akun, dan jadwal percobaan ulang.',
     settings: 'Atur model bawaan, batas paket, dan riwayat perubahan platform.',
-    workspaceSettings: 'Atur model dan kuota khusus untuk workspace ini.' };
+    workspaceSettings: 'Atur model dan kuota khusus untuk workspace ini.',
+    billing: 'Tinjau langganan, transaksi, dan biaya workspace.', integrations: 'Periksa akun Meta dan kampanye untuk setiap workspace.' };
   const data = result?.data;
   const page = view === 'workspaces' ? data as AdminWorkspacePage | undefined : undefined;
   const ops = view === 'operations' ? data as AdminOperations | undefined : undefined;
   const overview = view === 'overview' ? data as AdminOverview | undefined : undefined;
   return <div className={styles.admin} lang="id" dir="ltr" data-testid="super-admin-dashboard">
     <nav className={styles.nav} aria-label="Navigasi Super Admin">
-      {([['overview','Beranda'],['workspaces','Workspace'],['operations','Operasi Otonom'],['settings','Pengaturan AI & kuota']] as const).map(([id,label]) =>
+      {([['overview','Beranda'],['workspaces','Workspace'],['operations','Operasi Otonom'],['settings','Pengaturan AI & kuota'],['billing','Langganan & biaya'],['integrations','Integrasi']] as const).map(([id,label]) =>
         <button key={id} type="button" aria-current={view === id || (view === 'workspace' || view === 'workspaceSettings') && id === 'workspaces' ? 'page' : undefined} onClick={() => navigate(id)}>{label}</button>)}
     </nav>
     <div className={styles.heading}>
@@ -293,7 +299,7 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
         {view === 'workspaceSettings' && <button type="button" className={styles.link} onClick={() => navigate('workspace')}><ArrowLeft size={16} /> Kembali ke Detail Workspace</button>}
         <h1>{titles[view]}</h1><p>{sub[view]}</p>
       </div>
-      <button type="button" className={styles.button} disabled={!result} onClick={() => navigate('reload')}><RefreshCw size={16} /> Muat ulang</button>
+      {!standalone && <button type="button" className={styles.button} disabled={!result} onClick={() => navigate('reload')}><RefreshCw size={16} /> Muat ulang</button>}
     </div>
     {notice && <p className={styles.notice} role="status">{notice}</p>}
     {(overview || ops) && <Scheduler status={(overview || ops)!.scheduler} />}
@@ -306,7 +312,7 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
     {view === 'operations' && <div className={styles.filters} aria-label="Filter aktivitas">
       {([['all','Terbaru'],['attention','Perlu diperiksa'],['recovery','Dalam pemulihan']] as const).map(([id,label]) => <button key={id} type="button" className={styles.button} aria-pressed={id === filter} onClick={() => setFilter(id)}>{label}</button>)}
     </div>}
-    {!result && <p className={styles.empty} role="status">Memuat data Super Admin…</p>}
+    {!standalone && !result && <p className={styles.empty} role="status">Memuat data Super Admin…</p>}
     {result?.error && <p className={styles.error} role="alert">Data belum dapat dimuat. {result.error}</p>}
     {overview && <Overview data={overview} open={open} operations={operations} pause={setPause} />}
     {page && <Panel title="Daftar workspace" hint={term ? 'Nama dicocokkan dari awal, dengan huruf besar dan kecil sesuai data.' : undefined}>
@@ -325,6 +331,9 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
         setNotice(restored ? 'Pengaturan dipulihkan sebagai revisi baru.' : 'Pengaturan tersimpan.');
         load();
       }} />}
+    {view === 'billing' && <VeloxaAdminBilling request={request} />}
+    {view === 'integrations' && <VeloxaAdminIntegrations request={request} />}
+    {view === 'operations' && <VeloxaAdminIncidents request={request} open={open} refresh={refresh} />}
     {ops && <div className={styles.split}>
       <Panel title="Aktivitas slot" hint="Hingga 40 aktivitas terbaru untuk filter ini. Buka slot untuk melihat hasil per akun."><JobList jobs={ops.jobs} pause={setPause} /></Panel>
       <div className={styles.stack}>

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ArrowRight, Check, CircleHelp, FileText, Image as ImageIcon, Layers, Link2, Play, Send, Sparkles, Ticket } from 'lucide-react';
+import { ArrowRight, Check, CircleHelp, FileText, Image as ImageIcon, Layers, Link2, Megaphone, Play, Send, Sparkles, Ticket } from 'lucide-react';
 import type { BrandProfile, ChannelConnectionState, ContentDraft, ContentFormat } from '@/lib/veloxa-types';
 import { firstPostProgress } from '@/lib/first-post-guide';
 import { useWorkspaceCopy } from '@/lib/veloxa-workspace-copy';
@@ -33,6 +33,7 @@ interface Props {
   onCreateContent: (format: ContentFormat) => void;
   onEditProfile: () => void;
   onConnections: () => void;
+  onMetaAds?: () => void;
   firstPost?: {
     historyReady: boolean;
     canAssignAccount: boolean;
@@ -135,5 +136,10 @@ export function VeloxaWorkspaceOverview(props: Props) {
         <div className="ws-overview-profile-row"><div><strong>{t('Profil bisnis')}</strong><p dir="auto">{props.brand.businessName}</p></div><button type="button" onClick={props.onEditProfile} className="ws-overview-text-button">{t('Perbarui profil')} <ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow"/></button></div>
       </section>
     </div>
+    {props.onMetaAds && <section className="ws-overview-card" aria-labelledby="overview-ads-title">
+      <div className="ws-overview-card-header"><h2 id="overview-ads-title">{t('Meta Ads')}</h2><Megaphone size={18} className="ws-overview-subtle-icon" aria-hidden="true" /></div>
+      <p className="ws-overview-social-empty">{t('Siapkan kampanye untuk bisnis aktif dan periksa statusnya di Meta.')}</p>
+      <div className="ws-overview-card-actions"><button type="button" className="ws-overview-text-button" onClick={props.onMetaAds}>{t('Buka Meta Ads')} <ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow" /></button></div>
+    </section>}
   </div>;
 }

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { NextResponse } from 'next/server';
 import { ApiError } from './http';
-type Flow = 'meta' | 'instagram';
+type Flow = 'meta' | 'meta_ads' | 'instagram';
 const cookieName = (flow: Flow) => `__Host-veloxa_${flow}_oauth`;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const options = { httpOnly: true, secure: true, sameSite: 'lax' as const, path: '/', maxAge: 600 };
