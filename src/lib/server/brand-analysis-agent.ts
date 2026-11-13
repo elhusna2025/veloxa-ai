@@ -60,6 +60,26 @@ export function validateAnalysisOutput(raw:unknown,evidence:SocialEvidence):Bran
  }
  return suggestions;
 }
+
+export async function suggestAnalysisPalette(evidence:SocialEvidence,logoSourceId:string|null):Promise<BrandSuggestion|undefined>{
+ const avatars=evidence.images.filter(image=>image.avatar&&evidence.sources.some(source=>source.id===image.sourceId&&source.kind==='profile'));
+ const uploaded=evidence.images.find(image=>image.sourceId==='uploaded_logo');
+ const recognized=avatars.find(image=>image.sourceId===logoSourceId);
+ const candidates=[uploaded,recognized,...avatars.filter(image=>image!==recognized)];
+ for(const image of candidates){
+  if(!image)continue;
+  try{
+   const colors=await extractLogoPalette(image.bytes);
+   const reason=image===uploaded?'Warna diambil dari file logo yang dipilih pada DNA visual.'
+    :image===recognized?'Warna diambil dari foto profil yang dikenali sebagai logo. Tinjau agar sesuai identitas merek.'
+    :'Warna diambil dari foto profil akun. Tinjau sebelum memakai warna ini untuk konten.';
+   return {key:'palette',value:colors,sourceIds:[image.sourceId],basis:image===uploaded?'observed':'inferred',reason};
+  }catch(error){
+   if(!(error instanceof ApiError)||error.status!==400)throw error;
+  }
+ }
+}
+
 export async function suggestBrandProfile(evidence:SocialEvidence,savedOfferings:Pick<BrandOfferingItem,'title'|'category'>[]=[]):Promise<Pick<BrandAnalysis,'suggestions'|'warnings'>>{
  if(!process.env.OPENAI_API_KEY)throw new ApiError(503,'AI profil belum dikonfigurasi.');
  const client=new OpenAI({apiKey:process.env.OPENAI_API_KEY,baseURL:'https://api.openai.com/v1',timeout:110000,maxRetries:0});
@@ -81,9 +101,8 @@ Area layanan hanya bila wilayah disebut eksplisit sebagai cakupan layanan. Isi c
  }catch{throw new ApiError(502,'AI belum dapat menyusun usulan profil. Tidak ada data profil yang diubah; silakan coba lagi.');}
  const suggestions=validateAnalysisOutput(parsed,evidence);const warnings:string[]=[];
  if((parsed.offerings.value?.length||0)!==((suggestions.find(item=>item.key==='offerings')?.value||[]) as BrandOfferingSuggestion[]).length)warnings.push('Sebagian penawaran dilewati karena sumbernya belum dapat dicocokkan.');
- const logo=evidence.images.find(image=>image.sourceId==='uploaded_logo')||evidence.images.find(image=>image.sourceId===parsed.logoSourceId&&image.avatar);
- if(logo){const colors=await extractLogoPalette(logo.bytes);suggestions.push({key:'palette',value:colors,sourceIds:[logo.sourceId],basis:logo.sourceId==='uploaded_logo'?'observed':'inferred',reason:logo.sourceId==='uploaded_logo'?'Warna diambil dari file logo yang dipilih pada DNA visual.':'Warna diambil dari foto profil yang dikenali sebagai logo. Tinjau agar sesuai identitas merek.'});}
- else warnings.push('Logo belum dikenali dengan pasti. Unggah dan pilih logo di DNA visual untuk mengambil palet yang akurat.');
+ const palette=await suggestAnalysisPalette(evidence,parsed.logoSourceId);
+ if(palette)suggestions.push(palette);
  if(!suggestions.length)throw new ApiError(422,'Informasi akun belum cukup untuk menyusun profil. Tambahkan bio, postingan, atau isi profil secara manual.');
  return {suggestions,warnings};
 }

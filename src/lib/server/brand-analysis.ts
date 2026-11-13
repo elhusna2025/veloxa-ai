@@ -26,7 +26,15 @@ export async function analyzeSocialBrand(request:Request,deps:{authorize?:typeof
  const {context,accounts}=await ref.firestore.runTransaction(async tx=>{const current=await check(tx);const job=(await tx.get(lease)).data();if(job?.expiresAt>Date.now())throw new ApiError(409,'Analisis bisnis ini masih berjalan. Tunggu hingga selesai.');tx.set(lease,{runId,expiresAt:Date.now()+300000});return current;});baseline=accounts;
  try{
   deps.progress?.('profiles');const evidence=await(deps.collect||collectSocialEvidence)(accounts,account=>(deps.decrypt||decryptMetaToken)(account.encryptedToken,ref.id),{progress:()=>deps.progress?.('visuals')});
-  if(context.brand.logoAssetId){try{const [logo]=await(deps.references||loadContentReferences)(ref,ref.id,[context.brand.logoAssetId],undefined,id);evidence.sources.push({id:'uploaded_logo',kind:'logo',label:'Logo pada DNA visual',text:logo.title});evidence.images=[{sourceId:'uploaded_logo',avatar:true,bytes:logo.bytes},...evidence.images].slice(0,6);}catch{evidence.warnings.push('File logo tersimpan belum dapat dibaca; tidak dipakai dalam analisis.');}}
+  if(context.brand.logoAssetId){
+   try{
+    const [logo]=await(deps.references||loadContentReferences)(ref,ref.id,[context.brand.logoAssetId],undefined,id);
+    evidence.sources.push({id:'uploaded_logo',kind:'logo',label:'Logo pada DNA visual',text:logo.title});
+    const photos=evidence.images.filter(image=>image.avatar);
+    const posts=evidence.images.filter(image=>!image.avatar);
+    evidence.images=[{sourceId:'uploaded_logo',avatar:true,bytes:logo.bytes},...photos,...posts].slice(0,6);
+   }catch{evidence.warnings.push('File logo tersimpan belum dapat dibaca; tidak dipakai dalam analisis.');}
+  }
   const sampledImages=new Set(evidence.images.map(image=>image.sourceId));
   evidence.sources=evidence.sources.filter(source=>source.kind!=='post'||source.text.trim()||sampledImages.has(source.id));
   if(!evidence.sources.some(source=>source.kind==='profile'||source.kind==='post'))throw new ApiError(422,'Profil dan postingan belum dapat dibaca dari Meta. Periksa izin akun atau lengkapi profil secara manual.');

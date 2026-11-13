@@ -4,10 +4,34 @@ import sharp from 'sharp';
 import {readMetaImage,collectSocialEvidence} from './brand-social-sources';
 import {BRAND_ANALYSIS_POST_LIMIT,type BrandOfferingSuggestion} from '../brand-analysis';
 import {MetaRequestError} from './meta-graph';
-import {profileAnalysisSchema,validateAnalysisOutput} from './brand-analysis-agent';
+import {profileAnalysisSchema,suggestAnalysisPalette,validateAnalysisOutput} from './brand-analysis-agent';
 const account={connectionId:'instagram_100',storageId:'instagram_100',channel:'instagram' as const,accountId:'100',pageId:'100',accountName:'Berez',handle:'@berezerp',encryptedToken:'private',expiresAt:0,loginProvider:'instagram' as const};
 test('Meta images reject arbitrary hosts, credentials, HTTP and oversize bodies without forwarding tokens',async()=>{let calls=0;const image=await sharp({create:{width:30,height:20,channels:3,background:'blue'}}).jpeg().toBuffer();const fetcher=(async(url:any,init:any)=>{calls++;assert.equal(new URL(url).hostname,'a.cdninstagram.com');assert.equal(init.redirect,'error');assert.equal(init.headers,undefined);return new Response(new Uint8Array(image),{headers:{'Content-Type':'image/jpeg'}});}) as typeof fetch;for(const raw of ['http://a.cdninstagram.com/a','https://127.0.0.1/a','https://a.cdninstagram.com.evil.test/a','https://user:pass@a.cdninstagram.com/a','https://a.cdninstagram.com:3000/a'])await assert.rejects(readMetaImage(raw,fetcher));assert.equal(calls,0);assert.ok((await readMetaImage('https://a.cdninstagram.com/a',fetcher)).length>0);await assert.rejects(readMetaImage('https://a.cdninstagram.com/a',(async()=>new Response(new Uint8Array(5*1024*1024+1),{headers:{'Content-Type':'image/jpeg'}}))as typeof fetch));});
-test('social evidence is bounded, partial permission failures are visible, provider preserved, private URLs absent',async()=>{let count=0;const evidence=await collectSocialEvidence([account],()=> 'token',{graph:(async(path:string,token:string,method:string,values:any,_fetch:any,provider:string)=>{assert.equal(token,'token');assert.equal(method,'GET');assert.equal(provider,'instagram');assert.equal(values.limit,path.includes('/')?String(BRAND_ANALYSIS_POST_LIMIT):undefined);count++;if(path==='100')throw new MetaRequestError('unsupported',false,100);return{data:Array.from({length:20},(_,i)=>({caption:'Produk ERP '+i+' x'.repeat(1000)+' Detail penutupan',media_url:'https://a.fbcdn.net/image?secret=private'}))};})as never,image:async()=>Buffer.from('image')});assert.equal(count,3);assert.equal(evidence.sources.length,BRAND_ANALYSIS_POST_LIMIT);assert.ok(evidence.sources.every(source=>source.text.endsWith('Detail penutupan')));assert.ok(evidence.warnings.length);assert.ok(evidence.images.length<=6);assert.equal(JSON.stringify(evidence.sources).includes('secret='),false);});
+test('social evidence is bounded, partial permission failures are visible, provider preserved, private URLs absent',async()=>{let count=0;const evidence=await collectSocialEvidence([account],()=> 'token',{graph:(async(path:string,token:string,method:string,values:any,_fetch:any,provider:string)=>{assert.equal(token,'token');assert.equal(method,'GET');assert.equal(provider,'instagram');assert.equal(values.limit,path.includes('/')?String(BRAND_ANALYSIS_POST_LIMIT):undefined);count++;if(path==='100')throw new MetaRequestError('unsupported',false,100);return{data:Array.from({length:20},(_,i)=>({caption:'Produk ERP '+i+' x'.repeat(1000)+' Detail penutupan',media_url:'https://a.fbcdn.net/image?secret=private'}))};})as never,image:async()=>Buffer.from('image')});assert.equal(count,4);assert.equal(evidence.sources.length,BRAND_ANALYSIS_POST_LIMIT);assert.ok(evidence.sources.every(source=>source.text.endsWith('Detail penutupan')));assert.ok(evidence.warnings.length);assert.ok(evidence.images.length<=6);assert.equal(JSON.stringify(evidence.sources).includes('secret='),false);});
+
+test('profile analysis retains palette when extended fields fail or AI cannot identify a logo',async()=>{
+ const avatar=await sharp({create:{width:20,height:20,channels:3,background:'#0061AD'}}).png().toBuffer();
+ const logo=await sharp({create:{width:20,height:20,channels:3,background:'#AD6100'}}).png().toBuffer();
+ const evidence=await collectSocialEvidence([account],()=> 'token',{
+  graph:(async(path:string,_token:string,_method:string,{fields}:{fields:string})=>{
+   if(path.includes('/'))return {data:[]};
+   if(fields.includes('biography'))throw new MetaRequestError('unsupported',false,100);
+   return {username:'berezerp',profile_picture_url:'https://a.cdninstagram.com/profile'};
+  }) as never,
+  image:async()=>avatar,
+ });
+ const suggestion=await suggestAnalysisPalette(evidence,null);
+ assert.deepEqual(suggestion?.value,['#0061AD']);
+ assert.deepEqual(suggestion?.sourceIds,['instagram_100_profile']);
+ assert.equal(suggestion?.basis,'inferred');
+ assert.match(suggestion?.reason||'',/foto profil akun/);
+
+ const withLogo={...evidence,images:[...evidence.images,{sourceId:'uploaded_logo',avatar:true,bytes:logo}]};
+ assert.deepEqual((await suggestAnalysisPalette(withLogo,'instagram_100_profile'))?.value,['#AD6100']);
+ withLogo.images[1].bytes=Buffer.from('unreadable');
+ assert.deepEqual(await suggestAnalysisPalette(withLogo,null),suggestion);
+ assert.equal(await suggestAnalysisPalette({...evidence,images:[]},null),undefined);
+});
 test('visual sampling covers posts from both accounts before sampling more recent posts',async()=>{
  const other={...account,connectionId:'instagram_200',accountId:'200'};
  const evidence=await collectSocialEvidence([account,other],()=> 'token',{

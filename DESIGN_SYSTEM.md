@@ -79,6 +79,7 @@ Warna DNA bisnis merupakan arahan untuk **konten bisnis**. Warna logo Berez/Cend
 - Logo utama dan palet ditinjau pada DNA visual. Mode Ikuti warna logo dan Atur palet sendiri harus mudah dibedakan.
 - Palet pertama dapat mengisi pratinjau formulir. Palet tersimpan atau edit manual tidak boleh ditimpa diam-diam oleh unggahan atau respons AI yang datang terlambat.
 - Palet baru tersimpan melalui Simpan profil. Batal mempertahankan nilai sebelumnya.
+- Tampilkan palet di awal tinjauan hasil analisis akun sosial, dengan contoh warna, kode HEX, dan sumber. Jika tidak ada usulan warna, tampilkan palet tersimpan atau petunjuk memilih logo pada DNA visual.
 - Kategori aset menjelaskan isi. Peran referensi pada sebuah konten menjelaskan penggunaan; pengguna tetap dapat memeriksanya, terutama logo dan screenshot asli.
 - Tampilkan swatch, kode warna, serta pratinjau yang membantu pengguna memahami hasil. Jangan hanya menampilkan kumpulan kode HEX.
 
