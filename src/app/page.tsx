@@ -978,7 +978,7 @@ export default function VeloxaAiPlatformPage() {
               {/* ====================================================================
                  TAB 5: AI AGENT MARKETING · META ADS ARCHITECT & AUTO-OPTIMIZER
                  ==================================================================== */}
-              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} drafts={drafts.filter(item=>draftBusiness(item)===activeBusinessId)} onBusyChange={setBusinessSaving} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan}/>}
+              {activeTab === 'meta_ads' && <VeloxaBusinessAds key={activeBusinessId+':'+(adsSourceDraft?.id||'new')} business={{...activeBusiness,brand}} accounts={activeConnections} source={adsSourceDraft} drafts={drafts.filter(item=>draftBusiness(item)===activeBusinessId)} onBusyChange={setBusinessSaving} plans={businessAdPlans} ready={businessesReady&&connectionsVerified} onSave={handleSaveBusinessAdPlan} onBilling={() => setBillingOpen(true)}/>}
             </VeloxaWorkspaceShell>
           )}
 

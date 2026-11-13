@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Link2, Megaphone, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, CircleCheck, Link2, Megaphone, RefreshCw, Unlink2 } from 'lucide-react';
 import type { BusinessContext } from '@/lib/business-context';
 import type { MetaAdsDashboard, MetaAdsExecution } from '@/lib/meta-ads';
 import type { ContentDraft, MetaAdCampaignPlan } from '@/lib/veloxa-types';
@@ -16,7 +16,7 @@ type Action =
 
 const connectionCopy = {
   connected: 'Akun iklan terhubung',
-  disconnected: 'Hubungkan akun iklan Meta untuk menyiapkan kampanye.',
+  disconnected: 'Akun iklan belum terhubung',
   expired: 'Sesi akun iklan berakhir. Hubungkan kembali untuk melanjutkan.',
   permission_error: 'Akun iklan memerlukan izin pengelolaan iklan di Meta.',
   unavailable: 'Status akun iklan belum tersedia. Coba muat ulang.',
@@ -95,13 +95,14 @@ function CampaignConfirmation({ action, accountName, busy, onCancel, onConfirm }
   </dialog>;
 }
 
-export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled = false, onBusyChange, request = veloxaApi }: {
+export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled = false, onBusyChange, onBilling, request = veloxaApi }: {
   business: BusinessContext;
   plans: MetaAdCampaignPlan[];
   drafts: ContentDraft[];
   ready: boolean;
   disabled?: boolean;
   onBusyChange?: (busy: boolean) => void;
+  onBilling: () => void;
   request?: typeof veloxaApi;
 }) {
   const { t, locale } = useWorkspaceCopy(workspaceCatalog);
@@ -112,10 +113,13 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<Action>();
+  const [disconnectError, setDisconnectError] = useState('');
   const [planId, setPlanId] = useState('');
   const [adAccountId, setAdAccountId] = useState('');
   const [connectionId, setConnectionId] = useState('');
   const inFlight = useRef(false);
+  const disconnectDialog = useRef<HTMLDialogElement>(null);
+  const connectionButton = useRef<HTMLButtonElement>(null);
   const workspaceId = business.brand.workspaceId;
   const businessId = business.id;
   const endpoint = '/api/veloxa/meta-ads/';
@@ -140,6 +144,13 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
 
+  useEffect(() => {
+    if (dashboard?.connection === 'disconnected' && !busy && disconnectDialog.current?.open) {
+      disconnectDialog.current.close();
+      connectionButton.current?.focus();
+    }
+  }, [dashboard?.connection, busy]);
+
   const campaigns = dashboard?.campaigns ?? [];
   const availablePlans = plans.filter(plan => plan.objective === 'WEBSITE_CONVERSIONS' &&
     !campaigns.some(campaign => campaign.planId === plan.id) &&
@@ -151,7 +162,8 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
   const currentAccount = accounts.find(account => account.id === adAccountId);
   const currentIdentity = identities.find(identity => identity.connectionId === connectionId);
   const fresh = ready && !disabled && !loading && !loadError;
-  const mayChange = fresh && dashboard?.connection === 'connected' && dashboard.canManage;
+  const connected = dashboard?.connection === 'connected';
+  const mayChange = fresh && connected && dashboard.canManage;
   const canPrepare = mayChange && dashboard.canPrepare;
   const number = new Intl.NumberFormat(locale);
   const money = new Intl.NumberFormat(locale, { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
@@ -172,6 +184,25 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
       window.location.assign(target.href);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Koneksi iklan belum tersedia.');
+      setBusy(false);
+      inFlight.current = false;
+    }
+  }
+
+  async function disconnect() {
+    if (inFlight.current || !mayChange) return;
+    inFlight.current = true;
+    setBusy(true);
+    setDisconnectError('');
+    try {
+      const { connection } = await request<{ connection: 'disconnected' }>(endpoint, {
+        method: 'DELETE', body: JSON.stringify({ workspaceId }),
+      });
+      setDashboard(current => current && { ...current, connection, accounts: [], missingScopes: undefined });
+      setAdAccountId('');
+    } catch {
+      setDisconnectError('Veloxa belum dapat memastikan koneksi terputus. Coba lagi.');
+    } finally {
       setBusy(false);
       inFlight.current = false;
     }
@@ -209,14 +240,33 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
     {loading && <p role="status" className="text-sm text-neutral-600">{t('Memeriksa akun iklan dan kampanye…')}</p>}
     {!ready && <p role="status" className="text-sm text-neutral-600">{t('Tunggu data bisnis siap untuk memeriksa akun iklan.')}</p>}
     {loadError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t(loadError)}</p>}
-    {dashboard && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 p-3">
-      <p className="text-sm font-medium">{t(connectionCopy[dashboard.connection])}</p>
-      {dashboard.canManage && dashboard.connection !== 'unavailable' && <button type="button" className="veloxa-button-secondary" disabled={!fresh || busy} onClick={() => void connect()}>
-        <Link2 size={16} aria-hidden="true" />{t(dashboard.connection === 'disconnected' ? 'Hubungkan akun iklan' : 'Hubungkan kembali akun iklan')}
+    {dashboard && <div className="flex flex-col items-start gap-3 rounded-lg border border-neutral-200 p-4 sm:flex-row sm:justify-between">
+      <div className="min-w-0 space-y-2">
+        <p role="status" className={`flex items-center gap-2 font-medium ${connected ? 'text-emerald-800' : ''}`}>
+          {connected && <CircleCheck size={18} className="shrink-0" aria-hidden="true" />}
+          {t(connected && dashboard.canManage && !accounts.length ? 'Izin Meta terhubung' : connectionCopy[dashboard.connection])}
+        </p>
+        {connected && dashboard.canManage && (accounts.length ? <ul className="space-y-1 text-sm text-neutral-600" aria-label={t('Akun iklan terhubung')}>
+          {accounts.map(account => <li key={account.id} className="break-words"><bdi>{account.name}</bdi> · <bdi>{account.id.replace(/^act_/, '')}</bdi></li>)}
+        </ul> : <p className="text-sm text-neutral-600">{t('Belum ada akun iklan Meta aktif dalam IDR dengan izin kelola kampanye.')}</p>)}
+        {dashboard.connection === 'disconnected' && <p className="text-sm text-neutral-600">{t('Hubungkan akun iklan Meta untuk menyiapkan kampanye.')}</p>}
+      </div>
+      {dashboard.canManage && dashboard.connection !== 'unavailable' && <button ref={connectionButton} type="button" className="veloxa-button-secondary shrink-0" disabled={!fresh || busy} onClick={connected ? () => {
+        setDisconnectError('');
+        setActionError('');
+        disconnectDialog.current?.showModal();
+      } : () => void connect()}>
+        {connected ? <Unlink2 size={16} aria-hidden="true" /> : <Link2 size={16} aria-hidden="true" />}
+        {t(connected ? 'Putuskan koneksi' : dashboard.connection === 'disconnected' ? 'Hubungkan akun iklan' : 'Hubungkan kembali akun iklan')}
       </button>}
     </div>}
-    {dashboard?.canManage && !dashboard.canPrepare && <p className="text-sm text-neutral-600">{t('Aktifkan paket Pro untuk membuat kampanye.')}</p>}
-    {canPrepare && !accounts.length && <p className="text-sm text-neutral-600">{t('Pilih akun iklan Meta aktif dengan mata uang IDR dan akses kelola kampanye.')}</p>}
+    {dashboard?.canManage && !dashboard.canPrepare && <div className="flex flex-col items-start gap-3 rounded-lg border border-[var(--ws-border,#eadce3)] bg-[var(--ws-soft,#faf2f5)] p-4 sm:flex-row sm:justify-between">
+      <div className="min-w-0">
+        <h3 className="font-semibold">{t('Paket Pro untuk menjalankan kampanye')}</h3>
+        <p className="mt-1 text-sm text-neutral-600">{t('Anda bisa menghubungkan akun dan menyimpan rancangan dengan paket saat ini. Paket Pro diperlukan untuk mengirim rancangan ke Meta dan mengaktifkan kampanye.')}</p>
+      </div>
+      <button type="button" className="veloxa-button-secondary shrink-0" onClick={onBilling} disabled={busy}>{t('Lihat paket')}</button>
+    </div>}
     {canPrepare && !!accounts.length && !dashboard.identities.length && <p className="text-sm text-neutral-600">{t('Tautkan Halaman Facebook yang bisa Anda kelola ke bisnis ini.')}</p>}
     {canPrepare && !!accounts.length && !!dashboard.identities.length && <div className="space-y-3 rounded-lg border border-neutral-200 p-4">
       <h3 className="font-semibold">{t('Siapkan dari rancangan')}</h3>
@@ -268,6 +318,20 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
         </div>
       </li>)}
     </ul>}
+    <dialog ref={disconnectDialog} aria-labelledby="disconnect-meta-ads-title" aria-describedby="disconnect-meta-ads-scope disconnect-meta-ads-effect"
+      className="fixed inset-0 m-auto h-fit max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-neutral-200 bg-white p-5 backdrop:bg-neutral-900/40 sm:p-6"
+      onCancel={event => { if (busy) event.preventDefault(); }}>
+      <form onSubmit={event => { event.preventDefault(); void disconnect(); }} className="space-y-4" aria-busy={busy}>
+        <h3 id="disconnect-meta-ads-title" className="text-xl font-semibold">{t('Putuskan koneksi akun iklan?')}</h3>
+        <p id="disconnect-meta-ads-scope" className="text-sm leading-relaxed text-neutral-600">{t('Koneksi akun iklan akan dilepas dari semua bisnis di workspace ini.')}</p>
+        <p id="disconnect-meta-ads-effect" className="text-sm leading-relaxed text-neutral-600">{t('Kampanye yang sedang tayang tetap berjalan di Meta. Anda dapat menjedanya di Meta Ads Manager.')}</p>
+        {disconnectError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t(disconnectError)}</p>}
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" className="veloxa-button-secondary" onClick={() => disconnectDialog.current?.close()} disabled={busy}>{t('Batal')}</button>
+          <button type="submit" className="veloxa-button-secondary !border-red-200 !text-red-800 hover:!bg-red-50" disabled={busy}>{t(busy ? 'Memutuskan koneksi…' : 'Putuskan koneksi')}</button>
+        </div>
+      </form>
+    </dialog>
     {confirmation && <CampaignConfirmation action={confirmation} accountName={confirmation.action === 'prepare' ? currentAccount?.name : undefined} busy={busy} onCancel={() => setConfirmation(undefined)} onConfirm={() => void submit(confirmation)} />}
   </section>;
 }

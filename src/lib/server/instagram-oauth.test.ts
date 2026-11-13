@@ -5,7 +5,7 @@ import { instagramLoginConfig, isInstagramLoginConfigured, INSTAGRAM_LOGIN_SCOPE
 import { ApiError } from './http';
 import { disconnectSocialAccount } from './social-connections';
 import { readSocialAccounts } from './social-accounts';
-import { disconnectMeta, selectMetaPage, beginMetaOAuth, finishMetaOAuth, META_SCOPES, META_ADS_SCOPES } from './meta-oauth';
+import { disconnectMeta, disconnectMetaAds, selectMetaPage, beginMetaOAuth, finishMetaOAuth, META_SCOPES, META_ADS_SCOPES } from './meta-oauth';
 
 const keys = ['INSTAGRAM_LOGIN_ENABLED','META_APP_ID','META_APP_SECRET','INSTAGRAM_LOGIN_CONFIG_ID','INSTAGRAM_LOGIN_REDIRECT_URI','META_REDIRECT_URI'] as const;
 const appCredential='unit-app-placeholder'; const credential='unit-business-placeholder';
@@ -313,6 +313,51 @@ test('Meta Ads OAuth isolates publishing grants and preserves a working authoriz
     granted = META_ADS_SCOPES.filter(scope => scope !== 'ads_management');
     await assert.rejects(finishMetaOAuth(await begin(), oauth, 'ads'), /Izin untuk Meta Ads/);
     assert.deepEqual(f.db.values.get(path), valid);
+  } finally { restore(); }
+});
+
+test('Meta Ads disconnect is owner-only, preserves publishing connections, and invalidates in-flight ad OAuth', async () => {
+  const restore = configure();
+  try {
+    const f = fixture();
+    await connect(f);
+    const credentialPath = f.ref.path + '/meta_ads_credentials/current';
+    const campaignPath = f.ref.path + '/meta_ads_executions/campaign';
+    const organicRows = [...f.db.values.entries()].filter(([path]) => path.startsWith(f.ref.path + '/'));
+    f.db.values.set(campaignPath, { status: 'active', campaignId: '801' });
+    const begin = async () => {
+      const login = new URL((await beginMetaOAuth(f.request, f.ref.id, f.deps, 'ads')).url);
+      return new URL('https://veloxa.example.test/api/veloxa/meta/callback?' + new URLSearchParams({ state: login.searchParams.get('state')!, code: 'ads-code' }));
+    };
+    let disconnectDuringExchange = false;
+    const fetcher: typeof fetch = async input => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/oauth/access_token')) return Response.json({ access_token: credential, expires_in: 3600 });
+      if (url.pathname.endsWith('/debug_token')) return Response.json({ data: { is_valid: true, app_id: '999', expires_at: 0, data_access_expires_at: 0 } });
+      assert.match(url.pathname, /\/me\/permissions$/);
+      if (disconnectDuringExchange) assert.deepEqual(await disconnectMetaAds(f.request, f.ref.id, f.deps), { connection: 'disconnected' });
+      return Response.json({ data: META_ADS_SCOPES.map(permission => ({ permission, status: 'granted' })) });
+    };
+    const oauth = { ...f.deps, fetcher };
+    await finishMetaOAuth(await begin(), oauth, 'ads');
+    const unauthorized = {
+      ...f.deps,
+      authorize: (async () => ({ ref: f.ref, user: { uid: 'other-user' } })) as typeof f.deps.authorize,
+    };
+    await assert.rejects(disconnectMetaAds(f.request, f.ref.id, unauthorized), (error: ApiError) => error.status === 403);
+    assert.ok(f.db.values.has(credentialPath));
+
+    const stale = await begin();
+    disconnectDuringExchange = true;
+    await assert.rejects(finishMetaOAuth(await begin(), oauth, 'ads'), /Sesi Meta Ads telah berubah/);
+    await assert.rejects(finishMetaOAuth(stale, oauth, 'ads'), /Koneksi Meta telah dibatalkan/);
+    assert.equal(f.db.values.has(credentialPath), false);
+    assert.deepEqual(f.db.values.get(campaignPath), { status: 'active', campaignId: '801' });
+    for (const [path, value] of organicRows) assert.deepEqual(f.db.values.get(path), value);
+
+    disconnectDuringExchange = false;
+    await finishMetaOAuth(await begin(), oauth, 'ads');
+    assert.ok(f.db.values.has(credentialPath));
   } finally { restore(); }
 });
 

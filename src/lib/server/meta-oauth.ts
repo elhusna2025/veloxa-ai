@@ -139,4 +139,20 @@ export async function metaAccounts(request: Request, workspaceId: unknown) {
 
 export const selectMetaPage = addFacebookPage;
 
+export async function disconnectMetaAds(request: Request, workspaceId: unknown, deps: Pick<OAuthDeps, 'authorize' | 'database'> = {}) {
+  const { ref, user } = await (deps.authorize || requireWorkspace)(request, workspaceId, true);
+  const guard = ref.collection('integration_guards').doc('meta_ads');
+  const credential = ref.collection('meta_ads_credentials').doc('current');
+  await (deps.database || adminDb()).runTransaction(async tx => {
+    const [workspace, currentGuard] = await Promise.all([tx.get(ref), tx.get(guard)]);
+    if (workspace.data()?.ownerUid !== user.uid) {
+      throw new ApiError(403, 'Hanya pemilik workspace yang dapat memutuskan koneksi akun iklan.', 'forbidden');
+    }
+    // Fence callbacks already in flight. Organic connections use a different guard.
+    tx.set(guard, { generation: readGeneration(currentGuard.data()?.generation) + 1 });
+    tx.delete(credential);
+  });
+  return { connection: 'disconnected' as const };
+}
+
 export async function disconnectMeta(request:Request,workspaceId:unknown,deps:{authorize?:typeof requireWorkspace;database?:ReturnType<typeof adminDb>}={}) { return disconnectAllSocial(request,workspaceId,false,deps); }
