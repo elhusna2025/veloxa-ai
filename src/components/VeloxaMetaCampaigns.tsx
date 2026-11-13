@@ -12,7 +12,7 @@ import { VeloxaSelect } from './VeloxaSelect';
 
 type Action =
   | { action: 'prepare'; plan: MetaAdCampaignPlan; adAccountId: string; connectionId: string }
-  | { action: 'activate' | 'pause'; campaign: MetaAdsExecution };
+  | { action: 'activate' | 'pause' | 'resume'; campaign: MetaAdsExecution };
 
 const connectionCopy = {
   connected: 'Akun iklan terhubung',
@@ -60,8 +60,9 @@ function CampaignConfirmation({ action, accountName, busy, onCancel, onConfirm }
 
   const prepare = action.action === 'prepare';
   const activate = action.action === 'activate';
+  const resume = action.action === 'resume';
   const campaign = 'campaign' in action ? action.campaign : undefined;
-  const title = prepare ? 'Siapkan kampanye di Meta' : activate ? 'Aktifkan kampanye di Meta' : 'Jeda kampanye di Meta';
+  const title = prepare ? 'Siapkan kampanye di Meta' : activate ? 'Aktifkan kampanye di Meta' : resume ? 'Lanjutkan pembuatan iklan' : 'Jeda kampanye di Meta';
   const budget = prepare ? action.plan.budget.totalBudgetIdr : campaign?.totalBudgetIdr;
   const duration = prepare ? action.plan.budget.durationDays : campaign?.durationDays;
   return <dialog ref={ref} aria-labelledby="confirm-meta-campaign-title" className="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-neutral-200 bg-white p-5 backdrop:bg-neutral-900/40 sm:p-6"
@@ -76,13 +77,13 @@ function CampaignConfirmation({ action, accountName, busy, onCancel, onConfirm }
         {' · '}{action.plan.demographics.ageMin}–{action.plan.demographics.ageMax}
       </p>}
       {(prepare || activate) && <p className="break-all text-sm text-neutral-600">{prepare ? action.plan.destinationUrlOrWa : campaign?.destinationUrl}</p>}
-      {(prepare || activate) && typeof budget === 'number' && <p className="rounded-lg bg-neutral-50 p-3 text-sm">
+      {(prepare || activate || resume) && typeof budget === 'number' && <p className="rounded-lg bg-neutral-50 p-3 text-sm">
         {t('Total anggaran')} <strong>{money.format(budget)}</strong> · {duration} {t('hari')}
       </p>}
       <p className="text-sm leading-relaxed text-neutral-600">{t(prepare
         ? 'Meta menerima kampanye dalam status dijeda.'
         : activate ? 'Meta dapat mulai menayangkan iklan dan menagih akun iklan setelah persetujuan Meta.'
-          : 'Meta akan menghentikan penayangan setelah jeda diproses.')}</p>
+          : resume ? 'Veloxa menyelesaikan iklan pada kampanye yang sama. Kampanye tetap dijeda.' : 'Meta akan menghentikan penayangan setelah jeda diproses.')}</p>
       {prepare && <label className="flex min-h-11 items-start gap-3 rounded-lg border border-neutral-200 p-3 text-sm">
         <input type="checkbox" checked={categoryConfirmed} onChange={event => setCategoryConfirmed(event.target.checked)} disabled={busy} className="mt-0.5 h-4 w-4 shrink-0 accent-[#a92e5d]" />
         {t('Saya memastikan iklan ini tidak termasuk kategori iklan khusus Meta.')}
@@ -303,8 +304,12 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
           <div><dt className="text-neutral-600">{t('Klik')}</dt><dd className="font-medium">{number.format(campaign.insights.clicks)}</dd></div>
         </dl>}
         <div className="flex flex-wrap gap-2">
-          {mayChange && dashboard.canPrepare && campaign.status === 'paused' && (campaign.endsAt === undefined || campaign.endsAt > Date.now()) && <button type="button" className="veloxa-button-primary" disabled={busy} onClick={() => setConfirmation({ action: 'activate', campaign })}>{t('Tinjau dan aktifkan')}</button>}
-          {fresh && dashboard?.canManage && campaign.campaignId && (campaign.status === 'active' || campaign.status === 'attention') && <button type="button" className="veloxa-button-secondary" disabled={busy} onClick={() => setConfirmation({ action: 'pause', campaign })}>{t('Jeda kampanye')}</button>}
+          {mayChange && dashboard.canPrepare && campaign.status === 'paused' && campaign.adId && (campaign.endsAt === undefined || campaign.endsAt > Date.now()) && <button type="button" className="veloxa-button-primary" disabled={busy} onClick={() => setConfirmation({ action: 'activate', campaign })}>{t('Tinjau dan aktifkan')}</button>}
+          {mayChange && campaign.canResume && <button type="button" className="veloxa-button-primary" disabled={busy} onClick={() => setConfirmation({ action: 'resume', campaign })}>{t('Lanjutkan pembuatan iklan')}</button>}
+          {fresh && dashboard?.canManage && campaign.campaignId && (campaign.status === 'active' || campaign.status === 'attention' && campaign.effectiveStatus !== 'PAUSED') && <button type="button" className="veloxa-button-secondary" disabled={busy} onClick={() => setConfirmation({ action: 'pause', campaign })}>{t('Jeda kampanye')}</button>}
+          {dashboard?.canManage && campaign.paymentRequired && /^\d+$/.test(campaign.adAccountId) && <a className="veloxa-button-secondary" href={`https://adsmanager.facebook.com/adsmanager/billing_hub/payment_settings/?asset_id=${campaign.adAccountId}`} target="_blank" rel="noreferrer">
+            {t('Buka pembayaran Meta')}<ArrowUpRight size={16} aria-hidden="true" />
+          </a>}
           {campaign.campaignId && /^\d+$/.test(campaign.campaignId) && /^\d+$/.test(campaign.adAccountId.replace(/^act_/, '')) && <a className="veloxa-button-secondary" href={`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${campaign.adAccountId.replace(/^act_/, '')}&selected_campaign_ids=${campaign.campaignId}`} target="_blank" rel="noreferrer">
             {t('Buka Ads Manager')}<ArrowUpRight size={16} aria-hidden="true" />
           </a>}

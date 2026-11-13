@@ -1362,10 +1362,12 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
     campaign: { id: '101', account_id: '55', status: 'PAUSED', objective: 'OUTCOME_TRAFFIC', special_ad_categories: [] },
     adSet: { id: '102', account_id: '55', campaign_id: '101', status: 'PAUSED', lifetime_budget: '', end_time: '', targeting: {} },
     ad: { id: '104', account_id: '55', adset_id: '102', status: 'PAUSED', creative: { id: '103' } },
-    creative: { id: '103', object_story_spec: {} },
+    creative: { id: '103', account_id: '55', name: '', object_story_spec: {} },
   };
   let failAdSet = false;
   let validation: (() => Promise<Response> | Response) | undefined;
+  let createAd: (() => Promise<Response> | Response) | undefined;
+  let remoteHasAd = false;
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     assert.equal(url.host, 'graph.facebook.com');
@@ -1392,8 +1394,16 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
             return validation ? validation() : Response.json({ success: true });
           }
           remote.creative.object_story_spec = JSON.parse(values.object_story_spec);
+          remote.creative.name = values.name;
           return Response.json({ id: '103' });
-        case 'act_55/ads': return Response.json({ id: '104' });
+        case 'act_55/ads': {
+          assert.equal(values.status, 'PAUSED');
+          assert.equal(values.adset_id, remote.adSet.id);
+          assert.deepEqual(JSON.parse(values.creative), { creative_id: remote.creative.id });
+          if (createAd) return createAd();
+          remoteHasAd = true;
+          return Response.json({ id: '104' });
+        }
         case '101': remote.campaign.status = values.status; return Response.json({ success: true });
         case '102': remote.adSet.status = values.status; return Response.json({ success: true });
         case '104': remote.ad.status = values.status; return Response.json({ success: true });
@@ -1403,7 +1413,7 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
       case 'me/adaccounts': return Response.json({ data: [adAccount] });
       case 'act_55': return Response.json(adAccount);
       case '101/adsets': return Response.json({ data: [{ id: '102' }] });
-      case '102/ads': return Response.json({ data: [{ id: '104' }] });
+      case '102/ads': return Response.json({ data: remoteHasAd ? [{ id: '104' }] : [] });
       case '101/insights': return Response.json({ data: [{ spend: '1234', impressions: '84', clicks: '7' }] });
       case '101': return Response.json({ ...remote.campaign, effective_status: remote.campaign.status });
       case '102': return Response.json(remote.adSet);
@@ -1426,6 +1436,8 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
   return { ...f, ws, now, writes, post, get, deps, remote, plan,
     failPrepare: () => { failAdSet = true; },
     setCreativeValidation: (response?: typeof validation) => { validation = response; },
+    setAdCreation: (response?: typeof createAd) => { createAd = response; },
+    setRemoteHasAd: () => { remoteHasAd = true; },
   };
 }
 
@@ -1542,5 +1554,71 @@ test('Meta Ads blocks mutable targeting, non-owner execution and ambiguous remot
   await assert.rejects(mutateMetaAds(ambiguous.post('pause'), {
     ...ambiguous.deps, authorize: (async () => ({ ref: ambiguous.ref, user: { uid: 'not-owner' }, workspace: ambiguous.ws })) as never,
   }), /Hanya pemilik/);
-  assert.equal((await mutateMetaAds(ambiguous.post('pause'), ambiguous.deps)).campaign.status, 'paused');
+  assert.equal((await mutateMetaAds(ambiguous.post('pause'), ambiguous.deps)).campaign.status, 'attention');
+});
+
+const metaBillingRejection = () => Response.json({ error: { code: 100, error_subcode: 1359188 } }, { status: 400 });
+
+test('Meta Ads resumes a payment-blocked campaign by creating only its missing paused ad, including a legacy receipt', async () => {
+  const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
+  for (const legacy of [false, true]) {
+    const f = adsFixture();
+    f.setAdCreation(metaBillingRejection);
+    const first = (await mutateMetaAds(f.post(), f.deps)).campaign;
+    assert.equal(first.status, 'attention');
+    assert.equal(first.canResume, true);
+    assert.equal(first.paymentRequired, true);
+    assert.equal(first.adId, undefined);
+    if (legacy) {
+      const stored = [...f.database.values.entries()].find(([path]) => path.includes('/meta_ads_executions/'))![1];
+      delete stored.creativeSpec;
+      delete stored.failureCode;
+      stored.message = 'Meta menolak langkah iklan. Periksa detail di Ads Manager sebelum mencoba lagi.';
+    }
+    assert.equal((await getMetaAds(f.get(), f.deps)).campaigns[0].canResume, true);
+    assert.equal((await mutateMetaAds(f.post('resume'), f.deps)).campaign.paymentRequired, true);
+    f.setAdCreation();
+    const before = f.writes.length;
+    const results = await Promise.allSettled([mutateMetaAds(f.post('resume'), f.deps), mutateMetaAds(f.post('resume'), f.deps)]);
+    const completed = results.filter(result => result.status === 'fulfilled');
+    assert.equal(completed.length, 1);
+    const final = completed[0].value.campaign;
+    assert.equal(final.status, 'paused');
+    assert.equal(final.campaignId, first.campaignId);
+    assert.equal(final.adSetId, first.adSetId);
+    assert.equal(final.adId, '104');
+    assert.equal(final.canResume, undefined);
+    assert.deepEqual(f.writes.slice(before).map(item => [item.path, item.values.status]), [['act_55/ads', 'PAUSED']]);
+  }
+});
+
+test('Meta Ads refuses to resume if remote targeting, delivery status, or ad inventory changed', async () => {
+  const { mutateMetaAds } = await import('./meta-ads');
+  for (const change of ['target', 'active', 'existing_ad'] as const) {
+    const f = adsFixture();
+    f.setAdCreation(metaBillingRejection);
+    await mutateMetaAds(f.post(), f.deps);
+    if (change === 'target') Object.assign(f.remote.adSet.targeting, { geo_locations: { countries: ['MY'] } });
+    if (change === 'active') f.remote.campaign.status = 'ACTIVE';
+    if (change === 'existing_ad') f.setRemoteHasAd();
+    const before = f.writes.length;
+    const blocked = (await mutateMetaAds(f.post('resume'), f.deps)).campaign;
+    assert.equal(blocked.status, 'attention');
+    assert.equal(blocked.canResume, undefined);
+    assert.equal(f.writes.length, before);
+  }
+});
+
+test('Meta Ads does not resend a resumed ad if Meta may already have created it', async () => {
+  const { mutateMetaAds } = await import('./meta-ads');
+  const f = adsFixture();
+  f.setAdCreation(metaBillingRejection);
+  await mutateMetaAds(f.post(), f.deps);
+  f.setAdCreation(() => { throw Error('connection lost'); });
+  const result = (await mutateMetaAds(f.post('resume'), f.deps)).campaign;
+  assert.equal(result.status, 'attention');
+  assert.equal(result.canResume, undefined);
+  const before = f.writes.length;
+  await assert.rejects(mutateMetaAds(f.post('resume'), f.deps), { code: 'meta_ads_cannot_resume' });
+  assert.equal(f.writes.length, before);
 });

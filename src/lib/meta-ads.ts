@@ -15,6 +15,8 @@ export interface MetaAdsExecution {
   endsAt?: number;
   updatedAt: number;
   message?: string;
+  canResume?: boolean;
+  paymentRequired?: boolean;
   effectiveStatus?: string;
   insights?: { spendIdr: number; impressions: number; clicks: number; asOf: number };
 }

@@ -24,7 +24,10 @@ const prepareInput = workspaceTarget.extend({
   action: z.literal('prepare'), planId, adAccountId: metaNumericId,
   connectionId: z.string().regex(/^facebook_\d{1,32}$/), specialAdCategory: z.literal('NONE'),
 }).strict();
-const operationInput = z.discriminatedUnion('action', [prepareInput, ...(['activate', 'pause'] as const).map(action => workspaceTarget.extend({ action: z.literal(action), planId, confirm: z.literal(true) }).strict())]);
+const statusActions = ['activate', 'pause'] as const;
+const statusInputs = statusActions.map(action => workspaceTarget.extend({ action: z.literal(action), planId, confirm: z.literal(true) }).strict());
+const resumeInput = workspaceTarget.extend({ action: z.literal('resume'), planId, confirm: z.literal(true) }).strict();
+const operationInput = z.discriminatedUnion('action', [prepareInput, resumeInput, ...statusInputs]);
 
 const websitePlan = z.object({
   id: planId,
@@ -50,6 +53,12 @@ const operationTimeout = 5 * minute;
 const executionRef = (ref: Ref, businessId: string, id: string) => ref.collection('meta_ads_executions').doc(createHash('sha256').update(JSON.stringify([businessId, id])).digest('hex'));
 const credentialRef = (ref: Ref) => ref.collection('meta_ads_credentials').doc('current');
 const isOperationInProgress = (row: Data) => ['preparing', 'activating', 'pausing'].includes(row.status);
+const legacyAdRejection = 'Meta menolak langkah iklan. Periksa detail di Ads Manager sebelum mencoba lagi.';
+const billingMessage = 'Meta meminta metode pembayaran pada akun iklan. Setelah menambahkannya di Meta, lanjutkan pembuatan kampanye ini dalam status dijeda.';
+const paymentRequired = (error: unknown) => error instanceof MetaRequestError && !error.uncertain && error.providerCode === 100 && error.providerSubcode === 1359188;
+const isResumable = (row: Data, now: number) => row.status === 'attention' && row.operation === null && !row.adId && Number.isSafeInteger(row.endsAt) && row.endsAt > now &&
+  [row.campaignId, row.adSetId, row.creativeId, row.adAccountId, row.pageId].every(id => metaNumericId.safeParse(id).success) &&
+  (row.failureCode === 'payment_required' || row.failureCode === 'ad_check_retry' || !row.failureCode && row.message === legacyAdRejection);
 
 function publicExecution(row: Data, now: number): MetaAdsExecution {
   const expiredOperation = isOperationInProgress(row) && Number(row.updatedAt) + operationTimeout < now;
@@ -62,6 +71,8 @@ function publicExecution(row: Data, now: number): MetaAdsExecution {
     ...(row.effectiveStatus && { effectiveStatus: row.effectiveStatus }),
     ...(row.campaignId && { campaignId: row.campaignId }), ...(row.adSetId && { adSetId: row.adSetId }),
     ...(row.adId && { adId: row.adId }), ...(row.endsAt && { endsAt: row.endsAt }),
+    ...(isResumable(row, now) && { canResume: true }),
+    ...(row.status === 'attention' && row.failureCode === 'payment_required' && { paymentRequired: true }),
     ...(expiredOperation ? { message: 'Proses terhenti. Periksa status kampanye di Meta Ads Manager.' } : row.message && { message: row.message }),
   };
 }
@@ -318,7 +329,7 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
     await updateOperation(campaign, operation, { adSetId }, now());
     phase = 'creative';
     const creativeId = await graph.create(`${accountPath}/adcreatives`, creativeSpec);
-    await updateOperation(campaign, operation, { creativeId }, now());
+    await updateOperation(campaign, operation, { creativeId, creativeSpec }, now());
     phase = 'ad';
     const adId = await graph.create(`${accountPath}/ads`, { name, adset_id: adSetId, creative: JSON.stringify({ creative_id: creativeId }), status: 'PAUSED' });
     return publicExecution(await updateOperation(campaign, operation, { adId, creativeSpec, status: 'paused', operation: null }, now()), now());
@@ -336,7 +347,10 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
     const message = error instanceof MetaRequestError && !error.uncertain
       ? `Meta menolak langkah ${step}. Periksa detail di Ads Manager sebelum mencoba lagi.`
       : `Langkah ${step} belum terkonfirmasi. Periksa Ads Manager sebelum mencoba lagi.`;
-    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message }, now()), now());
+    const billing = phase === 'ad' && paymentRequired(error);
+    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message: billing ? billingMessage : message,
+      ...(billing && { failureCode: 'payment_required' }),
+    }, now()), now());
   }
 }
 
@@ -351,21 +365,92 @@ function matchesTargeting(actual: Data | undefined, expected: Data | undefined) 
   return !geo.countries?.length && geo.cities?.length === 1 && city.key === selected.key && city.radius === selected.radius && city.distance_unit === selected.distance_unit;
 }
 
-async function assertRemoteCampaign(graph: MarketingGraph, row: Data, now: number) {
-  const [campaign, adSet, ad, creative, adSets, ads] = await Promise.all([
+async function assertRemoteSetup(graph: MarketingGraph, row: Data, now: number, resuming: boolean) {
+  const [campaign, adSet, creative, adSets, ads] = await Promise.all([
     graph.get<Data>(row.campaignId, { fields: 'id,account_id,status,objective,daily_budget,lifetime_budget,special_ad_categories' }),
     graph.get<Data>(row.adSetId, { fields: 'id,account_id,campaign_id,status,lifetime_budget,daily_budget,end_time,targeting' }),
-    graph.get<Data>(row.adId, { fields: 'id,account_id,adset_id,status,creative{id}' }),
-    graph.get<Data>(row.creativeId, { fields: 'id,object_story_spec' }),
+    graph.get<Data>(row.creativeId, { fields: 'id,account_id,name,object_story_spec' }),
     graph.list(`${row.campaignId}/adsets`, { fields: 'id', limit: '2' }),
     graph.list(`${row.adSetId}/ads`, { fields: 'id', limit: '2' }),
   ]);
-  if (campaign.id !== row.campaignId || campaign.account_id !== row.adAccountId || campaign.status !== 'PAUSED' || campaign.objective !== 'OUTCOME_TRAFFIC' || Number(campaign.daily_budget || 0) !== 0 || Number(campaign.lifetime_budget || 0) !== 0 || !Array.isArray(campaign.special_ad_categories) || campaign.special_ad_categories.some((value: unknown) => value !== 'NONE') ||
-      adSet.id !== row.adSetId || adSet.account_id !== row.adAccountId || adSet.campaign_id !== row.campaignId || !['PAUSED', 'ACTIVE'].includes(adSet.status) || Number(adSet.lifetime_budget) !== row.totalBudgetIdr || Number(adSet.daily_budget || 0) !== 0 || Date.parse(adSet.end_time) <= now || Math.abs(Date.parse(adSet.end_time) - row.endsAt) >= 1000 || !Number.isFinite(Date.parse(adSet.end_time)) || !matchesTargeting(adSet.targeting, row.targeting) ||
-      ad.id !== row.adId || ad.account_id !== row.adAccountId || ad.adset_id !== row.adSetId || !['PAUSED', 'ACTIVE'].includes(ad.status) || ad.creative?.id !== row.creativeId ||
-      creative.id !== row.creativeId || creative.object_story_spec?.page_id !== row.pageId || creative.object_story_spec?.link_data?.link !== row.destinationUrl ||
-      adSets.length !== 1 || adSets[0].id !== row.adSetId || ads.length !== 1 || ads[0].id !== row.adId) {
+  const endTime = Date.parse(adSet.end_time);
+  const changed = [
+    ['campaign', campaign.id !== row.campaignId || campaign.account_id !== row.adAccountId || campaign.status !== 'PAUSED' || campaign.objective !== 'OUTCOME_TRAFFIC' || Number(campaign.daily_budget || 0) !== 0 || Number(campaign.lifetime_budget || 0) !== 0 || !Array.isArray(campaign.special_ad_categories) || campaign.special_ad_categories.some((value: unknown) => value !== 'NONE')],
+    ['ad_set', adSet.id !== row.adSetId || adSet.account_id !== row.adAccountId || adSet.campaign_id !== row.campaignId || !(resuming ? adSet.status === 'PAUSED' : ['PAUSED', 'ACTIVE'].includes(adSet.status)) || Number(adSet.lifetime_budget) !== row.totalBudgetIdr || Number(adSet.daily_budget || 0) !== 0],
+    ['schedule', !Number.isFinite(endTime) || endTime <= now || Math.abs(endTime - row.endsAt) >= 1000],
+    ['targeting', !matchesTargeting(adSet.targeting, row.targeting)],
+    ['creative', creative.id !== row.creativeId || creative.object_story_spec?.page_id !== row.pageId || creative.object_story_spec?.link_data?.link !== row.destinationUrl || resuming && creative.account_id !== row.adAccountId],
+    ['inventory', adSets.length !== 1 || adSets[0].id !== row.adSetId || (resuming ? ads.length !== 0 : ads.length !== 1 || ads[0].id !== row.adId)],
+  ].filter(([, mismatch]) => mismatch).map(([field]) => field);
+  if (changed.length) {
+    console.warn('[veloxa/meta-ads] remote setup mismatch', { resuming, changed });
     throw new ApiError(409, 'Kampanye atau anggaran berubah di Meta. Tinjau kampanye di Ads Manager.', 'meta_ads_remote_changed');
+  }
+  return creative;
+}
+
+async function assertRemoteCampaign(graph: MarketingGraph, row: Data, now: number) {
+  const [ad] = await Promise.all([
+    graph.get<Data>(row.adId, { fields: 'id,account_id,adset_id,status,creative{id}' }),
+    assertRemoteSetup(graph, row, now, false),
+  ]);
+  if (ad.id !== row.adId || ad.account_id !== row.adAccountId || ad.adset_id !== row.adSetId || !['PAUSED', 'ACTIVE'].includes(ad.status) || ad.creative?.id !== row.creativeId) {
+    throw new ApiError(409, 'Kampanye atau anggaran berubah di Meta. Tinjau kampanye di Ads Manager.', 'meta_ads_remote_changed');
+  }
+}
+
+async function resumeCampaign(args: Workspace, context: BusinessContext, input: z.infer<typeof resumeInput>, deps: Dependencies, now: () => number) {
+  const { ref, user } = args;
+  const campaign = executionRef(ref, context.id, input.planId);
+  const operation = randomUUID();
+  async function verifyContext(tx: FirebaseFirestore.Transaction, row: Data) {
+    const [latest, grant] = await Promise.all([tx.get(ref), tx.get(credentialRef(ref))]);
+    const workspace = latest.data();
+    assertOwner(workspace, user.uid);
+    const current = (await resolveBusinessContext(ref, workspace!, context.id, tx)).context;
+    const pages = await listIdentities(ref, current, now(), tx);
+    if (row.ownerUid !== user.uid || row.businessId !== current.id || row.endsAt <= now() || !pages.some(page => page.connectionId === row.connectionId && page.accountId === row.pageId)) {
+      throw new ApiError(409, 'Halaman, bisnis, atau jadwal kampanye berubah. Tinjau kampanye di Ads Manager.', 'meta_ads_resume_context_changed');
+    }
+    validateDestination(row.destinationUrl, current.brand.websiteUrl);
+    const credential = readCredential(grant.data(), user.uid, now());
+    if (credential.status !== 'connected') throw new ApiError(409, 'Hubungkan kembali akun Meta Ads sebelum melanjutkan.', 'meta_ads_reconnect_required');
+    return credential;
+  }
+  const { row, credential } = await ref.firestore.runTransaction(async tx => {
+    const row = (await tx.get(campaign)).data();
+    if (!row || !isResumable(row, now())) throw new ApiError(409, 'Kampanye ini tidak dapat dilanjutkan. Muat ulang status atau periksa Ads Manager.', 'meta_ads_cannot_resume');
+    const credential = await verifyContext(tx, row);
+    tx.update(campaign, { status: 'preparing', operation, updatedAt: now(), message: null });
+    return { row, credential };
+  });
+  let creatingAd = false;
+  try {
+    const graph = getMarketingGraph(credential, ref, deps);
+    const name = `${row.title} [Veloxa ${campaign.id.slice(0, 12)}]`;
+    const [, creative] = await Promise.all([verifiedAccount(graph, row.adAccountId), assertRemoteSetup(graph, row, now(), true)]);
+    if (creative.name !== name) throw new ApiError(409, 'Materi iklan berubah. Tinjau kampanye di Ads Manager.', 'meta_ads_remote_changed');
+    const link = creative.object_story_spec.link_data;
+    const creativeSpec = row.creativeSpec || (typeof link.image_hash === 'string' && /^[a-f0-9]{32}$/i.test(link.image_hash) && typeof link.name === 'string' && typeof link.message === 'string' && link.call_to_action?.type === 'LEARN_MORE'
+      ? { name, object_story_spec: JSON.stringify({ page_id: row.pageId, link_data: { link: row.destinationUrl, image_hash: link.image_hash, name: link.name, message: link.message, call_to_action: { type: 'LEARN_MORE' } } }) }
+      : null);
+    await ref.firestore.runTransaction(async tx => {
+      const current = (await tx.get(campaign)).data();
+      if (current?.operation !== operation || current.status !== 'preparing' || (await verifyContext(tx, row)).token !== credential.token) {
+        throw new ApiError(409, 'Koneksi atau status berubah. Muat ulang sebelum melanjutkan.', 'meta_ads_resume_context_changed');
+      }
+    });
+    creatingAd = true;
+    const adId = await graph.create(`act_${row.adAccountId}/ads`, { name, adset_id: row.adSetId, creative: JSON.stringify({ creative_id: row.creativeId }), status: 'PAUSED' });
+    return publicExecution(await updateOperation(campaign, operation, { adId, creativeSpec, status: 'paused', operation: null, failureCode: null, message: null }, now()), now());
+  } catch (error) {
+    reportAdsFailure(creatingAd ? 'resume_ad' : 'resume_check', error);
+    const billing = creatingAd && paymentRequired(error);
+    const checkRetry = !creatingAd && !(error instanceof ApiError && ['meta_ads_remote_changed', 'meta_ads_resume_context_changed', 'meta_ads_destination_mismatch'].includes(error.code || ''));
+    const message = billing ? billingMessage : error instanceof ApiError && error.status < 500 ? error.message : checkRetry
+      ? 'Status di Meta belum dapat diperiksa. Coba lanjutkan kembali.'
+      : 'Pembuatan iklan belum terkonfirmasi. Periksa iklan pada kampanye yang sama di Ads Manager.';
+    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message, failureCode: billing ? 'payment_required' : checkRetry ? 'ad_check_retry' : 'ad_manual_review' }, now()), now());
   }
 }
 
@@ -375,7 +460,7 @@ async function pauseRemoteCampaign(graph: MarketingGraph, row: Data) {
   await graph.status(row.campaignId, 'PAUSED');
 }
 
-async function changeCampaignStatus(args: Workspace, context: BusinessContext, input: Exclude<z.infer<typeof operationInput>, z.infer<typeof prepareInput>>, deps: Dependencies, now: () => number) {
+async function changeCampaignStatus(args: Workspace, context: BusinessContext, input: z.infer<(typeof statusInputs)[number]>, deps: Dependencies, now: () => number) {
   const { ref, user } = args;
   const campaign = executionRef(ref, context.id, input.planId);
   const activate = input.action === 'activate';
@@ -431,7 +516,7 @@ async function changeCampaignStatus(args: Workspace, context: BusinessContext, i
         await pauseRemoteCampaign(getMarketingGraph(pauseCredential, ref, deps), row);
       }
     }
-    return publicExecution(await updateOperation(campaign, operation, { status: activate ? 'active' : 'paused', effectiveStatus: null, operation: null, message: null, ...(!activate && { pauseGrant: null }) }, now()), now());
+    return publicExecution(await updateOperation(campaign, operation, { status: activate ? 'active' : row.adId ? 'paused' : 'attention', effectiveStatus: activate ? null : 'PAUSED', operation: null, message: !activate && !row.adId ? row.message ?? null : null, ...(!activate && { pauseGrant: null }) }, now()), now());
   } catch (error) {
     const message = error instanceof ApiError && error.status < 500 ? error.message : 'Perubahan status belum terkonfirmasi. Periksa Meta Ads Manager atau jeda kampanye dari Veloxa.';
     return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message }, now()), now());
@@ -444,6 +529,7 @@ export async function mutateMetaAds(request: Request, deps: Dependencies = {}) {
   assertOwner(args.workspace, args.user.uid);
   const { context } = await resolveBusinessContext(args.ref, args.workspace, input.businessId);
   const now = deps.now || Date.now;
-  const campaign = input.action === 'prepare' ? await prepareCampaign(args, context, input, deps, now) : await changeCampaignStatus(args, context, input, deps, now);
+  const campaign = input.action === 'prepare' ? await prepareCampaign(args, context, input, deps, now)
+    : input.action === 'resume' ? await resumeCampaign(args, context, input, deps, now) : await changeCampaignStatus(args, context, input, deps, now);
   return { campaign };
 }
