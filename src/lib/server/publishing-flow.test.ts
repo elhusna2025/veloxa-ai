@@ -1365,6 +1365,7 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
     creative: { id: '103', object_story_spec: {} },
   };
   let failAdSet = false;
+  let managedPages: { id: string; tasks?: string[] }[] = [{ id: '100', tasks: ['PROFILE_PLUS_ADVERTISE'] }];
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     assert.equal(url.host, 'graph.facebook.com');
@@ -1397,7 +1398,9 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
     switch (path) {
       case 'me/adaccounts': return Response.json({ data: [adAccount] });
       case 'act_55': return Response.json(adAccount);
-      case 'act_55/promote_pages': return Response.json({ data: [{ id: '100' }] });
+      case 'me/accounts':
+        assert.equal(url.searchParams.get('fields'), 'id,tasks');
+        return Response.json({ data: managedPages });
       case '101/adsets': return Response.json({ data: [{ id: '102' }] });
       case '102/ads': return Response.json({ data: [{ id: '104' }] });
       case '101/insights': return Response.json({ data: [{ spend: '1234', impressions: '84', clicks: '7' }] });
@@ -1419,10 +1422,13 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
     }),
   });
   const get = () => new Request('https://test.example/api?workspaceId=' + f.ref.id + '&businessId=primary');
-  return { ...f, ws, now, writes, post, get, deps, remote, plan, failPrepare: () => { failAdSet = true; } };
+  return { ...f, ws, now, writes, post, get, deps, remote, plan,
+    failPrepare: () => { failAdSet = true; },
+    setManagedPages: (pages: typeof managedPages) => { managedPages = pages; },
+  };
 }
 
-test('Free Trial prepares a single paused Meta campaign and requires confirmation to activate it', async () => {
+test('Free Trial prepares a single paused Meta campaign without Page promotion history and requires confirmation to activate it', async () => {
   const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
   const f = adsFixture();
   const first = await getMetaAds(f.get(), f.deps);
@@ -1460,6 +1466,21 @@ test('Free Trial prepares a single paused Meta campaign and requires confirmatio
   const updated = [...f.database.values.entries()].find(([key]) => key.includes('/meta_ads_executions/'))?.[1];
   assert.equal(updated?.pauseGrant, null);
   await assert.rejects(mutateMetaAds(f.post('activate'), f.deps), /Hubungkan kembali Meta Ads/);
+});
+
+test('Meta Ads requires the ad token owner to have an advertising task on the selected Page', async () => {
+  const { mutateMetaAds } = await import('./meta-ads');
+  for (const pages of [
+    [{ id: '100', tasks: ['CREATE_CONTENT', 'ANALYZE'] }, { id: '999', tasks: ['ADVERTISE'] }],
+    [{ id: '999', tasks: ['ADVERTISE'] }],
+    [{ id: '100' }],
+  ]) {
+    const f = adsFixture();
+    f.setManagedPages(pages);
+    await assert.rejects(mutateMetaAds(f.post(), f.deps), { code: 'meta_ads_page_ineligible' });
+    assert.equal(f.writes.length, 0);
+    assert.equal([...f.database.values.keys()].some(key => key.includes('/meta_ads_executions/')), false);
+  }
 });
 
 test('Meta campaigns remain available on paid plans and when a paid subscription expires', async () => {

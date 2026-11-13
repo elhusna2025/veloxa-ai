@@ -165,9 +165,14 @@ function validateDestination(raw: string, profileWebsite: string) {
   } catch { throw new ApiError(409, 'Website HTTPS pada rancangan harus sama dengan profil bisnis aktif.', 'meta_ads_destination_mismatch'); }
 }
 
-async function verifiedPage(graph: MarketingGraph, accountId: string, pageId: string) {
-  const pages = await graph.list(`act_${accountId}/promote_pages`, { fields: 'id' });
-  if (!pages.some(page => page.id === pageId)) throw new ApiError(409, 'Akun iklan ini belum memiliki izin beriklan dengan Facebook Page yang dipilih.', 'meta_ads_page_ineligible');
+async function verifiedPage(graph: MarketingGraph, pageId: string) {
+  // promote_pages is promotion history. Check the ad token owner's current Page
+  // tasks instead; Meta validates the Page/ad account pairing on creative creation.
+  const pages = await graph.list('me/accounts', { fields: 'id,tasks' });
+  const adTasks = ['ADVERTISE', 'MANAGE', 'PROFILE_PLUS_ADVERTISE', 'PROFILE_PLUS_FULL_CONTROL'];
+  if (!pages.some(page => page.id === pageId && Array.isArray(page.tasks) && page.tasks.some(task => adTasks.includes(task)))) {
+    throw new ApiError(409, 'Akun Facebook yang menghubungkan Meta Ads belum memiliki izin membuat iklan untuk Halaman ini.', 'meta_ads_page_ineligible');
+  }
 }
 
 async function verifiedAccount(graph: MarketingGraph, accountId: string) {
@@ -213,7 +218,7 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
   const { cityOrPinName, radiusKm } = plan.demographics.locations[0];
   const [account, geo, , media] = await Promise.all([
     verifiedAccount(graph, input.adAccountId), metaAdsGeo(graph, cityOrPinName, radiusKm),
-    verifiedPage(graph, input.adAccountId, page.accountId), (deps.storage || adminBucket()).file(source.storagePath).download(),
+    verifiedPage(graph, page.accountId), (deps.storage || adminBucket()).file(source.storagePath).download(),
   ]);
   if (!media[0]?.length || media[0].length > 8 * 1024 * 1024 || media[0][0] !== 0xff || media[0][1] !== 0xd8) throw new ApiError(409, 'Gambar JPEG iklan belum tersedia atau melebihi batas unggah.', 'meta_ads_source_unavailable');
   const operation = randomUUID();
@@ -350,7 +355,7 @@ async function changeCampaignStatus(args: Workspace, context: BusinessContext, i
   try {
     if (activate) {
       const graph = getMarketingGraph(credential, ref, deps);
-      await Promise.all([verifiedAccount(graph, row.adAccountId), verifiedPage(graph, row.adAccountId, row.pageId), assertRemoteCampaign(graph, row, now())]);
+      await Promise.all([verifiedAccount(graph, row.adAccountId), verifiedPage(graph, row.pageId), assertRemoteCampaign(graph, row, now())]);
       await graph.status(row.adId, 'ACTIVE');
       await graph.status(row.adSetId, 'ACTIVE');
       const [latest, grant] = await Promise.all([ref.get(), credentialRef(ref).get()]);
