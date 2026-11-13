@@ -32,6 +32,14 @@ export function marketingGraph(token: string, fetcher?: typeof fetch) {
     return id.data;
   }
 
+  async function validateCreative(adAccountId: string, params: Record<string, string>) {
+    const result = await post<{ success?: boolean; id?: unknown }>(`act_${metaNumericId.parse(adAccountId)}/adcreatives`, {
+      ...params, execution_options: '["validate_only"]',
+    });
+    if (result.id !== undefined) throw new ApiError(502, 'Meta mengembalikan ID saat validasi. Periksa Ads Manager sebelum mencoba lagi.', 'meta_ads_validation_unexpected_id');
+    if (result.success !== true) throw new MetaRequestError('Validasi materi iklan belum dikonfirmasi oleh Meta.', true);
+  }
+
   async function status(id: string, value: 'ACTIVE' | 'PAUSED') {
     const result = await post<{ success?: boolean }>(metaNumericId.parse(id), { status: value });
     if (result.success !== true) throw new MetaRequestError('Status kampanye dari Meta belum dapat dikonfirmasi.', true);
@@ -46,7 +54,7 @@ export function marketingGraph(token: string, fetcher?: typeof fetch) {
     return hash;
   }
 
-  return { get, list, create, status, uploadImage };
+  return { get, list, create, validateCreative, status, uploadImage };
 }
 
 export type MarketingGraph = ReturnType<typeof marketingGraph>;

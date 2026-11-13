@@ -22,7 +22,7 @@ export interface MetaConnection {
 }
 
 export class MetaRequestError extends ApiError {
-  constructor(message: string, public uncertain = false, public providerCode?: number, public transient = false) { super(502, message, uncertain ? 'delivery_unknown' : 'meta_rejected'); }
+  constructor(message: string, public uncertain = false, public providerCode?: number, public transient = false, public providerSubcode?: number) { super(502, message, uncertain ? 'delivery_unknown' : 'meta_rejected'); }
 }
 
 /** These operations only prepare unpublished media; their failure cannot have sent a post. */
@@ -54,14 +54,15 @@ export async function graphRequest<T>(path: string, token: string, method: 'GET'
       signal: AbortSignal.timeout(15_000), cache: 'no-store', redirect: 'error',
     });
   } catch(error) { if(error instanceof ApiError)throw error;throw new MetaRequestError('Hasil permintaan Meta belum dapat dipastikan. Periksa akun sebelum mencoba ulang.', method === 'POST',undefined,true); }
-  let data: T & { id?:unknown; post_id?:unknown; success?:unknown; error?: { code?: number; is_transient?: boolean } };
+  let data: T & { id?:unknown; post_id?:unknown; success?:unknown; error?: { code?: number; error_subcode?: number; is_transient?: boolean } };
   try { data = await response.json(); } catch { throw new MetaRequestError('Respons Meta tidak dapat dipastikan. Periksa akun Anda.', method === 'POST',undefined,response.status>=500||response.status===429); }
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new MetaRequestError('Respons Meta tidak valid. Periksa akun Anda.', method === 'POST');
   if (!response.ok || data.error) {
     const code=typeof data.error?.code==='number'&&Number.isSafeInteger(data.error.code)&&data.error.code>0?data.error.code:undefined;
+    const subcode=typeof data.error?.error_subcode==='number'&&Number.isSafeInteger(data.error.error_subcode)&&data.error.error_subcode>0?data.error.error_subcode:undefined;
     const transient=![10,190,200].includes(code||0)&&(response.status>=500||response.status===429||data.error?.is_transient===true);
     const uncertain=method==='POST'&&(response.status>=500||!code||!!data.id||!!data.post_id||data.success===true);
-    throw new MetaRequestError(code === 190 ? 'Izin Meta berakhir. Hubungkan ulang akun Anda.' : code === 10 || code === 200 ? 'Izin publikasi Meta belum diberikan. Hubungkan ulang dengan izin yang diperlukan.' : 'Meta menolak permintaan. Periksa izin akun, media, dan batas publikasi.', uncertain, code, transient);
+    throw new MetaRequestError(code === 190 ? 'Izin Meta berakhir. Hubungkan ulang akun Anda.' : code === 10 || code === 200 ? 'Izin publikasi Meta belum diberikan. Hubungkan ulang dengan izin yang diperlukan.' : 'Meta menolak permintaan. Periksa izin akun, media, dan batas publikasi.', uncertain, code, transient, subcode);
   }
   return data;
 }

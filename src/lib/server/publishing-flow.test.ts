@@ -1365,7 +1365,7 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
     creative: { id: '103', object_story_spec: {} },
   };
   let failAdSet = false;
-  let managedPages: { id: string; tasks?: string[] }[] = [{ id: '100', tasks: ['PROFILE_PLUS_ADVERTISE'] }];
+  let validation: (() => Promise<Response> | Response) | undefined;
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     assert.equal(url.host, 'graph.facebook.com');
@@ -1387,6 +1387,10 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
           return Response.json({ id: '102' });
         }
         case 'act_55/adcreatives':
+          if (values.execution_options) {
+            assert.deepEqual(JSON.parse(values.execution_options), ['validate_only']);
+            return validation ? validation() : Response.json({ success: true });
+          }
           remote.creative.object_story_spec = JSON.parse(values.object_story_spec);
           return Response.json({ id: '103' });
         case 'act_55/ads': return Response.json({ id: '104' });
@@ -1398,9 +1402,6 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
     switch (path) {
       case 'me/adaccounts': return Response.json({ data: [adAccount] });
       case 'act_55': return Response.json(adAccount);
-      case 'me/accounts':
-        assert.equal(url.searchParams.get('fields'), 'id,tasks');
-        return Response.json({ data: managedPages });
       case '101/adsets': return Response.json({ data: [{ id: '102' }] });
       case '102/ads': return Response.json({ data: [{ id: '104' }] });
       case '101/insights': return Response.json({ data: [{ spend: '1234', impressions: '84', clicks: '7' }] });
@@ -1424,7 +1425,7 @@ function adsFixture(subscriptionPlanId = 'free_trial') {
   const get = () => new Request('https://test.example/api?workspaceId=' + f.ref.id + '&businessId=primary');
   return { ...f, ws, now, writes, post, get, deps, remote, plan,
     failPrepare: () => { failAdSet = true; },
-    setManagedPages: (pages: typeof managedPages) => { managedPages = pages; },
+    setCreativeValidation: (response?: typeof validation) => { validation = response; },
   };
 }
 
@@ -1437,21 +1438,25 @@ test('Free Trial prepares a single paused Meta campaign without Page promotion h
   assert.equal(first.accounts[0].eligible, true);
   assert.equal(first.identities[0].connectionId, 'facebook_100');
   await Promise.all([mutateMetaAds(f.post(), f.deps), mutateMetaAds(f.post(), f.deps)]);
-  assert.deepEqual(f.writes.map(item => item.path), ['act_55/adimages', 'act_55/campaigns', 'act_55/adsets', 'act_55/adcreatives', 'act_55/ads']);
+  assert.deepEqual(f.writes.map(item => item.path), ['act_55/adimages', 'act_55/adcreatives', 'act_55/campaigns', 'act_55/adsets', 'act_55/adcreatives', 'act_55/ads']);
+  const { execution_options, ...validated } = f.writes[1].values;
+  assert.equal(execution_options, '["validate_only"]');
+  assert.deepEqual(f.writes[4].values, validated);
+  assert.equal(JSON.parse(validated.object_story_spec).page_id, '100');
   assert.equal(f.writes.filter(item => item.values.status === 'PAUSED').length, 3);
-  assert.equal(f.writes[2].values.lifetime_budget, '75000');
-  assert.deepEqual(JSON.parse(f.writes[2].values.targeting).geo_locations, { countries: ['ID'] });
-  assert.equal(JSON.parse(f.writes[3].values.object_story_spec).link_data.message, 'Caption asli');
+  assert.equal(f.writes[3].values.lifetime_budget, '75000');
+  assert.deepEqual(JSON.parse(f.writes[3].values.targeting).geo_locations, { countries: ['ID'] });
+  assert.equal(JSON.parse(validated.object_story_spec).link_data.message, 'Caption asli');
   const paused = (await mutateMetaAds(f.post(), f.deps)).campaign;
   assert.equal(paused.status, 'paused');
   assert.equal(paused.totalBudgetIdr, 75_000);
   assert.equal(paused.title, f.plan.campaignName);
   await assert.rejects(mutateMetaAds(f.post('activate', { confirm: false }), f.deps));
-  assert.equal(f.writes.length, 5);
+  assert.equal(f.writes.length, 6);
 
   const active = (await mutateMetaAds(f.post('activate'), f.deps)).campaign;
   assert.equal(active.status, 'active');
-  assert.deepEqual(f.writes.slice(5).map(item => [item.path, item.values.status]), [['104', 'ACTIVE'], ['102', 'ACTIVE'], ['101', 'ACTIVE']]);
+  assert.deepEqual(f.writes.slice(6).map(item => [item.path, item.values.status]), [['act_55/adcreatives', undefined], ['104', 'ACTIVE'], ['102', 'ACTIVE'], ['101', 'ACTIVE']]);
   const result = await getMetaAds(f.get(), f.deps);
   assert.deepEqual(result.campaigns[0].insights, { spendIdr: 1234, impressions: 84, clicks: 7, asOf: f.now });
   assert.equal(result.campaigns[0].effectiveStatus, 'ACTIVE');
@@ -1468,19 +1473,40 @@ test('Free Trial prepares a single paused Meta campaign without Page promotion h
   await assert.rejects(mutateMetaAds(f.post('activate'), f.deps), /Hubungkan kembali Meta Ads/);
 });
 
-test('Meta Ads requires the ad token owner to have an advertising task on the selected Page', async () => {
+test('Meta Ads blocks a Page outside the active business before contacting Meta', async () => {
   const { mutateMetaAds } = await import('./meta-ads');
-  for (const pages of [
-    [{ id: '100', tasks: ['CREATE_CONTENT', 'ANALYZE'] }, { id: '999', tasks: ['ADVERTISE'] }],
-    [{ id: '999', tasks: ['ADVERTISE'] }],
-    [{ id: '100' }],
-  ]) {
-    const f = adsFixture();
-    f.setManagedPages(pages);
-    await assert.rejects(mutateMetaAds(f.post(), f.deps), { code: 'meta_ads_page_ineligible' });
-    assert.equal(f.writes.length, 0);
-    assert.equal([...f.database.values.keys()].some(key => key.includes('/meta_ads_executions/')), false);
-  }
+  const f = adsFixture();
+  f.database.values.set(f.ref.path + '/business_contexts/primary', { revision: 2, connectionIds: [] });
+  await assert.rejects(mutateMetaAds(f.post(), f.deps), { code: 'meta_ads_page_ineligible' });
+  assert.equal(f.writes.length, 0);
+  assert.equal([...f.database.values.keys()].some(key => key.includes('/meta_ads_executions/')), false);
+});
+
+test('Creative validation prevents partial campaigns and can be retried without duplicate delivery objects', async () => {
+  const { mutateMetaAds } = await import('./meta-ads');
+  const f = adsFixture();
+  f.setCreativeValidation(() => Response.json({ error: { code: 200 } }, { status: 403 }));
+  await assert.rejects(mutateMetaAds(f.post(), f.deps), { code: 'meta_ads_page_ineligible' });
+  assert.deepEqual(f.writes.map(item => item.path), ['act_55/adimages', 'act_55/adcreatives']);
+  assert.equal([...f.database.values.keys()].some(key => key.includes('/meta_ads_executions/')), false);
+  f.setCreativeValidation(() => { throw new Error('connection lost'); });
+  await assert.rejects(mutateMetaAds(f.post(), f.deps), { code: 'meta_ads_preflight_unavailable' });
+  f.setCreativeValidation();
+  assert.equal((await mutateMetaAds(f.post(), f.deps)).campaign.status, 'paused');
+  assert.equal(f.writes.filter(item => item.path === 'act_55/campaigns').length, 1);
+
+  f.setCreativeValidation(() => Response.json({ error: { code: 200 } }, { status: 403 }));
+  assert.equal((await mutateMetaAds(f.post('activate'), f.deps)).campaign.status, 'attention');
+  assert.equal(f.writes.some(item => item.values.status === 'ACTIVE'), false);
+});
+
+test('An unexpected creative ID from validation requires reconciliation before retrying', async () => {
+  const { mutateMetaAds } = await import('./meta-ads');
+  const f = adsFixture();
+  f.setCreativeValidation(() => Response.json({ success: true, id: '777' }));
+  assert.equal((await mutateMetaAds(f.post(), f.deps)).campaign.status, 'attention');
+  assert.equal((await mutateMetaAds(f.post(), f.deps)).campaign.status, 'attention');
+  assert.deepEqual(f.writes.map(item => item.path), ['act_55/adimages', 'act_55/adcreatives']);
 });
 
 test('Meta campaigns remain available on paid plans and when a paid subscription expires', async () => {

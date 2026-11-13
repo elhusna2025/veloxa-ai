@@ -165,14 +165,43 @@ function validateDestination(raw: string, profileWebsite: string) {
   } catch { throw new ApiError(409, 'Website HTTPS pada rancangan harus sama dengan profil bisnis aktif.', 'meta_ads_destination_mismatch'); }
 }
 
-async function verifiedPage(graph: MarketingGraph, pageId: string) {
-  // promote_pages is promotion history. Check the ad token owner's current Page
-  // tasks instead; Meta validates the Page/ad account pairing on creative creation.
+async function checkLegacyPageTasks(graph: MarketingGraph, pageId: string) {
+  // Existing campaigns lack the original creative spec. Preserve the prior
+  // activation gate for those records; new preparation validates with Meta Ads.
   const pages = await graph.list('me/accounts', { fields: 'id,tasks' });
   const adTasks = ['ADVERTISE', 'MANAGE', 'PROFILE_PLUS_ADVERTISE', 'PROFILE_PLUS_FULL_CONTROL'];
   if (!pages.some(page => page.id === pageId && Array.isArray(page.tasks) && page.tasks.some(task => adTasks.includes(task)))) {
     throw new ApiError(409, 'Akun Facebook yang menghubungkan Meta Ads belum memiliki izin membuat iklan untuk Halaman ini.', 'meta_ads_page_ineligible');
   }
+}
+
+function reportAdsFailure(phase: string, error: unknown) {
+  console.warn('[veloxa/meta-ads] request failed', {
+    phase,
+    ...(error instanceof MetaRequestError && { code: error.providerCode, subcode: error.providerSubcode, uncertain: error.uncertain }),
+  });
+}
+
+function preflightFailure(phase: 'image' | 'creative_validation', error: unknown) {
+  if (error instanceof MetaRequestError && error.providerCode === 190) return new ApiError(409, 'Sesi Meta Ads berakhir. Hubungkan ulang akun iklan sebelum mencoba lagi.', 'meta_ads_reconnect_required');
+  if (phase === 'creative_validation' && error instanceof MetaRequestError && [10, 200, 294].includes(error.providerCode || 0)) {
+    return new ApiError(409, 'Meta tidak mengizinkan akun iklan ini memakai Halaman yang dipilih. Periksa izin keduanya atau pilih akun iklan lain. Kampanye belum dibuat.', 'meta_ads_page_ineligible');
+  }
+  if (error instanceof MetaRequestError && !error.uncertain) {
+    const reason = phase === 'image' ? 'Meta menolak gambar iklan. Periksa gambar atau pilih materi lain.' : 'Meta menolak materi iklan untuk pasangan akun dan Halaman ini. Periksa materi dan tujuan iklan.';
+    return new ApiError(409, `${reason} Kampanye belum dibuat.`, 'meta_ads_preflight_rejected');
+  }
+  return new ApiError(502, 'Pemeriksaan awal Meta belum selesai. Kampanye belum dibuat; Anda dapat mencoba lagi.', 'meta_ads_preflight_unavailable');
+}
+
+async function releasePreflight(ref: Ref, operation: string) {
+  return ref.firestore.runTransaction(async tx => {
+    const row = (await tx.get(ref)).data();
+    if (!row || row.operation !== operation || row.status !== 'preparing' || row.campaignId || row.adSetId || row.adId || row.creativeId) {
+      throw new ApiError(409, 'Status pembuatan berubah. Muat ulang sebelum mencoba lagi.', 'meta_ads_operation_changed');
+    }
+    tx.delete(ref);
+  });
 }
 
 async function verifiedAccount(graph: MarketingGraph, accountId: string) {
@@ -216,9 +245,9 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
   const credential = readCredential(grant.data(), user.uid, now());
   const graph = getMarketingGraph(credential, ref, deps);
   const { cityOrPinName, radiusKm } = plan.demographics.locations[0];
-  const [account, geo, , media] = await Promise.all([
+  const [account, geo, media] = await Promise.all([
     verifiedAccount(graph, input.adAccountId), metaAdsGeo(graph, cityOrPinName, radiusKm),
-    verifiedPage(graph, page.accountId), (deps.storage || adminBucket()).file(source.storagePath).download(),
+    (deps.storage || adminBucket()).file(source.storagePath).download(),
   ]);
   if (!media[0]?.length || media[0].length > 8 * 1024 * 1024 || media[0][0] !== 0xff || media[0][1] !== 0xd8) throw new ApiError(409, 'Gambar JPEG iklan belum tersedia atau melebihi batas unggah.', 'meta_ads_source_unavailable');
   const operation = randomUUID();
@@ -238,9 +267,7 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
     totalBudgetIdr: plan.budget.totalBudgetIdr, durationDays: plan.budget.durationDays, targeting,
     createdAt: now(), updatedAt: now(),
   };
-  const previous = await ref.firestore.runTransaction(async tx => {
-    const row = (await tx.get(campaign)).data();
-    if (row) return row;
+  const assertUnchanged = async (tx: FirebaseFirestore.Transaction) => {
     const latest = (await tx.get(ref)).data();
     assertOwner(latest, user.uid);
     const latestGrant = (await tx.get(credentialRef(ref))).data();
@@ -248,6 +275,11 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
     if (latest!.snapshotJson !== workspace.snapshotJson || latestContext.revision !== context.revision || latestGrant?.encryptedToken !== grant.data()?.encryptedToken || !(await listIdentities(ref, latestContext, now(), tx)).some(item => item.connectionId === page.connectionId)) {
       throw new ApiError(409, 'Rancangan, akun, atau koneksi berubah. Tinjau kembali sebelum melanjutkan.');
     }
+  };
+  const previous = await ref.firestore.runTransaction(async tx => {
+    const row = (await tx.get(campaign)).data();
+    if (row) return row;
+    await assertUnchanged(tx);
     tx.create(campaign, initial);
     return null;
   });
@@ -255,12 +287,27 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
 
   const accountPath = `act_${account.id}`;
   const name = `${plan.campaignName} [Veloxa ${campaign.id.slice(0, 12)}]`;
+  let phase: 'image' | 'creative_validation' | 'scope_check' | 'campaign' | 'ad_set' | 'creative' | 'ad' = 'image';
   try {
     const imageHash = await graph.uploadImage(account.id, media[0]);
+    const creativeSpec = {
+      name, object_story_spec: JSON.stringify({ page_id: page.accountId, link_data: { link: destinationUrl, image_hash: imageHash,
+        name: plan.promotedOfferingTitle, message: draft.caption.trim().slice(0, 2200), call_to_action: { type: 'LEARN_MORE' } } }),
+    };
+    phase = 'creative_validation';
+    await graph.validateCreative(account.id, creativeSpec);
+    phase = 'scope_check';
+    await ref.firestore.runTransaction(async tx => {
+      const row = (await tx.get(campaign)).data();
+      if (row?.operation !== operation || row.status !== 'preparing') throw new ApiError(409, 'Status pembuatan berubah. Muat ulang sebelum mencoba lagi.', 'meta_ads_operation_changed');
+      await assertUnchanged(tx);
+    });
+    phase = 'campaign';
     const campaignId = await graph.create(`${accountPath}/campaigns`, {
       name, objective: 'OUTCOME_TRAFFIC', status: 'PAUSED', special_ad_categories: '[]', buying_type: 'AUCTION', is_adset_budget_sharing_enabled: 'false',
     });
     await updateOperation(campaign, operation, { campaignId }, now());
+    phase = 'ad_set';
     const adSetId = await graph.create(`${accountPath}/adsets`, {
       campaign_id: campaignId, name, optimization_goal: 'LINK_CLICKS', billing_event: 'IMPRESSIONS', status: 'PAUSED',
       // Meta's budget offset for IDR is one. No scaling from rupiah is needed.
@@ -269,17 +316,26 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
       targeting: JSON.stringify(targeting),
     });
     await updateOperation(campaign, operation, { adSetId }, now());
-    const creativeId = await graph.create(`${accountPath}/adcreatives`, {
-      name, object_story_spec: JSON.stringify({ page_id: page.accountId, link_data: { link: destinationUrl, image_hash: imageHash,
-        name: plan.promotedOfferingTitle, message: draft.caption.trim().slice(0, 2200), call_to_action: { type: 'LEARN_MORE' } } }),
-    });
+    phase = 'creative';
+    const creativeId = await graph.create(`${accountPath}/adcreatives`, creativeSpec);
     await updateOperation(campaign, operation, { creativeId }, now());
+    phase = 'ad';
     const adId = await graph.create(`${accountPath}/ads`, { name, adset_id: adSetId, creative: JSON.stringify({ creative_id: creativeId }), status: 'PAUSED' });
-    return publicExecution(await updateOperation(campaign, operation, { adId, status: 'paused', operation: null }, now()), now());
+    return publicExecution(await updateOperation(campaign, operation, { adId, creativeSpec, status: 'paused', operation: null }, now()), now());
   } catch (error) {
+    reportAdsFailure(phase, error);
+    if (phase === 'scope_check') {
+      await releasePreflight(campaign, operation);
+      throw error;
+    }
+    if ((phase === 'image' || phase === 'creative_validation') && !(error instanceof ApiError && error.code === 'meta_ads_validation_unexpected_id')) {
+      await releasePreflight(campaign, operation);
+      throw preflightFailure(phase, error);
+    }
+    const step = { image: 'gambar', creative_validation: 'validasi materi', campaign: 'kampanye', ad_set: 'set iklan', creative: 'materi iklan', ad: 'iklan' }[phase];
     const message = error instanceof MetaRequestError && !error.uncertain
-      ? 'Meta menolak salah satu langkah pembuatan iklan. Periksa izin, materi, dan anggaran di Ads Manager.'
-      : 'Pembuatan belum terkonfirmasi. Periksa Ads Manager sebelum mencoba lagi.';
+      ? `Meta menolak langkah ${step}. Periksa detail di Ads Manager sebelum mencoba lagi.`
+      : `Langkah ${step} belum terkonfirmasi. Periksa Ads Manager sebelum mencoba lagi.`;
     return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message }, now()), now());
   }
 }
@@ -355,7 +411,8 @@ async function changeCampaignStatus(args: Workspace, context: BusinessContext, i
   try {
     if (activate) {
       const graph = getMarketingGraph(credential, ref, deps);
-      await Promise.all([verifiedAccount(graph, row.adAccountId), verifiedPage(graph, row.pageId), assertRemoteCampaign(graph, row, now())]);
+      await Promise.all([verifiedAccount(graph, row.adAccountId), assertRemoteCampaign(graph, row, now()),
+        row.creativeSpec ? graph.validateCreative(row.adAccountId, row.creativeSpec) : checkLegacyPageTasks(graph, row.pageId)]);
       await graph.status(row.adId, 'ACTIVE');
       await graph.status(row.adSetId, 'ACTIVE');
       const [latest, grant] = await Promise.all([ref.get(), credentialRef(ref).get()]);
