@@ -134,6 +134,7 @@ Layar harus berfungsi pada lebar 390 px dan desktop tanpa overflow halaman. Kart
 ## Super Admin
 
 - Pisahkan navigasi Super Admin dari workspace pengguna. Tautan Workspace saya hanya membuka workspace milik admin. Detail pelanggan bersifat baca saja, kecuali tindakan operasional yang menyebut bisnis dan dampaknya secara eksplisit.
+- Gunakan sidebar kiri bersama untuk Super Admin dan workspace pengguna. Urutan Super Admin adalah Beranda, Workspace, Operasi Otonom, Pengaturan AI & kuota, Langganan & biaya, dan Integrasi. Letakkan Workspace saya dan Keluar di bagian bawah. Di bawah 1024 px, tombol pada header membuka sidebar dari kiri. Saat ditutup, fokus kembali ke tombol menu.
 - Mulai dari kesehatan layanan, jumlah terkonfirmasi, antrean yang perlu perhatian, dan slot terdekat. Bedakan slot yang belum pasti, antrean pemulihan, dan hasil yang sudah dikonfirmasi. Tampilkan periode pengukuran dan WIB.
 - Gunakan kartu ringkas dan daftar yang dapat dibuka untuk hasil per akun; susun satu kolom di ponsel. Status selalu memiliki label teks. Kuota publikasi bulanan dipisahkan dari percobaan pembuatan draf harian.
 - Menjeda satu aturan meminta alasan, membedakan proses yang masih berjalan, dan tidak menjadi tindakan untuk mengirim ulang konten. Simpan jejak tindakan di server.

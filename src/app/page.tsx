@@ -4,7 +4,6 @@ import { VeloxaSuperAdmin } from '@/components/VeloxaSuperAdmin';
 import { VeloxaBillingDialog } from '@/components/VeloxaBillingDialog';
 
 import React, { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import type {ContentIntent,ContentSourceMode} from '@/lib/content-source';
 import StudioMediaPreview from '@/components/StudioMediaPreview';
 import { VeloxaBrandWorkspace } from '@/components/VeloxaBrandWorkspace';
@@ -707,45 +706,17 @@ export default function VeloxaAiPlatformPage() {
       lang={isUserWorkspaceView ? locale : undefined}
       dir={isUserWorkspaceView ? workspaceLanguage.dir : undefined}
       className={`min-h-dvh text-neutral-900 ${
-        isUserWorkspaceView ? `pb-24 lg:pb-0 ${workspaceStyles.frame}` : authUser ? 'pb-12 bg-[#f8f5f7]' : 'bg-[#fbf7f2]'
+        isUserWorkspaceView ? `pb-24 lg:pb-0 ${workspaceStyles.frame}` : !authUser ? 'bg-[#fbf7f2]' : ''
       }`}
     >
       {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-medium text-neutral-800">{t('Menyiapkan workspace Anda…')}</p></div></div>}
-      {!isUserWorkspaceView && (
-        <header
-          className={`sticky top-0 z-30 border-b backdrop-blur ${authUser
-            ? 'border-[#e9dfe5] bg-white/95 text-neutral-900'
-            : 'border-[#eab1d026] bg-[#180f1c]/95'}`}
-        >
-          {!authUser ? <VeloxaPublicHeader locale={locale} onLocale={handleSelectLocale} /> : (
-            <div lang="id" dir="ltr" className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-2 px-3.5 py-3 sm:px-8">
-              <div className="flex shrink-0 items-center gap-2">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#682943] font-semibold text-white" aria-hidden="true">V</div>
-                <span className="text-base font-semibold">Veloxa <span className="block text-xs font-medium text-[#682943] sm:inline">Super Admin</span></span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" data-testid="open-own-workspace-btn" onClick={() => setActiveRole('user')}
-                  className="min-h-11 rounded-lg border border-[#e9dfe5] bg-white px-3 text-sm font-semibold text-[#682943] hover:bg-[#fbf1f6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#682943]">
-                  Workspace saya
-                </button>
-                <button type="button" data-testid="logout-btn" onClick={handleRequestSignOutClick}
-                  className="min-h-11 rounded-lg border border-[#e9dfe5] bg-white px-3 text-sm font-medium text-neutral-700 hover:bg-[#fbf1f6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#682943]">
-                  Keluar
-                </button>
-              </div>
-            </div>
-          )}
+      {!authUser && (
+        <header className="sticky top-0 z-30 border-b border-[#eab1d026] bg-[#180f1c]/95 backdrop-blur">
+          <VeloxaPublicHeader locale={locale} onLocale={handleSelectLocale} />
         </header>
       )}
 
-      {/* Main Content Container — Flush Full-Width untuk User Sidemenu, atau 1480px untuk Landing/Super Admin */}
-      <main
-        className={
-          authUser?.isSuperAdmin && activeRole === 'admin'
-            ? 'mx-auto max-w-[1480px] px-4 py-6 sm:px-8 lg:px-12'
-            : 'w-full'
-        }
-      >
+      <main className="w-full">
         <div>
           {!authUser ? (
             /* ======================================================================
@@ -753,7 +724,7 @@ export default function VeloxaAiPlatformPage() {
                ====================================================================== */
             <VeloxaPublicLanding locale={locale} />
           ) : authUser.isSuperAdmin && activeRole === 'admin' ? (
-            <VeloxaSuperAdmin />
+            <VeloxaSuperAdmin onWorkspace={() => setActiveRole('user')} onSignOut={handleRequestSignOutClick} />
           ) : (
             /* ======================================================================
                ROLE 2: LUXURY EXECUTIVE USER WORKSPACE DASHBOARD
@@ -1011,31 +982,6 @@ export default function VeloxaAiPlatformPage() {
             </VeloxaWorkspaceShell>
           )}
 
-          {authUser && !isUserWorkspaceView && (
-            <footer
-              data-testid="veloxa-workspace-footer"
-              className={`mt-10 rounded-xl border border-neutral-200/80 bg-white px-6 py-4 text-sm text-neutral-500 shadow-2xs ${
-                !(authUser.isSuperAdmin && activeRole === 'admin')
-                  ? 'mx-4 sm:mx-7 lg:ml-[312px] lg:mr-9'
-                  : ''
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#bd416e] text-xs font-semibold text-white">
-                    V
-                  </span>
-                  <span className="font-medium text-neutral-800">
-                    © 2026 Veloxa AI
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-3 text-xs font-semibold">
-                  <span className="text-neutral-500">Workspace Veloxa</span>
-                  <Link href="/privacy">Privasi</Link>
-                </div>
-              </div>
-            </footer>
-          )}
         </div>
 
         {authUser && activeRole === 'user' && (

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Activity, ArrowLeft, ArrowRight, Building2, CircleAlert, Pause, RefreshCw, Send, X } from 'lucide-react';
+import Link from 'next/link';
+import { Activity, ArrowLeft, ArrowRight, Building2, CircleAlert, CreditCard, LayoutDashboard, Link2, LogOut, Menu, Pause, RefreshCw, Send, SlidersHorizontal, X } from 'lucide-react';
 import type { AdminJob, AdminOperations, AdminOverview, AdminRule, AdminWorkspaceDetail, AdminWorkspacePage } from '@/lib/admin-operations';
 import { veloxaApi } from '@/lib/veloxa-api-client';
 import type { AdminSettingsView } from '@/lib/admin-settings';
@@ -9,12 +10,22 @@ import { VeloxaAdminSettings } from './VeloxaAdminSettings';
 import { VeloxaAdminBilling } from './VeloxaAdminBilling';
 import { VeloxaAdminIntegrations } from './VeloxaAdminIntegrations';
 import { VeloxaAdminIncidents } from './VeloxaAdminIncidents';
+import { VeloxaSidebarButton, VeloxaWorkspaceSidebar } from './VeloxaWorkspaceSidebar';
 import styles from './VeloxaSuperAdmin.module.css';
+import workspaceStyles from './VeloxaWorkspace.module.css';
 
 type View = 'overview' | 'workspaces' | 'workspace' | 'operations' | 'settings' | 'workspaceSettings' | 'billing' | 'integrations';
 type Filter = 'all' | 'attention' | 'recovery';
 type AdminData = AdminOverview | AdminOperations | AdminWorkspacePage | AdminWorkspaceDetail | AdminSettingsView;
 type AdminRequest = <T>(url: string, init?: RequestInit) => Promise<T>;
+const adminNavigation = [
+  { id: 'overview', label: 'Beranda', icon: LayoutDashboard },
+  { id: 'workspaces', label: 'Workspace', icon: Building2 },
+  { id: 'operations', label: 'Operasi Otonom', icon: Activity },
+  { id: 'settings', label: 'Pengaturan AI & kuota', icon: SlidersHorizontal },
+  { id: 'billing', label: 'Langganan & biaya', icon: CreditCard },
+  { id: 'integrations', label: 'Integrasi', icon: Link2 },
+] as const;
 const endpoint = '/api/veloxa/admin/';
 const settingsEndpoint = endpoint + 'settings/';
 const dateTime = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' });
@@ -234,7 +245,12 @@ function DiscardSettingsDialog({ close, discard }: { close: () => void; discard:
   </dialog>;
 }
 
-export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminRequest }) {
+export function VeloxaSuperAdmin({ onWorkspace, onSignOut, request = veloxaApi }: {
+  onWorkspace: () => void;
+  onSignOut: () => void;
+  request?: AdminRequest;
+}) {
+  const mobileMenu = useRef<HTMLDialogElement>(null);
   const [view, setView] = useState<View>('overview');
   const [filter, setFilter] = useState<Filter>('all');
   const [workspace, setWorkspace] = useState('');
@@ -248,6 +264,13 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
   const [pause, setPause] = useState<AdminRule | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [discardTo, setDiscardTo] = useState<View | 'reload' | null>(null);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }); }, [view]);
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const closeMenuOnDesktop = () => { if (desktop.matches) mobileMenu.current?.close(); };
+    desktop.addEventListener('change', closeMenuOnDesktop);
+    return () => desktop.removeEventListener('change', closeMenuOnDesktop);
+  }, []);
   const editingSettings = view === 'settings' || view === 'workspaceSettings';
   const standalone = view === 'billing' || view === 'integrations';
   const params = new URLSearchParams(editingSettings ? undefined : { view });
@@ -283,24 +306,76 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
     workspace: 'Periksa kuota, koneksi bisnis, dan hasil Otonom.', operations: 'Periksa status slot, hasil per akun, dan jadwal percobaan ulang.',
     settings: 'Atur model bawaan, batas paket, dan riwayat perubahan platform.',
     workspaceSettings: 'Atur model dan kuota khusus untuk workspace ini.',
-    billing: 'Tinjau langganan, transaksi, dan biaya workspace.', integrations: 'Periksa akun Meta dan kampanye untuk setiap workspace.' };
+    integrations: 'Periksa akun Meta dan kampanye untuk setiap workspace.' };
   const data = result?.data;
   const page = view === 'workspaces' ? data as AdminWorkspacePage | undefined : undefined;
   const ops = view === 'operations' ? data as AdminOperations | undefined : undefined;
   const overview = view === 'overview' ? data as AdminOverview | undefined : undefined;
-  return <div className={styles.admin} lang="id" dir="ltr" data-testid="super-admin-dashboard">
-    <nav className={styles.nav} aria-label="Navigasi Super Admin">
-      {([['overview','Beranda'],['workspaces','Workspace'],['operations','Operasi Otonom'],['settings','Pengaturan AI & kuota'],['billing','Langganan & biaya'],['integrations','Integrasi']] as const).map(([id,label]) =>
-        <button key={id} type="button" aria-current={view === id || (view === 'workspace' || view === 'workspaceSettings') && id === 'workspaces' ? 'page' : undefined} onClick={() => navigate(id)}>{label}</button>)}
+  const section = view === 'workspace' || view === 'workspaceSettings' ? 'workspaces' : view;
+  const closeMenu = () => mobileMenu.current?.close();
+  const menu = (mobile: boolean) => <>
+    <div className="flex items-center gap-2.5 px-2">
+      <span className={`${workspaceStyles.logo} grid h-9 w-9 shrink-0 place-items-center rounded-lg font-semibold`} aria-hidden="true">V</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-lg font-bold leading-tight tracking-tight">Veloxa</p>
+        <p className="text-xs font-medium text-[var(--ws-muted)]">Super Admin</p>
+      </div>
+      {mobile && <button type="button" autoFocus onClick={closeMenu} aria-label="Tutup menu Super Admin"
+        className={`${workspaceStyles.iconButton} grid h-11 w-11 shrink-0 place-items-center rounded-lg`}><X size={19} aria-hidden="true" /></button>}
+    </div>
+    <nav aria-label="Navigasi Super Admin" className="mt-6 space-y-1 border-t border-[var(--ws-border)] pt-4">
+      {adminNavigation.map(({ id, label, icon: Icon }) => <VeloxaSidebarButton key={id}
+        aria-current={section === id ? 'page' : undefined}
+        onClick={() => { if (mobile) closeMenu(); navigate(id); }}>
+        <Icon size={19} strokeWidth={1.7} className="shrink-0" aria-hidden="true" />{label}
+      </VeloxaSidebarButton>)}
     </nav>
-    <div className={styles.heading}>
+    <div className="mt-auto pt-6">
+      <div className="space-y-1 border-t border-[var(--ws-border)] pt-3">
+        <VeloxaSidebarButton data-testid={mobile ? 'mobile-admin-own-workspace-btn' : 'open-own-workspace-btn'} onClick={() => { if (mobile) closeMenu(); onWorkspace(); }}>
+          <ArrowRight size={19} strokeWidth={1.7} aria-hidden="true" />Workspace saya
+        </VeloxaSidebarButton>
+        <VeloxaSidebarButton data-testid={mobile ? 'mobile-admin-logout-btn' : 'logout-btn'} onClick={() => { if (mobile) closeMenu(); onSignOut(); }}>
+          <LogOut size={19} strokeWidth={1.7} aria-hidden="true" />Keluar
+        </VeloxaSidebarButton>
+      </div>
+    </div>
+  </>;
+
+  return <div className={`${workspaceStyles.frame} ${styles.frame} min-h-dvh`} lang="id" dir="ltr" data-testid="super-admin-dashboard">
+    <VeloxaWorkspaceSidebar label="Sidebar Super Admin" testId="super-admin-sidebar">{menu(false)}</VeloxaWorkspaceSidebar>
+    <dialog ref={mobileMenu} id="super-admin-menu" aria-label="Menu Super Admin"
+      className={styles.mobileSidebar}
+      onClick={event => {
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX >= bounds.right || event.clientY < bounds.top || event.clientY >= bounds.bottom) closeMenu();
+      }}>
+      <div className="flex min-h-full flex-col">{menu(true)}</div>
+    </dialog>
+    <div className={`${workspaceStyles.main} min-w-0`}>
+      <header className={`${workspaceStyles.header} bg-white px-4 sm:px-7 lg:px-9`}>
+        <div className="mx-auto flex max-w-[1200px] items-center gap-3">
+          <button type="button" aria-label="Buka menu Super Admin" aria-haspopup="dialog" aria-controls="super-admin-menu"
+            onClick={() => mobileMenu.current?.showModal()}
+            className={`${workspaceStyles.iconButton} grid h-11 w-11 shrink-0 place-items-center rounded-lg lg:hidden`}>
+            <Menu size={20} aria-hidden="true" />
+          </button>
+          <div className="min-w-0">
+            <p className="mb-0.5 text-[13px] text-[var(--ws-muted)]">Super Admin</p>
+            <h1 className={workspaceStyles.headerTitle}>{titles[view]}</h1>
+          </div>
+        </div>
+      </header>
+      <div className={`${styles.admin} px-4 py-4 sm:px-7 sm:py-6 lg:px-9`}>
+    {view !== 'billing' && <div className={styles.heading}>
       <div>
         {view === 'workspace' && <button type="button" className={styles.link} onClick={() => navigate('workspaces')}><ArrowLeft size={16} /> Kembali ke Workspace</button>}
         {view === 'workspaceSettings' && <button type="button" className={styles.link} onClick={() => navigate('workspace')}><ArrowLeft size={16} /> Kembali ke Detail Workspace</button>}
-        <h1>{titles[view]}</h1><p>{sub[view]}</p>
+        <p>{sub[view]}</p>
       </div>
       {!standalone && <button type="button" className={styles.button} disabled={!result} onClick={() => navigate('reload')}><RefreshCw size={16} /> Muat ulang</button>}
-    </div>
+    </div>}
     {notice && <p className={styles.notice} role="status">{notice}</p>}
     {(overview || ops) && <Scheduler status={(overview || ops)!.scheduler} />}
     {(overview?.activityPartial || ops?.activityPartial) && <p className={styles.note} role="status">Sebagian aktivitas dan jadwal tersedia. Buka Detail Workspace untuk melihat riwayat bisnis tertentu.</p>}
@@ -341,6 +416,9 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
         {ops.blocked.length > 0 && <Panel title="Aturan perlu diperiksa"><RuleList rules={ops.blocked} open={open} empty="" /></Panel>}
       </div>
     </div>}
+    <footer data-testid="veloxa-workspace-footer" className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ws-border)] pt-4 text-sm text-[var(--ws-muted)]">
+      <span>Veloxa AI</span><Link href="/privacy" className="hover:text-[var(--ws-action)]">Privasi</Link>
+    </footer>
     {discardTo && <DiscardSettingsDialog close={() => setDiscardTo(null)} discard={() => {
       setDiscardTo(null);
       setSettingsDirty(false);
@@ -353,5 +431,7 @@ export function VeloxaSuperAdmin({ request = veloxaApi }: { request?: AdminReque
       setNotice(processing ? 'Jeda disimpan. Proses yang sedang berjalan masih diperiksa.' : 'Aturan Otonom sudah dijeda.');
       load();
     }} />}
+      </div>
+    </div>
   </div>;
 }

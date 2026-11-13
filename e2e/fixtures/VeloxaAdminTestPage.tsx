@@ -10,5 +10,5 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export default function VeloxaAdminTestPage() {
-  return <main className="min-h-dvh bg-[#f8f5f7] px-4 py-6 sm:px-8"><VeloxaSuperAdmin request={request} /></main>;
+  return <main><VeloxaSuperAdmin request={request} onWorkspace={() => {}} onSignOut={() => {}} /></main>;
 }

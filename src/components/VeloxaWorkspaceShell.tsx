@@ -4,6 +4,7 @@ import { useEffect, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, Camera, CalendarDays, ChevronRight, LayoutDashboard, Link2, LogOut, Megaphone, Plus, RefreshCw, UserRound, Wand2, X } from 'lucide-react';
 import { VeloxaSelect } from '@/components/VeloxaSelect';
+import { VeloxaSidebarButton, VeloxaWorkspaceSidebar } from './VeloxaWorkspaceSidebar';
 import { VELOXA_LOCALES, type VeloxaLocale } from '@/lib/veloxa-i18n';
 import { useWorkspaceCopy } from '@/lib/veloxa-workspace-copy';
 import { workspaceCatalog } from '@/lib/workspace-catalog';
@@ -34,7 +35,7 @@ export function VeloxaWorkspaceShell(props: Props) {
   const quotaPercent = Math.min(100, Math.max(0, props.used / Math.max(1, props.quota) * 100));
   const number = new Intl.NumberFormat(props.locale);
   return <div className="veloxa-workspace min-h-dvh" data-testid="user-workspace-dashboard">
-    <aside aria-label={t('Sidebar Navigasi Workspace')} data-testid="user-workspace-sidebar" className={`${styles.sidebar} fixed inset-y-0 z-30 hidden w-60 flex-col bg-white px-5 py-6 lg:flex`}>
+    <VeloxaWorkspaceSidebar label={t('Sidebar Navigasi Workspace')} testId="user-workspace-sidebar">
       <Link href="/" className="flex items-center gap-2.5 px-2 text-xl font-bold tracking-tight"><span aria-hidden="true" className={`${styles.logo} grid h-9 w-9 place-items-center rounded-lg text-base`}>V</span> Veloxa<span aria-hidden="true" className="text-[var(--ws-action)]">.</span></Link>
       <div className="mt-7 border-b border-[var(--ws-border)] px-2 pb-4">
         <p className="text-xs font-medium text-[var(--ws-muted)]">{t('Bisnis aktif')}</p>
@@ -42,15 +43,15 @@ export function VeloxaWorkspaceShell(props: Props) {
         <button type="button" onClick={() => props.onNavigate('brand_vault')} className="inline-flex items-center gap-1 text-sm font-medium text-[var(--ws-action)]">{t('Edit profil')} <ArrowUpRight size={14} aria-hidden="true"/></button>
         {props.presetControls}
       </div>
-      <nav aria-label={t('Menu Utama User Workspace')} className="mt-4 space-y-1">{WORKSPACE_NAVIGATION.map(item => <button type="button" key={item.id} data-testid={`nav-tab-${item.id}`} aria-current={props.activeTab === item.id ? 'page' : undefined} onClick={() => props.onNavigate(item.id)} className={`${styles.navItem} flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[15px] font-medium transition-colors`}><item.icon size={19} strokeWidth={1.7} className="shrink-0" aria-hidden="true"/>{t(item.label)}</button>)}</nav>
-      <div className="mt-4 border-t border-[var(--ws-border)] pt-3"><button type="button" data-testid="header-connect-social-btn" onClick={props.onConnections} className={`${styles.navItem} flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[15px] font-medium`}><Link2 size={19} strokeWidth={1.7} aria-hidden="true"/>{t('Akun sosial')}</button></div>
+      <nav aria-label={t('Menu Utama User Workspace')} className="mt-4 space-y-1">{WORKSPACE_NAVIGATION.map(item => <VeloxaSidebarButton key={item.id} data-testid={`nav-tab-${item.id}`} aria-current={props.activeTab === item.id ? 'page' : undefined} onClick={() => props.onNavigate(item.id)}><item.icon size={19} strokeWidth={1.7} className="shrink-0" aria-hidden="true"/>{t(item.label)}</VeloxaSidebarButton>)}</nav>
+      <div className="mt-4 border-t border-[var(--ws-border)] pt-3"><VeloxaSidebarButton data-testid="header-connect-social-btn" onClick={props.onConnections}><Link2 size={19} strokeWidth={1.7} aria-hidden="true"/>{t('Akun sosial')}</VeloxaSidebarButton></div>
       <div className="mt-auto pt-6"><div className={`${styles.plan} rounded-xl border p-4`}>
         <p className="break-words text-sm font-semibold">{t(props.planName)}</p>
         <p className="mt-1 text-sm text-[var(--ws-muted)]">{t('{used} dari {quota} publikasi', { used: number.format(props.used), quota: number.format(props.quota) })}</p>
         {props.quota > 0 && <div role="progressbar" aria-label={t('Kuota publikasi terpakai')} aria-valuemin={0} aria-valuemax={props.quota} aria-valuenow={Math.min(props.used, props.quota)} className="mt-2 h-1.5 overflow-hidden rounded bg-[var(--ws-border)]"><div className="h-full rounded bg-[var(--ws-action)]" style={{width: `${quotaPercent}%`}}/></div>}
         <button type="button" onClick={props.onBilling} className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-[var(--ws-action)]">{t('Lihat paket')} <ChevronRight size={15} aria-hidden="true"/></button>
       </div>{props.isSuperAdmin && <button type="button" onClick={props.onAdmin} className="mt-4 w-full text-sm text-[var(--ws-muted)]">{t('Kembali ke Super Admin')}</button>}</div>
-    </aside>
+    </VeloxaWorkspaceSidebar>
     <div className={`${styles.main} min-w-0`} data-testid="user-workspace-main">
       <header data-testid="workspace-right-header" className={`${styles.header} bg-white px-4 sm:px-7 lg:px-9`}>
         <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-2">

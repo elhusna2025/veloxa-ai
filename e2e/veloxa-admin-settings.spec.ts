@@ -94,8 +94,13 @@ async function run() {
     });
 
     const overflow = () => page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+    const nav = page.getByRole('navigation', { name: 'Navigasi Super Admin' });
+    const openMenu = page.getByRole('button', { name: 'Buka menu Super Admin' });
     await page.goto(fixture, { waitUntil: 'domcontentloaded' });
     await page.getByText('Workspace aktif', { exact: true }).waitFor();
+    assert.equal(await nav.getByRole('button', { name: 'Beranda' }).getAttribute('aria-current'), 'page');
+    assert.equal(await openMenu.isVisible(), false);
+    await page.screenshot({ path: path.join(artifacts, 'sidebar-admin-desktop.png'), fullPage: true });
     await page.getByRole('button', { name: 'Pengaturan AI & kuota', exact: true }).click();
     await page.getByText('Revisi 1 tersimpan', { exact: true }).waitFor();
     await page.getByText('Veloxa Free Trial · Publikasi per bulan: 10 → 20', { exact: true }).waitFor();
@@ -123,6 +128,26 @@ async function run() {
 
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await overflow(), false);
+    assert.equal(await nav.count(), 0);
+    await openMenu.press('Enter');
+    const sidebar = page.getByRole('dialog', { name: 'Menu Super Admin' });
+    await sidebar.waitFor();
+    assert.deepEqual(await sidebar.boundingBox(), { x: 0, y: 0, width: 288, height: 844 });
+    assert.equal(await nav.getByRole('button', { name: 'Pengaturan AI & kuota', exact: true }).getAttribute('aria-current'), 'page');
+    await page.screenshot({ path: path.join(artifacts, 'sidebar-admin-390.png') });
+    await page.keyboard.press('Escape');
+    await sidebar.waitFor({ state: 'hidden' });
+    assert.equal(await openMenu.evaluate(element => document.activeElement === element), true);
+    await openMenu.press('Enter');
+    await sidebar.waitFor();
+    await page.mouse.click(380, 300);
+    await sidebar.waitFor({ state: 'hidden' });
+    await openMenu.press('Enter');
+    await nav.getByRole('button', { name: 'Workspace', exact: true }).press('Enter');
+    await discard.waitFor();
+    await page.keyboard.press('Escape');
+    await discard.waitFor({ state: 'hidden' });
+    assert.equal(await page.getByLabel('Publikasi per bulan', { exact: true }).inputValue(), '24');
     await script.focus();
     await page.keyboard.press('ArrowDown');
     const menu = page.getByRole('listbox');
@@ -156,13 +181,18 @@ async function run() {
     assert.deepEqual(writes[2], { expectedRevision: 2, reason: 'Kembali ke paket awal.', restoreRevision: 1 });
     await page.getByText('Revisi 3 · Pemulihan dari revisi 1', { exact: true }).waitFor();
 
-    await page.getByRole('button', { name: 'Workspace', exact: true }).click();
+    await openMenu.click();
+    await nav.getByRole('button', { name: 'Workspace', exact: true }).click();
+    await sidebar.waitFor({ state: 'hidden' });
     await page.getByRole('button', { name: 'Detail Berez ERP', exact: true }).click();
     await page.getByRole('heading', { name: 'Riwayat jeda oleh admin' }).waitFor();
     await page.getByText('Periksa konfirmasi Meta.', { exact: true }).waitFor();
     await page.getByText('Kuota publikasi harian', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Pengaturan AI & kuota workspace' }).click();
     await page.getByRole('heading', { name: 'Pengaturan workspace', exact: true }).waitFor();
+    await openMenu.click();
+    assert.equal(await nav.getByRole('button', { name: 'Workspace', exact: true }).getAttribute('aria-current'), 'page');
+    await sidebar.getByRole('button', { name: 'Tutup menu Super Admin' }).click();
     await page.getByText('Revisi 0 tersimpan', { exact: true }).waitFor();
     await page.getByText(`Model tersimpan sudah tidak tersedia. Model yang sedang digunakan: ${defaults.voiceModel}.`).waitFor();
     assert.equal(await page.getByLabel('Pembuatan draf per hari', { exact: true }).inputValue(), '');

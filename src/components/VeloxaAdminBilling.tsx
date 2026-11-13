@@ -52,7 +52,7 @@ export function VeloxaAdminBilling({ request = veloxaApi }: { request?: typeof v
     <header className={styles.heading}>
       <div>
         {workspace && <button type="button" onClick={() => { setWorkspace(null); setAction(undefined); }} className={styles.link} disabled={busy}><ArrowLeft size={16} /> Kembali ke langganan</button>}
-        <h1 id="admin-billing-title">{detail?.workspace.name || 'Langganan & biaya'}</h1>
+        <h2 id="admin-billing-title">{detail?.workspace.name || 'Paket dan pembayaran'}</h2>
         <p>{detail ? 'Paket, pemakaian kuota, dan tagihan workspace.' : 'Pantau paket dan pembayaran per workspace.'}</p>
       </div>
       <button className={styles.button} type="button" onClick={refresh} disabled={!current || busy}><RefreshCw size={16} aria-hidden="true" /> Muat ulang</button>
