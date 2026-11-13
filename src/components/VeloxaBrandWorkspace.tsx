@@ -77,10 +77,10 @@ export function VeloxaBrandWorkspace(props: Props) {
     try{return await analyzeVeloxaBrand({workspaceId:props.brand.workspaceId,businessId:props.brand.businessId||'primary',profileFingerprint:await profileFingerprint(props.brand),connectionIds:ids},progress);}
     finally{operation.current=false;setBusy(null);}
   }
-  async function applyAnalysis(result:BrandAnalysis,keys:SuggestionKey[]) {
+  async function applyAnalysis(result:BrandAnalysis,keys:SuggestionKey[],offeringIds:string[]) {
     if(operation.current||dirty)throw new Error('Simpan atau batalkan perubahan formulir terlebih dahulu.');
     if(result.baseFingerprint!==await profileFingerprint(props.brand))throw new Error('Profil berubah. Analisis ulang sebelum memakai usulan.');
-    setForm(applyBrandSuggestions(initial,result,keys));setTab('identity');setFeedback(null);
+    setForm(applyBrandSuggestions(initial,result,keys,offeringIds));setTab('identity');setFeedback(null);
   }
   async function proposeLogo(asset:Pick<BrandVaultAsset,'id'|'title'>) {
     const base=paletteFingerprint(formRef.current);const result=await veloxaApi<{colors:string[]}>('/api/veloxa/brand/palette',{method:'POST',body:JSON.stringify({workspaceId:formRef.current.workspaceId,businessId:formRef.current.businessId||'primary',assetId:asset.id})});

@@ -27,8 +27,13 @@ export async function analyzeSocialBrand(request:Request,deps:{authorize?:typeof
  try{
   deps.progress?.('profiles');const evidence=await(deps.collect||collectSocialEvidence)(accounts,account=>(deps.decrypt||decryptMetaToken)(account.encryptedToken,ref.id),{progress:()=>deps.progress?.('visuals')});
   if(context.brand.logoAssetId){try{const [logo]=await(deps.references||loadContentReferences)(ref,ref.id,[context.brand.logoAssetId],undefined,id);evidence.sources.push({id:'uploaded_logo',kind:'logo',label:'Logo pada DNA visual',text:logo.title});evidence.images=[{sourceId:'uploaded_logo',avatar:true,bytes:logo.bytes},...evidence.images].slice(0,6);}catch{evidence.warnings.push('File logo tersimpan belum dapat dibaca; tidak dipakai dalam analisis.');}}
+  const sampledImages=new Set(evidence.images.map(image=>image.sourceId));
+  evidence.sources=evidence.sources.filter(source=>source.kind!=='post'||source.text.trim()||sampledImages.has(source.id));
   if(!evidence.sources.some(source=>source.kind==='profile'||source.kind==='post'))throw new ApiError(422,'Profil dan postingan belum dapat dibaca dari Meta. Periksa izin akun atau lengkapi profil secara manual.');
-  await ref.firestore.runTransaction(check);deps.progress?.('suggestions');const proposal=await(deps.suggest||suggestBrandProfile)(evidence);deps.progress?.('review');await ref.firestore.runTransaction(check);
+  await ref.firestore.runTransaction(check);deps.progress?.('suggestions');
+  const savedOfferings=context.brand.offerings.map(({title,category})=>({title,category}));
+  const proposal=await(deps.suggest||suggestBrandProfile)(evidence,savedOfferings);
+  deps.progress?.('review');await ref.firestore.runTransaction(check);
   return {workspaceId:ref.id,businessId:id,baseFingerprint:body.profileFingerprint,sources:evidence.sources,suggestions:proposal.suggestions,warnings:[...new Set([...evidence.warnings,...proposal.warnings])]};
  }finally{await ref.firestore.runTransaction(async tx=>{if((await tx.get(lease)).data()?.runId===runId)tx.delete(lease);}).catch(()=>{/* Lease expires; never mask the result or emit credentials. */});}
 }
