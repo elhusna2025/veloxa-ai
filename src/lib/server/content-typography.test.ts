@@ -7,11 +7,13 @@ import { composeSocialVisual, compositionLayout, fitCompositionText, preflightSo
 const copy={businessName:'Cendekia AI',title:'Pabrik Soal TKA di Sekolah?',hook:'Dukung persiapan TKA sekolah dengan pembuatan bank soal otomatis dan tryout dari Cendekia AI.',cta:'Pelajari selengkapnya',websiteUrl:'https://cendekia.dafinicode.com'};
 
 test('actual raster text stays readable at phone width and within its reserved boxes',async()=>{
- const box=compositionLayout(false,false).subtitle;
- const body=await fitCompositionText(copy.hook,box.width,box.height,CONTENT_TYPOGRAPHY.body.max,CONTENT_TYPOGRAPHY.body.min,'#FFFFFF');
- assert.ok(body);assert.ok(body.fontSize*390/1080>=15);assert.ok(body.height<=box.height);assert.ok(body.width<=box.width);
- const footer=compositionLayout(false,false).footer;
- for(const[text,style,height]of [[copy.cta,CONTENT_TYPOGRAPHY.cta,64],['cendekia.dafinicode.com',CONTENT_TYPOGRAPHY.website,52]]as const){const rendered=await fitCompositionText(text,footer.width-64,height,style.max,style.min,'#FFFFFF');assert.ok(rendered);assert.ok(rendered.fontSize>=style.min);assert.ok(rendered.height<=height);}
+ const layout=compositionLayout(false,false);
+ const {supporting, supportingTop, cta, site}=await renderCompositionText(copy);
+ assert.ok(supporting);assert.ok(supporting.fontSize*390/1080>=15);
+ assert.ok(supporting.width<=layout.subtitle.width);
+ assert.ok(supportingTop+supporting.height<=layout.screen.top-32);
+ assert.ok(cta);assert.ok(cta.fontSize>=CONTENT_TYPOGRAPHY.cta.min);assert.ok(cta.height<=64);
+ assert.ok(site);assert.ok(site.fontSize>=CONTENT_TYPOGRAPHY.website.min);assert.ok(site.height<=52);
 });
 
 test('overflow fails explicitly instead of truncating facts or shrinking to illegible sizes',async()=>{

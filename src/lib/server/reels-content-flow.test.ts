@@ -432,13 +432,15 @@ test('mixed light and dark behind one line recovers without another image reques
 });
 
 test('scheduled Reels preserves wide headlines within safe areas and keeps overflow text whole', async () => {
- const wideHeadline = Array(7).fill('WWWWWW').join(' ');
+ const wideHeadline = Array(7).fill('WWWWW').join(' ');
  const longName = Array(10).fill('Worldwide').join(' ');
  const { fitted, captionLines } = await prepareScheduledReelsCopy({
   headline:wideHeadline, businessName:longName, cta:'', website:'',
  }, true);
- const headline = fitted.find(item => item.key === 'headline')!;
+ const headline = fitted.find(item => item.key === 'headline');
+ assert.ok(headline, 'headline fits after the safe-area expansion');
  assert.ok(headline.text.fontSize >= 72);
+ assert.ok(headline.text.height > 298, 'headline exercises the expanded text area');
  assert.ok(headline.box.top + headline.text.height + 6 < 1038, 'no overlap with the screenshot frame');
  assert.deepEqual(captionLines,[longName]);
 
