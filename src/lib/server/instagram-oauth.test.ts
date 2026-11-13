@@ -202,7 +202,7 @@ test('legacy Meta disconnect clears the Unified grant and invalidates pending In
 });
 test('Instagram connection works without any Facebook Page and paginates only fixed Meta endpoints',async()=>{
   const restore=configure();try{
-    const f=fixture({hasFacebook:false,pagination:true});await connect(f);assert.equal(f.db.values.get(f.ref.path+'/instagram_authorizations/current').accounts.some((a:any)=>a.id==='303'),true);
+    const f=fixture({hasFacebook:false,pagination:true,scopes:['instagram_basic','instagram_content_publish']});await connect(f);assert.equal(f.db.values.get(f.ref.path+'/instagram_authorizations/current').accounts.some((a:any)=>a.id==='303'),true);
     const result=await selectInstagramAccount(f.request,f.ref.id,'303',f.deps);assert.deepEqual(result.connections.map(c=>c.channel),['instagram']);assert.equal(result.connections[0].handle,'@second.brand');
     assert.equal(f.db.values.has(f.ref.path+'/private_meta_connections/facebook'),false);
   }finally{restore();}
@@ -217,9 +217,16 @@ test('expired, cancelled, wrong-path, changed-configuration and owner-changed ca
     }
   }finally{restore();}
 });
-test('missing publishing permission, wrong app, missing business identity, expired proof and provider bodies are rejected safely',async()=>{
+test('Instagram token grants with the legacy messaging permission still work',async()=>{
   const restore=configure();try{
-    for(const options of [{scopes:['instagram_basic','instagram_manage_messages']},{appId:'777'},{businessId:''},{expiresAt:900}]){const f=fixture(options);await assert.rejects(exchangeInstagramLogin('unit-code',f.deps.fetcher,f.deps.now),(error:unknown)=>error instanceof ApiError&&error.code==='instagram_login_failed'&&!error.message.includes(credential));}
+    const f=fixture({scopes:['instagram_basic','instagram_content_publish','instagram_manage_messages']});
+    const login=await exchangeInstagramLogin('unit-code',f.deps.fetcher,f.deps.now);
+    assert.deepEqual(login.accounts,[{id:'202',username:'contoh.education'}]);
+  }finally{restore();}
+});
+test('missing required permissions, wrong app, missing business identity, expired proof and provider bodies are rejected safely',async()=>{
+  const restore=configure();try{
+    for(const options of [{scopes:['instagram_basic']},{scopes:['instagram_content_publish']},{appId:'777'},{businessId:''},{expiresAt:900}]){const f=fixture(options);await assert.rejects(exchangeInstagramLogin('unit-code',f.deps.fetcher,f.deps.now),(error:unknown)=>error instanceof ApiError&&error.code==='instagram_login_failed'&&!error.message.includes(credential));}
     await assert.rejects(exchangeInstagramLogin('unit-code',async()=>{throw new Error(appCredential);}),(error:unknown)=>error instanceof ApiError&&!error.message.includes(appCredential));
   }finally{restore();}
 });

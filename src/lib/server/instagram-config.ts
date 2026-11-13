@@ -1,7 +1,6 @@
 import { ApiError } from './http';
 
-// Unified Login requires the messaging permission even for organic publishing integrations.
-export const INSTAGRAM_LOGIN_SCOPES = ['instagram_basic', 'instagram_manage_messages', 'instagram_content_publish'] as const;
+export const INSTAGRAM_LOGIN_SCOPES = ['instagram_basic', 'instagram_content_publish'] as const;
 export function instagramLoginConfig() {
   const appId = process.env.META_APP_ID || '';
   const appCredential = process.env.META_APP_SECRET || '';
