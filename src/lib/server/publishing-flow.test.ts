@@ -1561,7 +1561,7 @@ const metaBillingRejection = () => Response.json({ error: { code: 100, error_sub
 
 test('Meta Ads resumes a payment-blocked campaign by creating only its missing paused ad, including a legacy receipt', async () => {
   const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
-  for (const legacy of [false, true]) {
+  for (const receipt of ['current', 'legacy', 'renamed'] as const) {
     const f = adsFixture();
     f.setAdCreation(metaBillingRejection);
     const first = (await mutateMetaAds(f.post(), f.deps)).campaign;
@@ -1569,11 +1569,16 @@ test('Meta Ads resumes a payment-blocked campaign by creating only its missing p
     assert.equal(first.canResume, true);
     assert.equal(first.paymentRequired, true);
     assert.equal(first.adId, undefined);
-    if (legacy) {
+    if (receipt !== 'current') {
       const stored = [...f.database.values.entries()].find(([path]) => path.includes('/meta_ads_executions/'))![1];
       delete stored.creativeSpec;
       delete stored.failureCode;
       stored.message = 'Meta menolak langkah iklan. Periksa detail di Ads Manager sebelum mencoba lagi.';
+      if (receipt === 'renamed') {
+        stored.failureCode = 'ad_manual_review';
+        stored.message = 'Materi iklan berubah. Tinjau kampanye di Ads Manager.';
+        f.remote.creative.name = 'Meta normalized creative label';
+      }
     }
     assert.equal((await getMetaAds(f.get(), f.deps)).campaigns[0].canResume, true);
     assert.equal((await mutateMetaAds(f.post('resume'), f.deps)).campaign.paymentRequired, true);
@@ -1594,13 +1599,15 @@ test('Meta Ads resumes a payment-blocked campaign by creating only its missing p
 
 test('Meta Ads refuses to resume if remote targeting, delivery status, or ad inventory changed', async () => {
   const { mutateMetaAds } = await import('./meta-ads');
-  for (const change of ['target', 'active', 'existing_ad'] as const) {
+  for (const change of ['target', 'active', 'existing_ad', 'creative_account', 'creative_page'] as const) {
     const f = adsFixture();
     f.setAdCreation(metaBillingRejection);
     await mutateMetaAds(f.post(), f.deps);
     if (change === 'target') Object.assign(f.remote.adSet.targeting, { geo_locations: { countries: ['MY'] } });
     if (change === 'active') f.remote.campaign.status = 'ACTIVE';
     if (change === 'existing_ad') f.setRemoteHasAd();
+    if (change === 'creative_account') f.remote.creative.account_id = '77';
+    if (change === 'creative_page') Object.assign(f.remote.creative.object_story_spec, { page_id: '777' });
     const before = f.writes.length;
     const blocked = (await mutateMetaAds(f.post('resume'), f.deps)).campaign;
     assert.equal(blocked.status, 'attention');

@@ -58,7 +58,9 @@ const billingMessage = 'Meta meminta metode pembayaran pada akun iklan. Setelah 
 const paymentRequired = (error: unknown) => error instanceof MetaRequestError && !error.uncertain && error.providerCode === 100 && error.providerSubcode === 1359188;
 const isResumable = (row: Data, now: number) => row.status === 'attention' && row.operation === null && !row.adId && Number.isSafeInteger(row.endsAt) && row.endsAt > now &&
   [row.campaignId, row.adSetId, row.creativeId, row.adAccountId, row.pageId].every(id => metaNumericId.safeParse(id).success) &&
-  (row.failureCode === 'payment_required' || row.failureCode === 'ad_check_retry' || !row.failureCode && row.message === legacyAdRejection);
+  (row.failureCode === 'payment_required' || row.failureCode === 'ad_check_retry' || !row.failureCode && row.message === legacyAdRejection ||
+    // The first resume release stopped before the write when Meta renamed a creative.
+    row.failureCode === 'ad_manual_review' && row.message === 'Materi iklan berubah. Tinjau kampanye di Ads Manager.');
 
 function publicExecution(row: Data, now: number): MetaAdsExecution {
   const expiredOperation = isOperationInProgress(row) && Number(row.updatedAt) + operationTimeout < now;
@@ -369,7 +371,7 @@ async function assertRemoteSetup(graph: MarketingGraph, row: Data, now: number, 
   const [campaign, adSet, creative, adSets, ads] = await Promise.all([
     graph.get<Data>(row.campaignId, { fields: 'id,account_id,status,objective,daily_budget,lifetime_budget,special_ad_categories' }),
     graph.get<Data>(row.adSetId, { fields: 'id,account_id,campaign_id,status,lifetime_budget,daily_budget,end_time,targeting' }),
-    graph.get<Data>(row.creativeId, { fields: 'id,account_id,name,object_story_spec' }),
+    graph.get<Data>(row.creativeId, { fields: 'id,account_id,object_story_spec' }),
     graph.list(`${row.campaignId}/adsets`, { fields: 'id', limit: '2' }),
     graph.list(`${row.adSetId}/ads`, { fields: 'id', limit: '2' }),
   ]);
@@ -429,7 +431,8 @@ async function resumeCampaign(args: Workspace, context: BusinessContext, input: 
     const graph = getMarketingGraph(credential, ref, deps);
     const name = `${row.title} [Veloxa ${campaign.id.slice(0, 12)}]`;
     const [, creative] = await Promise.all([verifiedAccount(graph, row.adAccountId), assertRemoteSetup(graph, row, now(), true)]);
-    if (creative.name !== name) throw new ApiError(409, 'Materi iklan berubah. Tinjau kampanye di Ads Manager.', 'meta_ads_remote_changed');
+    // Meta may normalize the creative label. The persisted creative ID, owning
+    // account, Page and destination above are the authoritative references.
     const link = creative.object_story_spec.link_data;
     const creativeSpec = row.creativeSpec || (typeof link.image_hash === 'string' && /^[a-f0-9]{32}$/i.test(link.image_hash) && typeof link.name === 'string' && typeof link.message === 'string' && link.call_to_action?.type === 'LEARN_MORE'
       ? { name, object_story_spec: JSON.stringify({ page_id: row.pageId, link_data: { link: row.destinationUrl, image_hash: link.image_hash, name: link.name, message: link.message, call_to_action: { type: 'LEARN_MORE' } } }) }
