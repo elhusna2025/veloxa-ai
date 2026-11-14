@@ -1629,3 +1629,30 @@ test('Meta Ads does not resend a resumed ad if Meta may already have created it'
   await assert.rejects(mutateMetaAds(f.post('resume'), f.deps), { code: 'meta_ads_cannot_resume' });
   assert.equal(f.writes.length, before);
 });
+
+test('Meta Ads allows the same paused ad setup after Meta lifts its authentication checkpoint', async () => {
+  const { getMetaAds, mutateMetaAds } = await import('./meta-ads');
+  const f = adsFixture();
+  f.database.values.get(`${f.ref.path}/private_meta_connections/facebook`)!.expiresAt = 0;
+  f.setAdCreation(metaBillingRejection);
+  const first = (await mutateMetaAds(f.post(), f.deps)).campaign;
+  const stored = [...f.database.values.entries()].find(([path]) => path.includes('/meta_ads_executions/'))![1];
+  stored.failureCode = 'ad_manual_review';
+  stored.message = 'Pembuatan iklan belum terkonfirmasi. Periksa iklan pada kampanye yang sama di Ads Manager.';
+  assert.equal((await getMetaAds(f.get(), f.deps)).campaigns[0].canResume, undefined);
+  const later = { ...f.deps, now: () => f.now + 301_000 };
+  assert.equal((await getMetaAds(f.get(), later)).campaigns[0].reviewBeforeResume, true);
+  await assert.rejects(mutateMetaAds(f.post('resume'), later), { code: 'meta_ads_cannot_resume' });
+  f.setAdCreation(() => Response.json({ error: { code: 31, error_subcode: 3858385 } }, { status: 400 }));
+  const blocked = (await mutateMetaAds(f.post('resume', { reviewedEmptyCampaign: true }), later)).campaign;
+  assert.equal(blocked.canResume, true);
+  assert.equal(blocked.reviewBeforeResume, undefined);
+  assert.match(blocked.message!, /mengautentikasi/);
+  f.setAdCreation();
+  const final = (await mutateMetaAds(f.post('resume'), later)).campaign;
+  assert.equal(final.campaignId, first.campaignId);
+  assert.equal(final.status, 'paused');
+  assert.equal(final.adId, '104');
+  assert.equal(f.writes.filter(item => item.path === 'act_55/campaigns').length, 1);
+  assert.equal(f.writes.some(item => item.values.status === 'ACTIVE'), false);
+});

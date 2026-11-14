@@ -16,6 +16,7 @@ export interface MetaAdsExecution {
   updatedAt: number;
   message?: string;
   canResume?: boolean;
+  reviewBeforeResume?: boolean;
   paymentRequired?: boolean;
   effectiveStatus?: string;
   insights?: { spendIdr: number; impressions: number; clicks: number; asOf: number };

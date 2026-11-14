@@ -26,7 +26,7 @@ const prepareInput = workspaceTarget.extend({
 }).strict();
 const statusActions = ['activate', 'pause'] as const;
 const statusInputs = statusActions.map(action => workspaceTarget.extend({ action: z.literal(action), planId, confirm: z.literal(true) }).strict());
-const resumeInput = workspaceTarget.extend({ action: z.literal('resume'), planId, confirm: z.literal(true) }).strict();
+const resumeInput = workspaceTarget.extend({ action: z.literal('resume'), planId, confirm: z.literal(true), reviewedEmptyCampaign: z.literal(true).optional() }).strict();
 const operationInput = z.discriminatedUnion('action', [prepareInput, resumeInput, ...statusInputs]);
 
 const websitePlan = z.object({
@@ -54,13 +54,23 @@ const executionRef = (ref: Ref, businessId: string, id: string) => ref.collectio
 const credentialRef = (ref: Ref) => ref.collection('meta_ads_credentials').doc('current');
 const isOperationInProgress = (row: Data) => ['preparing', 'activating', 'pausing'].includes(row.status);
 const legacyAdRejection = 'Meta menolak langkah iklan. Periksa detail di Ads Manager sebelum mencoba lagi.';
+const legacyResumeOutcome = 'Pembuatan iklan belum terkonfirmasi. Periksa iklan pada kampanye yang sama di Ads Manager.';
 const billingMessage = 'Meta meminta metode pembayaran pada akun iklan. Setelah menambahkannya di Meta, lanjutkan pembuatan kampanye ini dalam status dijeda.';
-const paymentRequired = (error: unknown) => error instanceof MetaRequestError && !error.uncertain && error.providerCode === 100 && error.providerSubcode === 1359188;
+const authenticationMessage = 'Meta meminta Anda mengautentikasi akun iklan di Ads Manager. Setelah selesai, lanjutkan pembuatan iklan pada kampanye ini.';
+function adAccountBlock(error: unknown) {
+  if (!(error instanceof MetaRequestError) || error.uncertain) return undefined;
+  if (error.providerCode === 100 && error.providerSubcode === 1359188) return { code: 'payment_required', message: billingMessage };
+  if (error.providerCode === 31 && error.providerSubcode === 3858385) return { code: 'authentication_required', message: authenticationMessage };
+}
 const isResumable = (row: Data, now: number) => row.status === 'attention' && row.operation === null && !row.adId && Number.isSafeInteger(row.endsAt) && row.endsAt > now &&
   [row.campaignId, row.adSetId, row.creativeId, row.adAccountId, row.pageId].every(id => metaNumericId.safeParse(id).success) &&
-  (row.failureCode === 'payment_required' || row.failureCode === 'ad_check_retry' || !row.failureCode && row.message === legacyAdRejection ||
+  (['payment_required', 'authentication_required', 'ad_check_retry'].includes(row.failureCode) || !row.failureCode && row.message === legacyAdRejection ||
     // The first resume release stopped before the write when Meta renamed a creative.
     row.failureCode === 'ad_manual_review' && row.message === 'Materi iklan berubah. Tinjau kampanye di Ads Manager.');
+// Old releases combined definite rejections and unknown outcomes. Require a
+// separate user review after the request window, then verify all remote objects.
+const needsResumeReview = (row: Data, now: number) => row.status === 'attention' && row.failureCode === 'ad_manual_review' && row.message === legacyResumeOutcome &&
+  row.updatedAt + operationTimeout < now && isResumable({ ...row, failureCode: 'ad_check_retry' }, now);
 
 function publicExecution(row: Data, now: number): MetaAdsExecution {
   const expiredOperation = isOperationInProgress(row) && Number(row.updatedAt) + operationTimeout < now;
@@ -74,6 +84,7 @@ function publicExecution(row: Data, now: number): MetaAdsExecution {
     ...(row.campaignId && { campaignId: row.campaignId }), ...(row.adSetId && { adSetId: row.adSetId }),
     ...(row.adId && { adId: row.adId }), ...(row.endsAt && { endsAt: row.endsAt }),
     ...(isResumable(row, now) && { canResume: true }),
+    ...(needsResumeReview(row, now) && { canResume: true, reviewBeforeResume: true }),
     ...(row.status === 'attention' && row.failureCode === 'payment_required' && { paymentRequired: true }),
     ...(expiredOperation ? { message: 'Proses terhenti. Periksa status kampanye di Meta Ads Manager.' } : row.message && { message: row.message }),
   };
@@ -349,9 +360,9 @@ async function prepareCampaign(args: Workspace, context: BusinessContext, input:
     const message = error instanceof MetaRequestError && !error.uncertain
       ? `Meta menolak langkah ${step}. Periksa detail di Ads Manager sebelum mencoba lagi.`
       : `Langkah ${step} belum terkonfirmasi. Periksa Ads Manager sebelum mencoba lagi.`;
-    const billing = phase === 'ad' && paymentRequired(error);
-    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message: billing ? billingMessage : message,
-      ...(billing && { failureCode: 'payment_required' }),
+    const blocked = phase === 'ad' ? adAccountBlock(error) : undefined;
+    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message: blocked?.message ?? message,
+      ...(blocked && { failureCode: blocked.code }),
     }, now()), now());
   }
 }
@@ -421,7 +432,7 @@ async function resumeCampaign(args: Workspace, context: BusinessContext, input: 
   }
   const { row, credential } = await ref.firestore.runTransaction(async tx => {
     const row = (await tx.get(campaign)).data();
-    if (!row || !isResumable(row, now())) throw new ApiError(409, 'Kampanye ini tidak dapat dilanjutkan. Muat ulang status atau periksa Ads Manager.', 'meta_ads_cannot_resume');
+    if (!row || !(isResumable(row, now()) || input.reviewedEmptyCampaign && needsResumeReview(row, now()))) throw new ApiError(409, 'Kampanye ini tidak dapat dilanjutkan. Muat ulang status atau periksa Ads Manager.', 'meta_ads_cannot_resume');
     const credential = await verifyContext(tx, row);
     tx.update(campaign, { status: 'preparing', operation, updatedAt: now(), message: null });
     return { row, credential };
@@ -448,12 +459,12 @@ async function resumeCampaign(args: Workspace, context: BusinessContext, input: 
     return publicExecution(await updateOperation(campaign, operation, { adId, creativeSpec, status: 'paused', operation: null, failureCode: null, message: null }, now()), now());
   } catch (error) {
     reportAdsFailure(creatingAd ? 'resume_ad' : 'resume_check', error);
-    const billing = creatingAd && paymentRequired(error);
+    const blocked = creatingAd ? adAccountBlock(error) : undefined;
     const checkRetry = !creatingAd && !(error instanceof ApiError && ['meta_ads_remote_changed', 'meta_ads_resume_context_changed', 'meta_ads_destination_mismatch'].includes(error.code || ''));
-    const message = billing ? billingMessage : error instanceof ApiError && error.status < 500 ? error.message : checkRetry
+    const message = blocked?.message ?? (error instanceof ApiError && error.status < 500 ? error.message : checkRetry
       ? 'Status di Meta belum dapat diperiksa. Coba lanjutkan kembali.'
-      : 'Pembuatan iklan belum terkonfirmasi. Periksa iklan pada kampanye yang sama di Ads Manager.';
-    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message, failureCode: billing ? 'payment_required' : checkRetry ? 'ad_check_retry' : 'ad_manual_review' }, now()), now());
+      : legacyResumeOutcome);
+    return publicExecution(await updateOperation(campaign, operation, { status: 'attention', operation: null, message, failureCode: blocked?.code ?? (checkRetry ? 'ad_check_retry' : 'ad_resume_blocked') }, now()), now());
   }
 }
 

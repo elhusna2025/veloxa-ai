@@ -62,12 +62,13 @@ function CampaignConfirmation({ action, accountName, busy, onCancel, onConfirm }
   const activate = action.action === 'activate';
   const resume = action.action === 'resume';
   const campaign = 'campaign' in action ? action.campaign : undefined;
+  const requiresCheck = prepare || resume && campaign?.reviewBeforeResume;
   const title = prepare ? 'Siapkan kampanye di Meta' : activate ? 'Aktifkan kampanye di Meta' : resume ? 'Lanjutkan pembuatan iklan' : 'Jeda kampanye di Meta';
   const budget = prepare ? action.plan.budget.totalBudgetIdr : campaign?.totalBudgetIdr;
   const duration = prepare ? action.plan.budget.durationDays : campaign?.durationDays;
   return <dialog ref={ref} aria-labelledby="confirm-meta-campaign-title" className="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl border border-neutral-200 bg-white p-5 backdrop:bg-neutral-900/40 sm:p-6"
     onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}>
-    <form onSubmit={event => { event.preventDefault(); if (!busy && (!prepare || categoryConfirmed)) onConfirm(); }} className="space-y-4">
+    <form onSubmit={event => { event.preventDefault(); if (!busy && (!requiresCheck || categoryConfirmed)) onConfirm(); }} className="space-y-4">
       <h3 id="confirm-meta-campaign-title" className="text-xl font-semibold">{t(title)}</h3>
       <p className="break-words text-sm text-neutral-600">{accountName || campaign?.adAccountName}</p>
       {prepare && <p className="break-words font-medium">{action.plan.campaignName}</p>}
@@ -84,13 +85,13 @@ function CampaignConfirmation({ action, accountName, busy, onCancel, onConfirm }
         ? 'Meta menerima kampanye dalam status dijeda.'
         : activate ? 'Meta dapat mulai menayangkan iklan dan menagih akun iklan setelah persetujuan Meta.'
           : resume ? 'Veloxa menyelesaikan iklan pada kampanye yang sama. Kampanye tetap dijeda.' : 'Meta akan menghentikan penayangan setelah jeda diproses.')}</p>
-      {prepare && <label className="flex min-h-11 items-start gap-3 rounded-lg border border-neutral-200 p-3 text-sm">
+      {requiresCheck && <label className="flex min-h-11 items-start gap-3 rounded-lg border border-neutral-200 p-3 text-sm">
         <input type="checkbox" checked={categoryConfirmed} onChange={event => setCategoryConfirmed(event.target.checked)} disabled={busy} className="mt-0.5 h-4 w-4 shrink-0 accent-[#a92e5d]" />
-        {t('Saya memastikan iklan ini tidak termasuk kategori iklan khusus Meta.')}
+        {t(prepare ? 'Saya memastikan iklan ini tidak termasuk kategori iklan khusus Meta.' : 'Saya sudah memeriksa di Ads Manager bahwa kampanye ini belum berisi iklan.')}
       </label>}
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" className="veloxa-button-secondary" onClick={onCancel} disabled={busy}>{t('Batal')}</button>
-        <button type="submit" className="veloxa-button-primary" disabled={busy || prepare && !categoryConfirmed}>{t(busy ? 'Tunggu proses…' : title)}</button>
+        <button type="submit" className="veloxa-button-primary" disabled={busy || !!requiresCheck && !categoryConfirmed}>{t(busy ? 'Tunggu proses…' : title)}</button>
       </div>
     </form>
   </dialog>;
@@ -215,7 +216,7 @@ export function VeloxaMetaCampaigns({ business, plans, drafts, ready, disabled =
     setActionError('');
     const details = action.action === 'prepare'
       ? { planId: action.plan.id, adAccountId: action.adAccountId, connectionId: action.connectionId, specialAdCategory: 'NONE' }
-      : { planId: action.campaign.planId, confirm: true };
+      : { planId: action.campaign.planId, confirm: true, ...(action.action === 'resume' && action.campaign.reviewBeforeResume && { reviewedEmptyCampaign: true }) };
     try {
       const { campaign } = await request<{ campaign: MetaAdsExecution }>(endpoint, {
         method: 'POST', body: JSON.stringify({ workspaceId, businessId, action: action.action, ...details }),
