@@ -66,6 +66,25 @@ async function createJpegFixture(): Promise<Buffer> {
   }).jpeg().toBuffer();
 }
 
+test('Ulinz single post requests integrated copy, readable neon lighting and the original logo reservation', async () => {
+ const artwork = await createJpegFixture();
+ let prompt = '';
+ await generateSocialPostImage({
+  businessName:'Ulinz Cafe', title:'Turnamen Mobile Legends', hook:'Adu strategi, seru bareng di Ulinz!',
+  cta:'Pelajari selengkapnya', website:'ulinz.com', editorialSinglePost:true, hasOriginalLogo:true,
+  brandPalette:['#028CFF','#DF20DF'],
+ },{imageClient:{images:{generate:async request => {
+  prompt = request.prompt;
+  return {data:[{b64_json:artwork.toString('base64')}]};
+ }}}});
+ assert.match(prompt, /single social post.*single editorial composition/);
+ assert.match(prompt, /black or white wash/);
+ assert.match(prompt, /without a button or a background card/);
+ assert.match(prompt, /neon-lit settings.*faces/);
+ assert.match(prompt, /app will add the logo/);
+ for (const value of ['Turnamen Mobile Legends', 'ulinz.com', '#028CFF', '#DF20DF']) assert.ok(prompt.includes(value));
+});
+
 test('without references the provider receives actual business/subject context and a contextual visual brief',async()=>{
  const fixture=await createJpegFixture();let prompt='';let calls=0;
  const businessContext={description:'Berez ERP mengelola stok dan penjualan.',audience:'Pemilik usaha',topic:'Stok yang tercatat rapi'};

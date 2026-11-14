@@ -170,6 +170,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const references = await loadContentReferences(ref, workspaceId, input.referenceAssetIds || [], dependencies.storage,context.id);
   const carousel = input.format === 'carousel';
   const scheduledEditorial = dependencies.source === 'autonomous_agent';
+  const editorialSinglePost = !scheduledEditorial && input.format === 'single_post' && !input.sourceAssetId;
   const labelReference = (item: typeof references[number]) => `Ref ${references.indexOf(item) + 1}: ${item.title}`;
   const visualReferences = references.filter(item => referenceRoles[item.id] === 'visual');
   const screenshotReferences = visualReferences.filter(item => item.category === 'screenshot');
@@ -302,7 +303,19 @@ export async function createSocialContent(request: Request, dependencies: {
       };
     }));
   }else if(!input.sourceAssetId){
-    visualPlan.push({businessName:brand.businessName,title:draft.title,hook:draft.hook,cta:brand.defaultCta||'Selengkapnya',...imageContextParams,...paletteParams,...referenceImageParams});
+    const cta = brand.defaultCta || 'Selengkapnya';
+    visualPlan.push({
+      businessName: brand.businessName, title: draft.title, hook: draft.hook,
+      cta: editorialSinglePost ? shortVisualCta(cta) : cta,
+      ...imageContextParams, ...paletteParams, ...referenceImageParams,
+      ...(editorialSinglePost ? {
+        editorialSinglePost: true,
+        website: visualWebsite(brand.websiteUrl),
+        hasOriginalLogo: originalAssets.some(asset => asset.role === 'logo'),
+        hasOriginalScreenshot: originalAssets.some(asset => asset.role === 'screenshot'),
+        ...(screenshotReferences.length ? { screenshotReferenceLabels: screenshotReferences.map(labelReference) } : {}),
+      } : {}),
+    });
   }
   if (!scheduledEditorial) {
     try{for(const params of visualPlan)await preflightSocialVisualText({...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
@@ -393,10 +406,11 @@ export async function createSocialContent(request: Request, dependencies: {
       }
     }
 
-    const scene = await render({ ...params, sceneOnly: !carousel });
+    const useEditorialArtwork = carousel || params.editorialSinglePost === true;
+    const scene = await render({ ...params, sceneOnly: !useEditorialArtwork });
     if (stage !== 'compositing') progress('compositing');
     try {
-      if (carousel) return await finishEditorialCarousel(scene, originalAssets);
+      if (useEditorialArtwork) return await finishEditorialCarousel(scene, originalAssets);
       const composed = await composeSocialVisual(scene, { ...params, websiteUrl: brand.websiteUrl, originalAssets });
       return await sharp(composed).resize(params.aspectRatio === '9:16' ? 720 : 1080, params.aspectRatio === '9:16' ? 1280 : 1350).jpeg({ quality: 94 }).toBuffer();
     } catch (error) {

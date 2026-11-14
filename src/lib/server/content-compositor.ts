@@ -228,7 +228,7 @@ export async function composeSocialVisual(scene: Buffer, params: VisualCompositi
  const {headerBrand,headline,supporting,supportingTop,cta,site,heroHeight}=text;
  const hero=await sharp(scene,{limitInputPixels:30_000_000}).rotate().resize(layout.hero.width,heroHeight,{fit:'cover',position:params.carouselSlide?'centre':'north'}).png().toBuffer();
  layers.push({input:hero,left:0,top:0});
- // The Studio carousel bypasses this compositor and uses finishEditorialCarousel.
+ // Integrated Studio feed artwork uses finishEditorialCarousel.
  if (params.carouselSlide) {
   const accent = Buffer.from(`<svg width="96" height="7"><rect width="96" height="7" rx="3.5" fill="${primary}"/></svg>`);
   layers.push({input:accent,left:64,top:heroHeight+32});

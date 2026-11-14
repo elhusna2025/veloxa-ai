@@ -180,6 +180,57 @@ test('carousel planning works with actual reference images or no references, wit
  }
 });
 
+test('carousel promotion with a blank topic uses the selected offering and repairs a rejected plan', async () => {
+ const {analyzeReferenceBlend} = await import('./reference-blend');
+ const f = await blendFixture();
+ const record = f.database.values.get(f.ref.path)!;
+ const snapshot = JSON.parse(record.snapshotJson);
+ snapshot.brand.businessName = 'Ulinz Cafe';
+ snapshot.brand.offerings = [{id:'tournament', title:'Turnamen Mobile Legends', highlight:'Pertandingan offline antartim di Ulinz Cafe.', category:'service', priceLabel:''}];
+ record.snapshotJson = JSON.stringify(snapshot);
+ f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.asset.category = 'logo';
+ const stages: string[] = [];
+ const repairs: (string | undefined)[] = [];
+ const proposal = await analyzeReferenceBlend(f.blendRequest({
+  expectedProfileFingerprint: await profileFingerprint(snapshot.brand), sourceMode:'offerings',
+  offeringIds:['tournament'], contentIntent:'promotion', topic:'', existingInstruction:'',
+ }), {
+  authorize:f.authorize as never, storage:f.dependencies.storage,
+  progress:stage => stages.push(stage),
+  suggest:async (brief, options) => {
+   assert.equal(brief.topic, 'Promosi tentang Turnamen Mobile Legends');
+   assert.deepEqual(brief.business.offerings, snapshot.brand.offerings);
+   assert.equal(brief.references[0].category, 'Logo');
+   assert.equal(brief.references[0].role, 'visual');
+   repairs.push(options.repairReason);
+   return {
+    topic:'Turnamen Mobile Legends di Ulinz', visualDirection:'Cahaya kafe dengan aksen neon.',
+    slides: reviewedSlides.map((slide, index) => ({...slide, refNumbers:options.rewrite && index === 0 ? [1] : []})),
+   };
+  },
+ }, true);
+ assert.deepEqual(repairs, [undefined, 'Rencana belum menempatkan seluruh acuan visual.']);
+ assert.deepEqual(stages, ['validation','references','analysis','rewrite','review']);
+ assert.deepEqual(proposal.slides.map(slide => slide.assetIds), [[photoId], [], [], [], []]);
+ assert.equal(f.generationCount(), 0);
+ assert.equal(f.count(), 0);
+});
+
+test('carousel planning retries an incomplete provider response and supports an original logo with no scene reference', async () => {
+ const {analyzeReferenceBlend} = await import('./reference-blend');
+ const f = await blendFixture();
+ const proposal = await analyzeReferenceBlend(f.blendRequest({referenceRoles:{[photoId]:'logo'}}), {
+  authorize:f.authorize as never, storage:f.dependencies.storage,
+  suggest:async (_brief, options) => {
+   if (!options.rewrite) throw new ApiError(502, 'Provider timeout', 'carousel_plan_provider_retryable');
+   assert.match(options.repairReason ?? '', /sebelumnya belum selesai/);
+   return {topic:'Promo kafe', visualDirection:'Suasana kafe terang.', slides:reviewedSlides.map(slide => ({...slide, refNumbers:[]}))};
+  },
+ }, true);
+ assert.deepEqual(proposal.slides.map(slide => slide.assetIds), [[], [], [], [], []]);
+ assert.equal(f.database.values.has(`${f.ref.path}/reference_blend_jobs/primary`), false);
+});
+
 test('blend rejects stale/foreign/trashed/duplicate/missing or unassigned refs before AI',async()=>{const{analyzeReferenceBlend}=await import('./reference-blend');for(const invalid of['profile','business','trash','duplicate','missing','roles','workspace','offering']as const){const f=await blendFixture();let calls=0;const extra:any={};if(invalid==='profile')extra.expectedProfileFingerprint='0'.repeat(64);if(invalid==='business')f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.asset.businessId='b_foreign';if(invalid==='trash')f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.trashedAt=1;if(invalid==='duplicate')extra.referenceAssetIds=[photoId,photoId];if(invalid==='missing')f.database.values.delete(`${f.ref.path}/server_assets/${photoId}`);if(invalid==='roles')extra.referenceRoles={};if(invalid==='workspace')extra.workspaceId='foreign-workspace';if(invalid==='offering'){extra.sourceMode='offerings';extra.offeringIds=['foreign'];}await assert.rejects(analyzeReferenceBlend(f.blendRequest(extra),{authorize:f.authorize as never,storage:f.dependencies.storage,suggest:async()=>{calls++;return blendAnswer;}}));assert.equal(calls,0);assert.equal([...f.database.values.keys()].some(k=>k.includes('/reference_blend_jobs/')),false);}});
 test('blend discards response after profile/metadata/storage/membership changes and releases lease',async()=>{const{analyzeReferenceBlend}=await import('./reference-blend');for(const mutation of['profile','metadata','storage','membership','trash','malformed']as const){const f=await blendFixture();await assert.rejects(analyzeReferenceBlend(f.blendRequest(),{authorize:f.authorize as never,storage:f.dependencies.storage,suggest:async()=>{const record=f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!;if(mutation==='metadata')record.asset.metadataRevision=1;if(mutation==='storage')record.storagePath=record.storagePath.replace(photoId,'123e4567-e89b-42d3-a456-426614174001');if(mutation==='trash')record.trashedAt=1;if(mutation==='membership')f.database.values.get(f.ref.path)!.ownerUid='another-owner';if(mutation==='profile'){const ws=f.database.values.get(f.ref.path)!;const snap=JSON.parse(ws.snapshotJson);snap.brand.businessName='Changed';ws.snapshotJson=JSON.stringify(snap);}return mutation==='malformed'?{...blendAnswer,instruction:'Does not cover any Ref'}:blendAnswer;}}));assert.equal(f.database.values.has(`${f.ref.path}/reference_blend_jobs/primary`),false);assert.equal(f.generationCount(),0);assert.equal(f.count(),0);}});
 test('blend prevents concurrent analysis for same business and cleans provider failures',async()=>{const{analyzeReferenceBlend}=await import('./reference-blend');const f=await blendFixture();let calls=0,release!:()=>void;const gate=new Promise<void>(r=>release=r);const deps={authorize:f.authorize as never,storage:f.dependencies.storage,suggest:async()=>{calls++;await gate;return blendAnswer;}};const first=analyzeReferenceBlend(f.blendRequest(),deps);while(!calls)await new Promise(r=>setImmediate(r));await assert.rejects(analyzeReferenceBlend(f.blendRequest(),deps),/masih berjalan/);release();await first;assert.equal(calls,1);await assert.rejects(analyzeReferenceBlend(f.blendRequest(),{...deps,suggest:async()=>{throw new Error('provider failed');}}));assert.equal(f.database.values.has(`${f.ref.path}/reference_blend_jobs/primary`),false);});
@@ -723,10 +774,26 @@ test('protected originals stay out of AI scene requests and are composited into 
  for(const format of ['single_post','carousel'] as const){
   const f=fixture();const ids=await seedReferences(f,3);let calls=0;
   const roles={[ids[0]]:'visual',[ids[1]]:'screenshot',[ids[2]]:'logo'} as const;
-  const {draft}=await f.create({format,referenceAssetIds:ids,referenceRoles:roles,renderImage:async(input:any)=>{calls++;assert.equal(input.sceneOnly,format==='single_post');if(format==='carousel')assert.equal(input.hasOriginalLogo,true);assert.deepEqual(input.referenceImages,[f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[0]}.jpg`)]);assert.deepEqual(input.sceneReferenceLabels,['Ref 1: Reference 1']);return sharp({create:{width:1080,height:1350,channels:3,background:'#102030'}}).jpeg().toBuffer();}});
+  const {draft}=await f.create({format,referenceAssetIds:ids,referenceRoles:roles,renderImage:async(input:any)=>{calls++;assert.equal(input.sceneOnly,false);assert.equal(input.hasOriginalLogo,true);assert.equal(input.hasOriginalScreenshot,true);assert.deepEqual(input.referenceImages,[f.blobs.get(`workspaces/${f.ref.id}/vault/${ids[0]}.jpg`)]);assert.deepEqual(input.sceneReferenceLabels,['Ref 1: Reference 1']);return sharp({create:{width:1080,height:1350,channels:3,background:'#102030'}}).jpeg().toBuffer();}});
   assert.deepEqual(draft.referenceRoles,roles);assert.equal(calls,format==='carousel'?5:1);assert.deepEqual(draft.usedRealAssetIds,ids);
   const record=f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;const paths=record.storagePaths||[record.storagePath];for(const path of paths){const meta=await sharp(f.blobs.get(path)!).metadata();assert.equal(meta.width,1080);assert.equal(meta.height,1350);}
  }
+});
+
+test('Studio single post saves the integrated artwork without adding a dark wash or CTA card', async () => {
+ const f = fixture();
+ const artwork = await sharp({create:{width:1080,height:1350,channels:3,background:'#E3B866'}}).jpeg().toBuffer();
+ const {draft} = await f.create({format:'single_post', renderImage:async params => {
+  assert.equal(params.editorialSinglePost, true);
+  assert.equal(params.sceneOnly, false);
+  assert.equal(params.title, `Kenali ${params.businessName}`);
+  return artwork;
+ }});
+ const record = f.database.values.get(`${f.ref.path}/social_drafts/${draft.id}`)!;
+ const saved = f.blobs.get(record.storagePath)!;
+ const expected = await sharp(artwork).raw().toBuffer();
+ assert.deepEqual(await sharp(saved).raw().toBuffer(), expected);
+ assert.equal(f.count(), 0);
 });
 test('bad or ambiguous roles cannot consume generation quota or invoke providers',async()=>{
  for(const role of ['foreign','invalid','duplicate-logo','duplicate-screen']){const f=fixture();const ids=await seedReferences(f,3);const roles=role==='foreign'?{'123e4567-e89b-42d3-a456-426614174099':'logo'}:role==='invalid'?{[ids[0]]:'not-a-role'}:{[ids[0]]:role==='duplicate-logo'?'logo':'screenshot',[ids[1]]:role==='duplicate-logo'?'logo':'screenshot'};await assert.rejects(f.create({referenceAssetIds:ids,referenceRoles:roles as never}));assert.equal(f.generationCount(),0);assert.equal(f.generateCalls(),0);assert.equal(f.renderCalls(),0);}
