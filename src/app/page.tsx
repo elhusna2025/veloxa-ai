@@ -706,7 +706,7 @@ export default function VeloxaAiPlatformPage() {
       lang={isUserWorkspaceView ? locale : undefined}
       dir={isUserWorkspaceView ? workspaceLanguage.dir : undefined}
       className={`min-h-dvh text-neutral-900 ${
-        isUserWorkspaceView ? `pb-24 lg:pb-0 ${workspaceStyles.frame}` : !authUser ? 'bg-[#fbf7f2]' : ''
+        isUserWorkspaceView ? `pb-[max(6rem,calc(4.5rem+env(safe-area-inset-bottom,0px)))] lg:pb-0 ${workspaceStyles.frame}` : !authUser ? 'bg-[#fbf7f2]' : ''
       }`}
     >
       {authUser && isWorkspaceLoading && <div className="fixed inset-0 z-[100] grid place-items-center bg-white" role="status" aria-live="polite"><div className="text-center"><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-pink-100 border-t-[#D85A88]" /><p className="font-medium text-neutral-800">{t('Menyiapkan workspace Anda…')}</p></div></div>}
@@ -988,7 +988,7 @@ export default function VeloxaAiPlatformPage() {
           <nav
             aria-label={t('Navigasi utama')}
             data-testid="mobile-workspace-bottom-nav"
-            className={`${workspaceStyles.mobileNav} veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t px-2 pt-1.5 backdrop-blur lg:hidden`}
+            className={`${workspaceStyles.mobileNav} veloxa-native-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 gap-1 border-t pt-1.5 backdrop-blur lg:hidden`}
           >
             {WORKSPACE_NAVIGATION.map(({ id, short, label, icon: Icon }) => (
               <button
@@ -1000,7 +1000,7 @@ export default function VeloxaAiPlatformPage() {
                 onClick={() => navigateWorkspace(id)}
                 className="flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg px-0.5 py-1 text-[11px] font-semibold leading-tight"
               >
-                <Icon aria-hidden="true" size={19} strokeWidth={1.75}/>
+                <span className={workspaceStyles.mobileNavIcon}><Icon aria-hidden="true" size={19} strokeWidth={1.75}/></span>
                 <span className="truncate">{t(short)}</span>
               </button>
             ))}

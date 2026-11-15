@@ -27,15 +27,44 @@
 .iconButton:hover { background: var(--ws-soft); }
 .language { flex-shrink: 0; }
 .language button { border-color: var(--ws-border); color: var(--ws-action); font-size: 14px; padding-inline: 8px; }
-.mobileNav { border-color: var(--ws-border); background: #fffffff7; box-shadow: 0 -3px 16px #3011250a; }
+.mobileNav {
+  border-color: var(--ws-border);
+  background: #fffffff7;
+  box-shadow: 0 -3px 16px #3011250a;
+  padding-left: max(8px, env(safe-area-inset-left, 0px));
+  padding-right: max(8px, env(safe-area-inset-right, 0px));
+}
 .mobileNav button { min-height: 48px; color: var(--ws-muted); }
-.mobileNav button[aria-current='page'] { background: var(--ws-soft); color: var(--ws-action); }
+.mobileNav button[aria-current='page'] { color: var(--ws-action); }
+.mobileNavIcon { display: grid; min-width: 38px; min-height: 25px; place-items: center; border-radius: 8px; }
+.mobileNav button[aria-current='page'] .mobileNavIcon, .mobileNav button:active .mobileNavIcon { background: var(--ws-soft); }
 .mobileNav button span { max-inline-size: 100%; }
 .sectionIntro { position: relative; overflow: hidden; background: linear-gradient(105deg, white 45%, var(--ws-soft)); }
 .sectionIntro :where(h2,h3) { color: var(--ws-ink); }
 .switcher { border-color: var(--ws-border); box-shadow: 0 2px 6px #30112506; }
 .switcherMark { background: var(--ws-soft); color: var(--ws-action); }
 .plan { border-color: var(--ws-border); background: var(--ws-surface); }
+@media (max-width: 639px) {
+  .overviewHeader {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 15;
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    padding-bottom: 8px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .overviewHeader .headerIdentity { display: flex; flex-direction: column-reverse; gap: 2px; }
+  .overviewHeader .headerIdentity p { margin: 0; }
+  .overviewContent {
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .overviewContent :where(button, a, input) {
+    scroll-margin-block: calc(72px + env(safe-area-inset-top, 0px)) calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .overviewContent footer :where(button, a) { display: inline-flex; min-height: 44px; align-items: center; }
+}
 @media (min-width: 640px) {
   .header { padding-block: 18px; }
   .headerTitle { font-size: 26px; }

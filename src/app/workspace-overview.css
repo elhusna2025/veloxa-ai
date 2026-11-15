@@ -1,4 +1,4 @@
-.ws-overview-overview { display: grid; gap: 24px; min-width: 0; }
+.ws-overview-overview, .ws-overview-creation { display: grid; gap: 24px; min-width: 0; }
 .ws-first-post {
   overflow: hidden;
   border: 1px solid var(--ws-border);
@@ -92,6 +92,7 @@
 .ws-overview-metric p svg { flex-shrink: 0; color: var(--ws-action); }
 .ws-overview-metric strong { margin-block-start: 4px; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .ws-overview-metric > span { font-size: 12px; color: #824919; margin-block-start: 5px; }
+.ws-overview-metric > .ws-overview-metric-detail { color: var(--ws-muted); }
 .ws-overview-details { display: grid; align-items: start; gap: 14px; }
 .ws-overview-card-header, .ws-overview-profile-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 14px; min-height: 54px; }
 .ws-overview-card-header { border-bottom: 1px solid var(--ws-border); }
@@ -105,6 +106,11 @@
 .ws-overview-row-text { display: grid; min-width: 0; flex: 1; gap: 2px; line-height: 1.35; overflow-wrap: anywhere; }
 .ws-overview-row-text strong { font-size: 15px; font-weight: 650; }
 .ws-overview-row-text small, .ws-overview-profile-row p { color: var(--ws-muted); font-size: 13px; }
+.ws-overview-row-icon[data-channel='facebook'] { background: #eef1fa; color: #28468b; }
+.ws-overview-row-icon[data-channel='instagram'] { background: var(--ws-soft); color: var(--ws-action); }
+.ws-overview-account-status { display: inline-flex; align-items: center; gap: 4px; max-inline-size: 34%; font-size: 12px; line-height: 1.3; text-align: end; }
+.ws-overview-account-status svg { flex-shrink: 0; }
+.ws-overview-account-status span { overflow-wrap: anywhere; }
 .ws-overview-badge { max-width: 35%; border-radius: 6px; padding: 4px 6px; background: var(--ws-soft); color: var(--ws-action); font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
 .ws-overview-success, .ws-overview-badge[data-state='success'] { color: #166347; }
 .ws-overview-badge[data-state='success'] { background: #e9f7ef; }
@@ -116,10 +122,51 @@
 .ws-overview-social-empty { padding: 14px 14px 0; }
 .ws-overview-profile-row { border-top: 1px solid var(--ws-border); font-size: 14px; }
 .ws-overview-profile-row > div { min-width: 0; }
+@media (max-width: 639px) {
+  .ws-overview-overview { gap: 22px; }
+  .ws-overview-creation { gap: 0; }
+  .ws-first-post + .ws-overview-format-section { margin-block-start: 14px; }
+  .ws-overview-hero { min-height: 124px; padding: 14px 16px; border-radius: 12px 12px 0 0; }
+  .ws-overview-hero-copy { width: min(78%, 420px); }
+  .ws-overview-hero h2 { text-wrap: pretty; }
+  .ws-overview-hero :is(.ws-overview-eyebrow, .ws-overview-lede) { display: none; }
+  .ws-overview-hero-button { margin-block-start: 10px; }
+  .ws-overview-art { width: 92px; height: 103px; inset-inline-end: 10px; opacity: .76; }
+  .ws-overview-hero + .ws-overview-format-section > h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .ws-overview-formats, .ws-overview-metrics {
+    gap: 1px;
+    border: 1px solid var(--ws-border);
+    border-radius: 12px;
+    background: var(--ws-border);
+  }
+  .ws-overview-hero + .ws-overview-format-section .ws-overview-formats { border-block-start: 0; border-radius: 0 0 12px 12px; }
+  .ws-overview-format, .ws-overview-metric { border: 0; border-radius: 0; }
+  .ws-overview-format { align-items: center; gap: 5px; padding: 9px 5px 10px; text-align: center; }
+  .ws-overview-format:active, .ws-overview-card-actions .ws-overview-text-button:active { background: var(--ws-soft); }
+  .ws-overview-format:focus-visible { outline-offset: -3px; }
+  .ws-overview-format-icon { width: 32px; height: 32px; }
+  .ws-overview-format:first-child { border-start-start-radius: 11px; border-end-start-radius: 11px; }
+  .ws-overview-format:last-child { border-start-end-radius: 11px; border-end-end-radius: 11px; }
+  .ws-overview-hero + .ws-overview-format-section .ws-overview-format { border-start-start-radius: 0; border-start-end-radius: 0; }
+  .ws-overview-metrics { overflow: hidden; }
+  .ws-overview-metric { padding: 10px 12px; }
+  .ws-overview-metric strong { line-height: 1.15; }
+  .ws-first-post-steps { gap: 0; padding: 8px; }
+  .ws-first-post-steps li + li:not([aria-current='step']) { border-block-start-color: var(--ws-border); }
+  .ws-overview-details { gap: 18px; }
+  .ws-overview-draft-row { padding-block: 10px; }
+  .ws-overview-card-actions .ws-overview-text-button { width: 100%; justify-content: space-between; text-align: start; }
+}
 @media (max-width: 359px) {
   .ws-overview-hero-copy { width: 86%; }
   .ws-overview-art { opacity: .42; }
-  .ws-overview-formats { gap: 5px; }
   .ws-overview-format { padding-inline: 6px; }
 }
 @media (min-width: 640px) {

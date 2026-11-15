@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ArrowRight, Check, CircleHelp, FileText, Image as ImageIcon, Layers, Link2, Megaphone, Play, Send, Sparkles, Ticket } from 'lucide-react';
+import { ArrowRight, Check, CircleHelp, Facebook, FileText, Image as ImageIcon, Instagram, Layers, Link2, Megaphone, Play, Send, Sparkles, Ticket } from 'lucide-react';
 import type { BrandProfile, ChannelConnectionState, ContentDraft, ContentFormat } from '@/lib/veloxa-types';
 import { firstPostProgress } from '@/lib/first-post-guide';
 import { useWorkspaceCopy } from '@/lib/veloxa-workspace-copy';
@@ -9,6 +9,7 @@ import { workspaceCatalog } from '@/lib/workspace-catalog';
 import { VeloxaFirstPostGuide } from './VeloxaFirstPostGuide';
 
 const channels = { instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok', youtube_shorts: 'YouTube Shorts' };
+const socialIcons = { facebook: Facebook, instagram: Instagram, tiktok: Link2, youtube_shorts: Play };
 const draftLabels: Record<ContentDraft['status'], string> = {
   draft: 'Draf', repairing: 'Diproses', approved: 'Siap ditinjau', scheduled: 'Dijadwalkan',
   published: 'Terbit', publishing: 'Sedang mengirim', publish_queued: 'Siap dilanjutkan',
@@ -64,43 +65,47 @@ export function VeloxaWorkspaceOverview(props: Props) {
   ];
 
   return <div className="ws-overview-overview" data-testid="workspace-clean-overview">
-    {firstPost && progress && (!progress.hasAccount || (firstPost.historyReady && !progress.hasPublished)) ? (
-      <VeloxaFirstPostGuide
-        progress={progress}
-        canAssignAccount={firstPost.canAssignAccount}
-        hasDrafts={props.drafts.length > 0}
-        disabled={firstPost.disabled}
-        onConnect={firstPost.onConnect}
-        onAssign={firstPost.onAssign}
-        onProfile={props.onEditProfile}
-        onDraft={() => props.onCreateContent('single_post')}
-        onCollection={firstPost.onCollection}
-        onReview={firstPost.onReview}
-      />
-    ) : <section className="ws-overview-hero" aria-labelledby="overview-create-title">
-      <div className="ws-overview-hero-copy">
-        <p className="ws-overview-eyebrow"><Sparkles size={15} aria-hidden="true"/>{t('Mulai membuat')}</p>
-        <h2 id="overview-create-title">{t('Buat konten baru')}</h2>
-        <p className="ws-overview-lede">{t('Buat post, carousel, atau Reels untuk bisnis Anda.')}</p>
-        <button type="button" className="ws-overview-hero-button" onClick={props.onStudio}>{t('Buka Content Studio')}<ArrowRight size={16} aria-hidden="true" className="ws-overview-arrow"/></button>
-      </div>
-      <div className="ws-overview-art" aria-hidden="true">
-        <span className="ws-overview-orbit"/>
-        <span className="ws-overview-art-back"><Layers/></span>
-        <span className="ws-overview-art-front"><ImageIcon/><i/><i/></span>
-        <span className="ws-overview-art-play"><Play fill="currentColor"/></span>
-        <Sparkles className="ws-overview-art-sparkle"/>
-      </div>
-    </section>}
+    <div className="ws-overview-creation">
+      {firstPost && progress && (!progress.hasAccount || (firstPost.historyReady && !progress.hasPublished)) ? (
+        <VeloxaFirstPostGuide
+          progress={progress}
+          canAssignAccount={firstPost.canAssignAccount}
+          hasDrafts={props.drafts.length > 0}
+          disabled={firstPost.disabled}
+          onConnect={firstPost.onConnect}
+          onAssign={firstPost.onAssign}
+          onProfile={props.onEditProfile}
+          onDraft={() => props.onCreateContent('single_post')}
+          onCollection={firstPost.onCollection}
+          onReview={firstPost.onReview}
+        />
+      ) : (
+        <section className="ws-overview-hero" aria-labelledby="overview-create-title">
+          <div className="ws-overview-hero-copy">
+            <p className="ws-overview-eyebrow"><Sparkles size={15} aria-hidden="true"/>{t('Mulai membuat')}</p>
+            <h2 id="overview-create-title">{t('Buat konten baru')}</h2>
+            <p className="ws-overview-lede">{t('Buat post, carousel, atau Reels untuk bisnis Anda.')}</p>
+            <button type="button" className="ws-overview-hero-button" onClick={props.onStudio}>{t('Buka Content Studio')}<ArrowRight size={16} aria-hidden="true" className="ws-overview-arrow"/></button>
+          </div>
+          <div className="ws-overview-art" aria-hidden="true">
+            <span className="ws-overview-orbit"/>
+            <span className="ws-overview-art-back"><Layers/></span>
+            <span className="ws-overview-art-front"><ImageIcon/><i/><i/></span>
+            <span className="ws-overview-art-play"><Play fill="currentColor"/></span>
+            <Sparkles className="ws-overview-art-sparkle"/>
+          </div>
+        </section>
+      )}
 
-    <section aria-labelledby="overview-formats-title">
-      <h2 id="overview-formats-title" className="ws-overview-section-title">{t('Pilih format')}</h2>
-      <div className="ws-overview-formats">{formats.map((format, index) => <button key={format.id} type="button" onClick={() => props.onCreateContent(format.id)} className="ws-overview-format" data-variation={index}>
-        <span className="ws-overview-format-icon"><format.icon size={20} strokeWidth={1.75} aria-hidden="true"/></span>
-        <span className="ws-overview-format-text"><strong>{t(format.label)}</strong><span>{t(format.detail)} · <bdi>{format.ratio}</bdi></span></span>
-        <ArrowRight size={16} aria-hidden="true" className="ws-overview-arrow"/>
-      </button>)}</div>
-    </section>
+      <section className="ws-overview-format-section" aria-labelledby="overview-formats-title">
+        <h2 id="overview-formats-title" className="ws-overview-section-title">{t('Pilih format')}</h2>
+        <div className="ws-overview-formats">{formats.map((format, index) => <button key={format.id} type="button" onClick={() => props.onCreateContent(format.id)} className="ws-overview-format" data-variation={index}>
+          <span className="ws-overview-format-icon"><format.icon size={20} strokeWidth={1.75} aria-hidden="true"/></span>
+          <span className="ws-overview-format-text"><strong>{t(format.label)}</strong><span>{t(format.detail)} · <bdi>{format.ratio}</bdi></span></span>
+          <ArrowRight size={16} aria-hidden="true" className="ws-overview-arrow"/>
+        </button>)}</div>
+      </section>
+    </div>
 
     <section aria-labelledby="overview-summary-title">
       <h2 id="overview-summary-title" className="ws-overview-section-title">{t('Ringkasan bisnis')}</h2>
@@ -108,7 +113,7 @@ export function VeloxaWorkspaceOverview(props: Props) {
         <p><metric.icon size={16} strokeWidth={1.75} aria-hidden="true"/>{t(metric.label)}</p>
         <strong><bdi>{metric.value}</bdi></strong>
         {metric.note && <span>{t(metric.note)}</span>}
-        {metric.label === 'Kuota publikasi' && dailyQuota && <span>{t('{used} / {quota} hari ini', { used: number.format(dailyQuota.used), quota: number.format(dailyQuota.limit) })}</span>}
+        {metric.label === 'Kuota publikasi' && dailyQuota && <span className="ws-overview-metric-detail">{t('{used} / {quota} hari ini', { used: number.format(dailyQuota.used), quota: number.format(dailyQuota.limit) })}</span>}
       </article>)}</div>
     </section>
 
@@ -127,11 +132,17 @@ export function VeloxaWorkspaceOverview(props: Props) {
 
       <section className="ws-overview-card" aria-labelledby="overview-social-title">
         <div className="ws-overview-card-header"><h2 id="overview-social-title">{t('Akun sosial')}</h2><Link2 size={18} className="ws-overview-subtle-icon" aria-hidden="true"/></div>
-        {connected.length ? <ul className="ws-overview-rows">{connected.slice(0, 4).map(account => <li key={account.connectionId || account.channel} className="ws-overview-draft-row">
-          <span className="ws-overview-row-icon" aria-hidden="true">{channels[account.channel].slice(0, 2)}</span>
-          <span className="ws-overview-row-text"><strong dir="auto">{account.channel === 'facebook' ? account.accountName : account.handle || account.accountName}</strong><small>{channels[account.channel]}</small></span>
-          <span className={props.connectionsVerified ? 'ws-overview-success' : 'ws-overview-attention'} role="img" aria-label={t(props.connectionsVerified ? 'Terhubung' : 'Status tersimpan, belum diperbarui')}>{props.connectionsVerified ? <Check size={17}/> : <CircleHelp size={17}/>}</span>
-        </li>)}</ul> : <p className="ws-overview-social-empty">{t(props.connectionsVerified ? 'Belum ada akun terhubung.' : 'Status akun sosial belum dapat diperiksa.')}</p>}
+        {connected.length ? <ul className="ws-overview-rows">{connected.slice(0, 4).map(account => {
+          const Icon = socialIcons[account.channel];
+          return <li key={account.connectionId || account.channel} className="ws-overview-draft-row">
+            <span className="ws-overview-row-icon" data-channel={account.channel}><Icon size={18} aria-hidden="true"/></span>
+            <span className="ws-overview-row-text"><strong dir="auto">{account.channel === 'facebook' ? account.accountName : account.handle || account.accountName}</strong><small>{channels[account.channel]}</small></span>
+            <span className={`ws-overview-account-status ${props.connectionsVerified ? 'ws-overview-success' : 'ws-overview-attention'}`}>
+              {props.connectionsVerified ? <Check size={16} aria-hidden="true"/> : <CircleHelp size={16} aria-hidden="true"/>}
+              <span>{t(props.connectionsVerified ? 'Terhubung' : 'Status tersimpan, belum diperbarui')}</span>
+            </span>
+          </li>;
+        })}</ul> : <p className="ws-overview-social-empty">{t(props.connectionsVerified ? 'Belum ada akun terhubung.' : 'Status akun sosial belum dapat diperiksa.')}</p>}
         <div className="ws-overview-card-actions"><button type="button" className="ws-overview-text-button" onClick={props.onConnections}>{t('Kelola akun sosial')}{connected.length > 4 && <> ({number.format(connected.length)})</>}<ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow"/></button></div>
         <div className="ws-overview-profile-row"><div><strong>{t('Profil bisnis')}</strong><p dir="auto">{props.brand.businessName}</p></div><button type="button" onClick={props.onEditProfile} className="ws-overview-text-button">{t('Perbarui profil')} <ArrowRight size={15} aria-hidden="true" className="ws-overview-arrow"/></button></div>
       </section>

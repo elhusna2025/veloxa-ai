@@ -53,9 +53,12 @@ export function VeloxaWorkspaceShell(props: Props) {
       </div>{props.isSuperAdmin && <button type="button" onClick={props.onAdmin} className="mt-4 w-full text-sm text-[var(--ws-muted)]">{t('Kembali ke Super Admin')}</button>}</div>
     </VeloxaWorkspaceSidebar>
     <div className={`${styles.main} min-w-0`} data-testid="user-workspace-main">
-      <header data-testid="workspace-right-header" className={`${styles.header} bg-white px-4 sm:px-7 lg:px-9`}>
+      <header data-testid="workspace-right-header" className={`${styles.header} ${props.activeTab === 'overview' ? styles.overviewHeader : ''} bg-white px-4 sm:px-7 lg:px-9`}>
         <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-2">
-          <div className="min-w-0"><p dir="auto" className="mb-0.5 truncate text-[13px] text-[var(--ws-muted)]" title={props.brandName}>{props.brandName}</p><h1 className={styles.headerTitle}>{t(selected.label)}</h1></div>
+          <div className={`${styles.headerIdentity} min-w-0`}>
+            <p dir="auto" className="mb-0.5 truncate text-[13px] text-[var(--ws-muted)]" title={props.brandName}>{props.brandName}</p>
+            <h1 className={styles.headerTitle}>{t(selected.label)}</h1>
+          </div>
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <div className={styles.language}><VeloxaSelect fullWidth={false} id="workspace-locale" aria-label={t('Pilih Bahasa Workspace')} value={props.locale} onValueChange={value => props.onLocale(value as VeloxaLocale)} className="w-[68px] !gap-1" popupMinWidth={158} displayValue={props.locale.toUpperCase()}>{VELOXA_LOCALES.map(item => <option key={item.code} value={item.code}>{item.nativeName}</option>)}</VeloxaSelect></div>
             {props.activeTab !== 'overview' && props.activeTab !== 'studio' && <button type="button" onClick={props.onCreate} aria-label={t('Buat konten')} className="veloxa-button-primary !px-2.5 sm:!px-4"><Plus size={18} aria-hidden="true"/><span className="hidden sm:inline">{t('Buat konten')}</span></button>}
@@ -64,7 +67,7 @@ export function VeloxaWorkspaceShell(props: Props) {
           </div>
         </div>
       </header>
-      <div className="mx-auto max-w-[1480px] space-y-5 px-4 py-4 sm:px-7 sm:py-6 lg:px-9">
+      <div className={`mx-auto max-w-[1480px] space-y-5 px-4 py-4 sm:px-7 sm:py-6 lg:px-9 ${props.activeTab === 'overview' ? styles.overviewContent : ''}`}>
         {props.status && <div role="status" aria-live="polite" className="flex items-center justify-between gap-2 rounded-lg border border-[var(--ws-border)] bg-white px-3 py-1 text-sm leading-relaxed text-[var(--ws-muted)]"><span>{t(props.status)}</span><button type="button" onClick={props.onDismissStatus} aria-label={t("Tutup pemberitahuan")} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-[var(--ws-action)] hover:bg-[var(--ws-soft)]"><X size={17} aria-hidden="true"/></button></div>}
         {props.children}
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ws-border)] pt-4 text-sm text-[var(--ws-muted)]"><span>Veloxa AI</span><div className="flex flex-wrap items-center gap-4"><button type="button" data-testid="local-first-sync-btn" onClick={props.onSync} className="inline-flex items-center gap-1.5 hover:text-[var(--ws-action)]"><RefreshCw size={14} aria-hidden="true"/>{t('Sinkronkan')}</button><Link href="/privacy" className="hover:text-[var(--ws-action)]">{t('Privasi')}</Link></div></footer>
