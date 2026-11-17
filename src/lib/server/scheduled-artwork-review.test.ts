@@ -58,6 +58,7 @@ test('repaired Reels reviews layout and unexpected copy on the original photo', 
   assert.match(instructions, /second image only/);
   assert.match(instructions, /Do not transcribe or compare the copy in the first image/);
   assert.match(instructions, /logo and original screenshot leave faces, hands and key objects visible/);
+  assert.match(instructions, /Reject outlined letters/);
   const metadata = JSON.parse(context.text);
   assert.equal(metadata.scene.topic, params.title);
   assert.equal(metadata.reserved.length, 2);
@@ -77,7 +78,10 @@ test('repaired Reels reviews layout and unexpected copy on the original photo', 
   await assert.rejects(verifyScheduledArtwork(finished, reels, undefined, client), {
     code: 'scheduled_artwork_review_unavailable',
   });
-  assert.equal(calls.length, 3);
+  await assert.rejects(verifyScheduledArtwork(finished, { ...reels, scheduledEditorial: false }, original, client), {
+    code: 'reels_photo_layout_unreadable', message: /Teks dan subjek/,
+  });
+  assert.equal(calls.length, 4);
 });
 
 test('feed review uses exact final bytes, a same-sized comparison and selected reference thumbnails', async () => {

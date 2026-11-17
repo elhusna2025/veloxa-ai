@@ -124,7 +124,10 @@ export async function verifyScheduledArtwork(
     throw new ApiError(422, 'Foto Reels memuat tulisan promosi tambahan yang perlu diganti.', reelsRejectionCode);
   }
   if (typesetReels && !layoutPasses) {
-    throw new ApiError(422, 'Teks dan subjek pada foto Reels belum tertata dengan jelas. Coba lagi dengan arahan visual yang lebih sederhana.', reelsRejectionCode);
+    const message = studioReels
+      ? 'Teks dan subjek pada foto Reels belum tertata dengan jelas. Coba lagi dengan arahan visual yang lebih sederhana.'
+      : 'Tata letak akhir Reels belum lolos pemeriksaan visual.';
+    throw new ApiError(422, message, reelsRejectionCode);
   }
   if (!passesScheduledArtworkReview(params, { visibleCopy, layoutPasses })) throw rejected();
 }
