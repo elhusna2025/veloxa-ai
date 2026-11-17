@@ -70,9 +70,28 @@ test('Reels photo repair reserves separate final copy and preserves a dark brief
 
   assert.match(prompt, /Closing copy region: x 6–55%, y 69–81%/);
   assert.match(prompt, /evenly dark natural surface for light type in an explicitly dark scene/);
-  assert.match(prompt, /Recompose from a wider viewpoint.*one clean focal action farther away/);
+  assert.match(prompt, /Recompose from a wider viewpoint.*lower half of the frame/);
   assert.match(prompt, /"reservedScreenshot"/);
   assert.doesNotMatch(prompt, /This opening is the cover|Lihat jadwal pertunjukan/);
+});
+
+test('Reels closing links grouped under the headline reserve the same natural surface', async () => {
+  const source = await sharp({ create: { width: 72, height: 128, channels: 3, background: 'white' } }).jpeg().toBuffer();
+  let prompt = '';
+  await generateSocialPostImage({
+    businessName: 'Panggung Selatan', title: 'Sampai Jumpa di Panggung', hook: 'Simpan jadwal pertunjukan.',
+    cta: 'Lihat jadwal', aspectRatio: '9:16', scheduledReelsPhotoOnly: true,
+    reelsPhotoLayout: { sceneNumber: 4, copySweeps: {
+      headline: { left: 70, top: 340, width: 640, height: 140 },
+      cta: { left: 70, top: 580, width: 300, height: 60 },
+      website: { left: 70, top: 660, width: 360, height: 60 },
+    } },
+  }, { imageClient: { images: { async generate(request) {
+    prompt = request.prompt;
+    return { data: [{ b64_json: source.toString('base64') }] };
+  } } } });
+  assert.match(prompt, /Headline region.*x 6–66%, y 17–38%/);
+  assert.doesNotMatch(prompt, /Closing copy region:/);
 });
 
 test('Reels scene content follows the business brief for a café and an event', async () => {

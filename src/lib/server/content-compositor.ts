@@ -134,6 +134,17 @@ export async function prepareScheduledReelsCopy(copy: ReelsCopy, hasLogo: boolea
       captionLines.push(copy[key]);
     }
   }
+  const headline = fitted.find(({ key }) => key === 'headline');
+  const closing = fitted.filter(({ key }) => key === 'cta' || key === 'website');
+  if (headline && closing.length) {
+    const underline = reelsUnderlineArea(headline.box);
+    const start = underline.top + underline.height + 34;
+    const originalTop = closing[0].box.top;
+    const bottom = Math.max(...closing.map(({ box }) => box.top + box.height));
+    if (start + bottom - originalTop <= 960) {
+      for (const { box } of closing) box.top += start - originalTop;
+    }
+  }
   return { fitted, captionLines };
 }
 
@@ -312,8 +323,8 @@ function placeReelsText(pixels: Buffer, fitted: ReelsTextBlock[], brandInk: Ink,
       brightest: Math.max(...regions.map(item => item.brightest)),
     }, brandInk);
   };
-  const upper = fitted.filter(({ key }) => key === 'businessName' || key === 'headline');
-  const closing = fitted.filter(({ key }) => key === 'cta' || key === 'website');
+  const upper = fitted.filter(({ box }) => box.top < 1050);
+  const closing = fitted.filter(({ box }) => box.top >= 1050);
   const brand = upper.find(({ key }) => key === 'businessName');
   const upperFloor = Math.max(334, brand ? brand.box.top + brand.box.height + 22 : 334);
   const move = (block: ReelsTextBlock, left: number, top: number): ReelsTextBlock =>
@@ -325,7 +336,8 @@ function placeReelsText(pixels: Buffer, fitted: ReelsTextBlock[], brandInk: Ink,
   // Keep the original logo and brand anchor. Allow the title to settle into a nearby
   // quiet part of the same composition before asking for a replacement photograph.
   for (const [left, top] of [[0, 0], [0, -36], [0, 48], [0, 84], [48, 0], [48, 48]]) {
-    const blocks = upper.map(block => block.key === 'headline' ? move(block, left, top) : block);
+    const blocks = upper.map(block => block.key === 'businessName' ? block : move(block, left, top));
+    if (blocks.some(({ box }) => box.left + box.width > 900 || box.top + box.height > 1028)) continue;
     const headline = blocks.find(({ key }) => key === 'headline');
     const underline = headline && reelsUnderlineArea(headline.box);
     if (headline && underline && (headline.box.top < upperFloor || headline.box.left + headline.box.width > 900

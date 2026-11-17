@@ -102,8 +102,10 @@ function reelsPhotoRegion(boxes: Record<string, ImageBounds>, keys: string[]) {
 function reelsPhotoPrompt(params: SocialPostImageParams) {
   const layout = params.reelsPhotoLayout;
   const rectangles = layout?.copySweeps ?? params.scheduledReelsCopyBounds ?? {};
-  const headlineRegion = reelsPhotoRegion(rectangles, ['businessName', 'logo', 'headline', 'accent', 'body', 'supporting']);
-  const footerRegion = reelsPhotoRegion(rectangles, ['cta', 'website']);
+  const closing = ['cta', 'website'];
+  const groupedClosing = closing.filter(key => rectangles[key]?.top < 1050);
+  const headlineRegion = reelsPhotoRegion(rectangles, ['businessName', 'logo', 'headline', 'accent', 'body', 'supporting', ...groupedClosing]);
+  const footerRegion = reelsPhotoRegion(rectangles, closing.filter(key => !groupedClosing.includes(key)));
   return [
     'Create one full-bleed 9:16 editorial photograph composed together with the eventual type, like an editorial magazine cover. Output only the photograph. Do not draw captions, letters, numbers, watermarks, logos, readable screen text, sweeps, underlines, text panels, or placeholders. The app layers the exact copy, brand artwork, and original assets afterward.',
     'Make room for the headline before framing the subject. Compose one continuous natural surface through the entire headline region, including the business mark area. Leave its full width and height uninterrupted, including the gaps between lines. Use a softly lit pale surface such as an out-of-focus wall or tabletop for dark type in daylight, or an evenly dark natural surface for light type in an explicitly dark scene. The surface belongs to the location and blends into the photograph. Keep faces, hair, hands, products, equipment, busy patterns, window mullions, reflections, and sharp shadow edges out of all reserved regions for the full motion of the photo.',
@@ -122,7 +124,7 @@ function reelsPhotoPrompt(params: SocialPostImageParams) {
       'Repeat the saved brand colors visibly in physical details appropriate to this business, subject and setting. Let the selected business context, scene direction and visual references determine the people, setting, objects and materials. Use a distinctive palette color as a recurring anchor and a second shade, when available, as a supporting accent. Leave both bottom corners uncluttered for small brand sweeps added by the app and keep the central foreground available for the subject.',
     ] : []),
     ...(params.scheduledArtworkRepair ? [
-      'Recompose from a wider viewpoint and stage one clean focal action farther away from the entire headline region. Check clearance for the subject’s full outline through the motion margin. Use a single soft natural scene surface behind the headline and an independent calm foreground for closing copy. Preserve the topic, selected references, original assets, and setting.',
+      'Recompose from a wider viewpoint. Put the entire person, main product or action in the lower half of the frame, distinctly below all reserved headline and supporting copy, while keeping the setting visible. Use a continuous natural surface across the top half of the photograph for the copy. Preserve the topic, selected references, original assets, and setting.',
     ] : []),
     JSON.stringify({
       copyAreas: params.scheduledReelsCopyBounds,

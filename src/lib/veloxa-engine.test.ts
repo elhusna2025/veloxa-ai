@@ -176,6 +176,22 @@ test('deterministic Reels names the supplied topic in the opening', () => {
   assert.equal(draft.videoScenes?.[0].textOverlay, topic);
 });
 
+test('event Reels use the campaign name as the visible opening without a supplied topic', () => {
+  const brand = BRAND_PRESETS.running_event;
+  const draft = generateBrandContentDraft({
+    brand, format: 'short_video', source: 'autonomous_agent', vaultAssets: [],
+    connections: ALL_CONNECTED_CHANNELS, planId: 'pro_1500k',
+    activeCampaign: {
+      id: 'run-event', workspaceId: brand.workspaceId, name: 'Lari Pagi Bandung',
+      eventDateIso: '2027-01-30T00:00:00Z', location: 'Bandung', ticketOrPromoHighlight: 'Perkenalan rute',
+      targetRegistrationsOrSales: 100, currentConversions: 0, status: 'active',
+      currentPhase: 'teaser_awareness', autoInjectIntoDailyAutonomy: true,
+    },
+  });
+  assert.equal(draft.title, 'Lari Pagi Bandung');
+  assert.equal(draft.videoScenes?.[0].textOverlay, draft.title);
+});
+
 test('computeEventCampaignPhase calculates accurate countdown phases', () => {
   const earlyBird = computeEventCampaignPhase('2026-11-22T00:00:00Z', '2026-11-02T00:00:00Z');
   assert.equal(earlyBird.phase, 'early_bird_launch');

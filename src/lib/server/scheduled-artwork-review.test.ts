@@ -38,6 +38,7 @@ test('repaired Reels reviews layout and unexpected copy on the original photo', 
     scheduledReelsPhotoOnly: true,
     hasOriginalLogo: true,
     hasOriginalScreenshot: true,
+    brandPalette: ['#079BE5', '#FBC905'],
     visualDirection: 'Seorang kasir mencatat transaksi.',
   };
   type ReviewRequest = {
@@ -59,9 +60,11 @@ test('repaired Reels reviews layout and unexpected copy on the original photo', 
   assert.match(instructions, /Do not transcribe or compare the copy in the first image/);
   assert.match(instructions, /logo and original screenshot leave faces, hands and key objects visible/);
   assert.match(instructions, /Reject outlined letters/);
+  assert.match(instructions, /These are allowed edge accents/);
   const metadata = JSON.parse(context.text);
   assert.equal(metadata.scene.topic, params.title);
   assert.equal(metadata.reserved.length, 2);
+  assert.equal(metadata.brandCornerAccents, true);
   assert.equal(firstImage.image_url, `data:image/jpeg;base64,${finished.toString('base64')}`);
   const comparison = Buffer.from(secondImage.image_url.split(',')[1], 'base64');
   const [red, green, blue] = await sharp(comparison).resize(1, 1).raw().toBuffer();
