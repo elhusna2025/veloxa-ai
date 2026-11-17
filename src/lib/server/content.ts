@@ -15,7 +15,7 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { REELS_ACCENT, composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareReelsCopyBatch, shortVisualCta, visualWebsite } from './content-compositor';
+import { composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareReelsCopyBatch, reelsUnderlineArea, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -352,7 +352,7 @@ export async function createSocialContent(request: Request, dependencies: {
           'visual_composition_invalid'), 'compositing');
       }
       const scheduledReelsCopyBounds = Object.fromEntries(fitted.map(({ key, box }) => [key, box]));
-      if (scheduledReelsCopyBounds.headline) scheduledReelsCopyBounds.accent = REELS_ACCENT;
+      if (scheduledReelsCopyBounds.headline) scheduledReelsCopyBounds.accent = reelsUnderlineArea(scheduledReelsCopyBounds.headline);
       return {
         fitted, captionLines, sceneIndex,
         params: { ...params, scheduledReelsPhotoOnly: true, sceneOnly: true, scheduledReelsCopyBounds },
@@ -438,7 +438,7 @@ export async function createSocialContent(request: Request, dependencies: {
     if (!draft.videoScenes || !reelsFrames) throw new ApiError(502, 'Naskah Reels belum lengkap.', 'invalid_content_agent_response');
     progress('media');
     const checkpoint = reuseReelsMedia ? reelsCheckpoint : null;
-    const fixedOverlay = await composeReelsOriginalOverlay(originalAssets);
+    const fixedOverlay = await composeReelsOriginalOverlay(originalAssets, brandPalette);
     const frames = reelsFrames.map((frame, index) => {
       const renderFrame = () => renderReelsFrame(frame, fixedOverlay);
       return checkpoint ? checkpoint.frame(index, renderFrame) : renderFrame();

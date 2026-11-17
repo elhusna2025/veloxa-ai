@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { CAROUSEL_ARTWORK, REELS_ACCENT, REELS_ARTWORK, composeReelsScene, composeSocialVisual, finishEditorialCarousel, compositionLayout, prepareReelsCopyBatch, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
+import { CAROUSEL_ARTWORK, REELS_ARTWORK, composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, compositionLayout, prepareReelsCopyBatch, prepareScheduledReelsCopy, reelsUnderlineArea, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { CONTENT_TYPOGRAPHY } from '../content-typography';
 const params={businessName:'Berez ERP',title:'Penjualan & Stok Lebih Terpantau',hook:'Kelola transaksi dan persediaan dalam satu sistem.',cta:'Kenali Berez ERP',websiteUrl:'https://berez.dafinicode.com/',brandPalette:['#0061AD','#FFFFFF']};
+const cendekiaPalette = ['#079BE5', '#FBC905', '#FA5308', '#056BCA', '#063F9B', '#FEFACE'];
 async function pixelSource(width:number,height:number){const data=Buffer.alloc(width*height*3);for(let i=0;i<data.length;i++)data[i]=(i*29+47)%256;return sharp(data,{raw:{width,height,channels:3}}).png().toBuffer();}
 
 async function runWithIsolatedFonts(script: string) {
@@ -48,7 +49,7 @@ test('bundled Reels fonts retain distinct weights with readable Latin glyphs in 
  `);
 });
 
-test('Reels scenes use one headline size and the same safe accent position across different photo tones', async () => {
+test('Reels scenes share headline size and use readable brand ink with a curved underline', async () => {
  const copies = [
    { headline: 'Kenapa Jawabanku Salah?', cta: '', website: '' },
    { headline: 'Tandai langkah pertama', cta: '', website: '' },
@@ -57,62 +58,113 @@ test('Reels scenes use one headline size and the same safe accent position acros
  ].map(copy => ({ businessName: 'Cendekia AI', ...copy }));
  const prepared = await prepareReelsCopyBatch(copies, true);
  assert.equal(prepared.length, 4);
- const sizes = new Set<number>();
- for (const { fitted, captionLines } of prepared) {
+ const headlines = prepared.map(({ fitted, captionLines }) => {
    assert.deepEqual(captionLines, []);
    const headline = fitted.find(({ key }) => key === 'headline');
    assert.ok(headline);
-   sizes.add(headline.text.fontSize);
-   assert.equal(headline.box.left, prepared[0].fitted.find(({ key }) => key === 'headline')!.box.left);
-   assert.equal(headline.box.top, prepared[0].fitted.find(({ key }) => key === 'headline')!.box.top);
-   assert.ok(headline.box.top >= REELS_ACCENT.top + REELS_ACCENT.height);
-   assert.ok(headline.box.top + headline.box.height < REELS_ARTWORK.screenshot.top);
    for (const { box } of fitted) {
      assert.ok(box.left >= 0 && box.left + box.width <= 1080);
      assert.ok(box.top >= 224 && box.top + box.height <= 1600);
    }
+   const underline = reelsUnderlineArea(headline.box);
+   assert.ok(underline.top >= headline.box.top + headline.box.height);
+   assert.ok(underline.top + underline.height < REELS_ARTWORK.screenshot.top);
+   assert.ok(underline.left >= 0 && underline.left + underline.width <= 1080);
+   return { headline, underline };
+ });
+ const firstHeadline = headlines[0].headline;
+ assert.ok(firstHeadline.text.fontSize >= CONTENT_TYPOGRAPHY.reelsTitle.min);
+ for (const { headline } of headlines) {
+   assert.equal(headline.text.fontSize, firstHeadline.text.fontSize);
+   assert.equal(headline.box.left, firstHeadline.box.left);
+   assert.equal(headline.box.top, firstHeadline.box.top);
  }
- assert.equal(sizes.size, 1);
- assert.ok([...sizes][0] >= CONTENT_TYPOGRAPHY.reelsTitle.min);
- const wideCopy = { ...copies[2], headline: Array(7).fill('WWWWWW').join(' ') };
- const constrained = await prepareReelsCopyBatch([copies[0], wideCopy], true);
+ assert.ok(new Set(headlines.map(({ underline }) => underline.top)).size > 1,
+   'underline follows the actual height of each headline');
+ const wideCopy = { ...copies[2], headline: Array(6).fill('WWWWWWW').join(' ') };
+ const comparison = [copies[0], wideCopy];
+ const independent = await Promise.all(comparison.map(copy => prepareScheduledReelsCopy(copy, true)));
+ const independentSizes = independent.map(({ fitted }) => {
+   const headline = fitted.find(({ key }) => key === 'headline');
+   assert.ok(headline);
+   return headline.text.fontSize;
+ });
+ const constrained = await prepareReelsCopyBatch(comparison, true);
  const constrainedSizes = constrained.map(({ fitted }) => fitted.find(({ key }) => key === 'headline')?.text.fontSize);
- assert.ok(constrainedSizes[0] && constrainedSizes[0] < CONTENT_TYPOGRAPHY.reelsTitle.max);
- assert.equal(constrainedSizes[0], constrainedSizes[1], 'a tighter title adjusts the entire set');
+ const sharedSize = Math.min(...independentSizes);
+ assert.deepEqual(constrainedSizes, [sharedSize, sharedSize], 'the smallest fitted size applies to the whole set');
 
- const brandPalette = ['#F3EEE4', '#123B60'];
  const backgrounds = ['#F3EEE4', '#FAF8F2', '#131C25', '#F8E9D3'];
  const frames = await Promise.all(prepared.map(async ({ fitted }, index) => {
    const photo = await sharp({
      create: { width: 1080, height: 1920, channels: 3, background: backgrounds[index] },
    }).png().toBuffer();
-   return composeReelsScene(photo, fitted, undefined, brandPalette);
+   return composeReelsScene(photo, fitted, undefined, cendekiaPalette);
  }));
  const outputScale = 720 / 1080;
- const accentPixel = {
-   left: Math.round((REELS_ACCENT.left + REELS_ACCENT.width / 2) * outputScale),
-   top: Math.round((REELS_ACCENT.top + REELS_ACCENT.height / 2) * outputScale),
-   width: 1,
-   height: 1,
- };
+ const outputArea = ({ left, top, width, height }: typeof firstHeadline.box) => ({
+   left: Math.floor(left * outputScale),
+   top: Math.floor(top * outputScale),
+   width: Math.ceil(width * outputScale),
+   height: Math.ceil(height * outputScale),
+ });
+ const matchesRgb = (pixels: Buffer, offset: number, expected: number[]) =>
+   expected.every((value, channel) => Math.abs(value - pixels[offset + channel]) <= 4);
  for (const [index, { overlay }] of frames.entries()) {
-   const actual = await sharp(overlay).extract(accentPixel).raw().toBuffer();
-   assert.ok(actual[3] > 240, 'accent remains visible against the photo');
-   const expected = index === 2 ? [0xF3, 0xEE, 0xE4] : [0x12, 0x3B, 0x60];
-   assert.ok(expected.every((channel, i) => Math.abs(channel - actual[i]) <= 4),
-     'accent selects the first sufficiently contrasting brand color');
-   const headline = prepared[index].fitted.find(({ key }) => key === 'headline')!;
-   const ink = await sharp(overlay).extract({
-     left: Math.ceil(headline.box.left * outputScale),
-     top: Math.ceil(headline.box.top * outputScale),
-     width: Math.floor(headline.box.width * outputScale) - 2,
-     height: Math.floor(headline.box.height * outputScale) - 2,
-   }).raw().toBuffer();
-   const visibleGlyph = ink.findIndex((value, offset) => offset % 4 === 3 && value >= 245) - 3;
-   assert.ok(visibleGlyph >= 0);
-   assert.ok(index === 2 ? ink[visibleGlyph] >= 240 : ink[visibleGlyph] <= 30,
-     'headline keeps high contrast on the current photo');
+   const { headline, underline } = headlines[index];
+   const accentBox = outputArea(underline);
+   const accent = await sharp(overlay).extract(accentBox).raw().toBuffer();
+   const goldRows = new Set<number>();
+   let goldColumns = 0;
+   for (let x = 0; x < accentBox.width; x++) {
+     for (let y = 0; y < accentBox.height; y++) {
+       const offset = 4 * (y * accentBox.width + x);
+       if (accent[offset + 3] < 245 || !matchesRgb(accent, offset, [0xFB, 0xC9, 0x05])) continue;
+       goldRows.add(y);
+       goldColumns++;
+       break;
+     }
+   }
+   assert.ok(goldColumns > accentBox.width / 2, 'gold underline is visible on dark and light photographs');
+   assert.ok(goldRows.size > 2, 'underline curves rather than forming a horizontal rule');
+   const ink = await sharp(overlay).extract(outputArea(headline.box)).raw().toBuffer();
+   const expected = index === 2 ? [255, 255, 255] : [0x06, 0x3F, 0x9B];
+   let opaquePixels = 0;
+   let matchingPixels = 0;
+   for (let offset = 0; offset < ink.length; offset += 4) {
+     if (ink[offset + 3] !== 255) continue;
+     opaquePixels++;
+     if (matchesRgb(ink, offset, expected)) matchingPixels++;
+   }
+   assert.ok(matchingPixels > opaquePixels / 2,
+     'pale photos use the darkest readable brand color and dark photos use white');
  }
+});
+
+test('Reels corner accents leave the photo and original logo clear above the corners', async () => {
+ const logo = { id: 'logo', role: 'logo' as const, bytes: await pixelSource(160, 80) };
+ const plain = await composeReelsOriginalOverlay([logo]);
+ const editorial = await composeReelsOriginalOverlay([logo], cendekiaPalette);
+ assert.ok(plain && editorial);
+ const { data, info } = await sharp(editorial).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+ const original = await sharp(plain).ensureAlpha().raw().toBuffer();
+ let lowerLeft = 0;
+ let lowerRight = 0;
+ for (let y = 0; y < info.height; y++) {
+   for (let x = 0; x < info.width; x++) {
+     const offset = (y * info.width + x) * info.channels;
+     if (data.readUInt32BE(offset) === original.readUInt32BE(offset)) continue;
+     assert.ok(y >= info.height - 108, 'no decorative pixels above the bottom corner zone');
+     if (x >= info.width / 3 && x <= info.width * 2 / 3) {
+       assert.ok(y >= info.height - 20, 'only the tips of the accents can reach the center');
+     }
+     if (x < info.width / 2) lowerLeft++;
+     else lowerRight++;
+   }
+ }
+ assert.ok(lowerLeft > 500 && lowerRight > 500);
+ assert.ok(lowerLeft + lowerRight < info.width * info.height * 0.05,
+   'corner accents occupy only a small part of the video');
 });
 
 

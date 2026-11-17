@@ -25,8 +25,6 @@ export const REELS_ARTWORK = {
  logo: {left: 70, top: 224, width: 168, height: 90},
  screenshot: {left: 180, top: 1050, width: 620, height: 224},
 } satisfies Record<OriginalVisualAsset['role'], Rect>;
-export const REELS_ACCENT = { left: 70, top: 343, width: 88, height: 8 } satisfies Rect;
-
 export const scheduledReelsCopyAreas = (hasLogo: boolean) => ({
   businessName: { left: hasLogo ? 242 : 70, top: 243, width: hasLogo ? 658 : 830, height: 88 },
   headline: { left: 70, top: 375, width: 810, height: 310 },
@@ -158,6 +156,17 @@ const DEFAULT_ACCENT: Ink = [32, 103, 164];
 const luminance = (r: number, g: number, b: number) =>
   0.2126 * linearColor[r] + 0.7152 * linearColor[g] + 0.0722 * linearColor[b];
 
+function reelsPalette(colors: string[]) {
+  return colors.filter(color => /^#[\da-f]{6}$/i.test(color))
+    .map((color): Ink => [
+      parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16),
+    ]);
+}
+
+function darkBrandInk(palette: Ink[]) {
+  return [...palette].sort((a, b) => luminance(...a) - luminance(...b))[0] ?? EDITORIAL_INK;
+}
+
 function glyphLayer(alpha: Buffer, width: number, height: number, left: number, top: number, ink: Ink): OverlayOptions {
   const input = Buffer.allocUnsafe(alpha.length * 4);
   for (let index = 0; index < alpha.length; index++) {
@@ -173,6 +182,52 @@ function glyphLayer(alpha: Buffer, width: number, height: number, left: number, 
 const REELS_MASTER = { width: 1080, height: 1920 } as const;
 const REELS_OUTPUT = { width: 720, height: 1280 } as const;
 
+export function reelsUnderlineArea(headline: Rect): Rect {
+  return {
+    left: headline.left, top: headline.top + headline.height + 18,
+    width: Math.min(620, Math.max(48, Math.round(headline.width * 0.82))), height: 28,
+  };
+}
+
+function reelsUnderline(headline: Rect, ink: Ink) {
+  const { left, top, width, height } = reelsUnderlineArea(headline);
+  const alpha = Buffer.alloc(width * height);
+  for (let x = 0; x < width; x++) {
+    const position = x / (width - 1);
+    const center = 7 + 15 * (2 * position - 1) ** 2 - 3 * position;
+    const radius = 4 + 3 * Math.sin(Math.PI * position);
+    for (let y = 0; y < height; y++) {
+      alpha[y * width + x] = Math.round(255 * Math.max(0, Math.min(1, radius + 0.5 - Math.abs(y - center))));
+    }
+  }
+  return glyphLayer(alpha, width, height, left, top, ink);
+}
+
+function cornerSweep(ink: Ink, side: 'left' | 'right', width: number, height: number) {
+  const alpha = Buffer.alloc(width * height);
+  for (let x = 0; x < width; x++) {
+    const fromCorner = side === 'left' ? x : width - 1 - x;
+    const edge = height * (1 - fromCorner / width) ** 2.6;
+    for (let y = Math.floor(height - edge); y < height; y++) {
+      alpha[y * width + x] = Math.round(255 * Math.max(0, Math.min(1, edge - height + y + 0.5)));
+    }
+  }
+  const left = side === 'left' ? 0 : REELS_MASTER.width - width;
+  return glyphLayer(alpha, width, height, left, REELS_MASTER.height - height, ink);
+}
+
+function reelsCornerSweeps(palette: Ink[]) {
+  const [primary, accent, supporting] = palette;
+  if (!primary) return [];
+  const dark = darkBrandInk(palette);
+  return [
+    cornerSweep(primary, 'left', 740, 133),
+    ...(dark !== primary ? [cornerSweep(dark, 'left', 670, 98)] : []),
+    ...(accent ? [cornerSweep(accent, 'right', 512, 159)] : []),
+    ...(accent && supporting ? [cornerSweep(supporting, 'right', 350, 98)] : []),
+  ];
+}
+
 async function renderReelsOverlay(layers: OverlayOptions[]) {
   const canvas = sharp({ create: { ...REELS_MASTER, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
   if (layers.length) canvas.composite(layers);
@@ -180,10 +235,11 @@ async function renderReelsOverlay(layers: OverlayOptions[]) {
   return sharp(png).resize(REELS_OUTPUT.width, REELS_OUTPUT.height).png().toBuffer();
 }
 
-export async function composeReelsOriginalOverlay(assets: OriginalVisualAsset[]) {
-  if (!assets.length) return undefined;
+export async function composeReelsOriginalOverlay(assets: OriginalVisualAsset[], brandPalette: string[] = []) {
+  const sweeps = reelsCornerSweeps(reelsPalette(brandPalette));
+  if (!assets.length && !sweeps.length) return undefined;
   const layers = await Promise.all(assets.map(asset => placeOriginalAsset(asset, REELS_ARTWORK[asset.role], asset.role === 'screenshot')));
-  return renderReelsOverlay(layers.flat());
+  return renderReelsOverlay([...sweeps, ...layers.flat()]);
 }
 
 export interface ReelsArtworkFrame {
@@ -221,18 +277,8 @@ function minimumContrast(ink: Ink, { darkest, brightest }: LuminanceRange) {
   return 1;
 }
 
-function editorialInk(range: LuminanceRange) {
-  return [EDITORIAL_INK, WHITE, BLACK].find(ink => minimumContrast(ink, range) >= 4.5);
-}
-
-function accentInk(pixels: Buffer, brandPalette: string[]): Ink {
-  const range = sweptLuminance(pixels, REELS_ACCENT);
-  const candidates = brandPalette.filter(color => /^#[\da-f]{6}$/i.test(color))
-    .map((color): Ink => [
-      parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16),
-    ]);
-  return [...candidates, DEFAULT_ACCENT, EDITORIAL_INK, WHITE].find(ink => minimumContrast(ink, range) >= 3)
-    ?? (minimumContrast(WHITE, range) >= minimumContrast(BLACK, range) ? WHITE : BLACK);
+function editorialInk(range: LuminanceRange, brandedInk: Ink) {
+  return [brandedInk, EDITORIAL_INK, WHITE, BLACK].find(ink => minimumContrast(ink, range) >= 4.5);
 }
 
 /** Check contrast across the photo area that can pass behind each fixed line of copy. */
@@ -245,19 +291,19 @@ export async function composeReelsScene(
   const { width, height } = REELS_MASTER;
   const pixels = await sharp(photo, { limitInputPixels: 30_000_000 }).rotate()
     .resize(width, height, { fit: 'cover' }).toColourspace('srgb').removeAlpha().raw().toBuffer();
+  const palette = reelsPalette(brandPalette);
+  const brandedInk = darkBrandInk(palette);
   const layers: OverlayOptions[] = [];
   const copyRegions = fitted.map(item => ({ ...item, range: sweptLuminance(pixels, item.box) }));
   const sceneInk = editorialInk({
     darkest: Math.min(...copyRegions.map(item => item.range.darkest)),
     brightest: Math.max(...copyRegions.map(item => item.range.brightest)),
-  });
-  if (fitted.some(item => item.key === 'headline')) {
-    const { width, height, left, top } = REELS_ACCENT;
-    layers.push(glyphLayer(Buffer.alloc(width * height, 255), width, height, left, top, accentInk(pixels, brandPalette)));
-  }
+  }, brandedInk);
+  const headline = fitted.find(item => item.key === 'headline');
+  if (headline) layers.push(reelsUnderline(headline.box, palette[1] ?? palette[0] ?? DEFAULT_ACCENT));
   for (const { key, box, text, range } of copyRegions) {
     const mask = await sharp(text.data).extractChannel('alpha').toColourspace('b-w').raw().toBuffer();
-    const ink = sceneInk ?? editorialInk(range);
+    const ink = sceneInk ?? editorialInk(range, brandedInk);
     if (ink) {
       layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, ink));
       continue;
