@@ -141,6 +141,88 @@ test('Reels scenes share headline size and use readable brand ink with a curved 
  }
 });
 
+test('Reels accepts clean dark space and rejects high contrast clutter behind its type', async () => {
+ const { fitted } = await prepareScheduledReelsCopy({
+   businessName: 'Cendekia AI', headline: 'Cara Membahas Soal TKA', cta: '', website: '',
+ }, false);
+ const size = { width: 1080, height: 1920 };
+ const dark = await sharp({ create: { ...size, channels: 3, background: '#121C30' } }).png().toBuffer();
+ const stripes = Buffer.alloc(size.width * size.height * 3);
+ for (let x = 0; x < size.width; x++) {
+   const value = Math.floor(x / 90) % 2 * 255;
+   for (let y = 0; y < size.height; y++) {
+     const offset = (y * size.width + x) * 3;
+     stripes.fill(value, offset, offset + 3);
+   }
+ }
+ const busy = await sharp(stripes, { raw: { ...size, channels: 3 } }).png().toBuffer();
+ await assert.rejects(composeReelsScene(busy, fitted, undefined, cendekiaPalette),
+   { code: 'reels_photo_layout_unreadable' });
+
+ const { overlay, image } = await composeReelsScene(dark, fitted, undefined, cendekiaPalette);
+ const headline = fitted.find(item => item.key === 'headline');
+ assert.ok(headline);
+ const scale = 720 / 1080;
+ const title = await sharp(overlay).extract({
+   left: Math.floor(headline.box.left * scale),
+   top: Math.floor(headline.box.top * scale),
+   width: Math.ceil(headline.box.width * scale),
+   height: Math.ceil(headline.box.height * scale),
+ }).raw().toBuffer();
+ let white = 0;
+ for (let offset = 0; offset < title.length; offset += 4) {
+   if (title[offset + 3] < 230) continue;
+   assert.ok(title[offset] >= 245 && title[offset + 1] >= 245 && title[offset + 2] >= 245,
+     'opaque title pixels must be white without a black outline');
+   white++;
+ }
+ assert.ok(white > 200);
+ const unaffected = await sharp(image).extract({ left: 20, top: 620, width: 30, height: 20 }).raw().toBuffer();
+ const background = await sharp(dark).resize(720, 1280).extract({ left: 20, top: 620, width: 30, height: 20 }).raw().toBuffer();
+ assert.ok(unaffected.every((value, index) => Math.abs(value - background[index]) <= 3),
+   'the original dark photograph remains visible outside copy');
+});
+
+test('Reels moves its headline and underline together into quiet space on the same photograph', async () => {
+ const { fitted } = await prepareScheduledReelsCopy({
+   businessName: 'Cendekia AI', headline: 'Cara Membahas Soal TKA', cta: '', website: '',
+ }, false);
+ const headline = fitted.find(item => item.key === 'headline');
+ assert.ok(headline);
+ const { box } = headline;
+ const photo = await sharp({ create: { width: 1080, height: 1920, channels: 3, background: '#edf3f7' } })
+   .composite([{
+     input: { create: { width: 260, height: 16, channels: 3, background: '#121c30' } },
+     left: box.left + 30, top: box.top + 20,
+   }]).png().toBuffer();
+ const { overlay } = await composeReelsScene(photo, fitted, undefined, cendekiaPalette);
+ const scale = 720 / 1080;
+ const alphaIn = async (left: number, top: number, width: number, height: number) =>
+   sharp(overlay).extract({
+     left: Math.floor(left * scale), top: Math.floor(top * scale),
+     width: Math.floor(width * scale), height: Math.floor(height * scale),
+   }).extractChannel('alpha').raw().toBuffer();
+ assert.ok((await alphaIn(box.left, box.top, box.width, 37)).every(alpha => alpha === 0),
+   'the original headline position stays empty');
+ const { data, info } = await sharp(overlay).extract({
+   left: Math.floor(box.left * scale), top: Math.floor((box.top + 37) * scale),
+   width: Math.floor(box.width * scale), height: Math.ceil((box.height + 130) * scale),
+ }).raw().toBuffer({ resolveWithObject: true });
+ let lastTextRow = -1;
+ let firstAccentRow = info.height;
+ for (let offset = 0; offset < data.length; offset += 4) {
+   if (data[offset + 3] < 245) continue;
+   const row = Math.floor(offset / (info.width * 4));
+   if (data[offset] < 45 && data[offset + 2] >= 115) lastTextRow = Math.max(lastTextRow, row);
+   if (data[offset] > 230 && data[offset + 1] > 160 && data[offset + 2] < 25) {
+     firstAccentRow = Math.min(firstAccentRow, row);
+   }
+ }
+ assert.ok(lastTextRow > 0, 'the headline is readable in nearby quiet space');
+ assert.ok(firstAccentRow > lastTextRow && firstAccentRow < info.height,
+   'the underline follows the repositioned headline');
+});
+
 test('Reels corner accents leave the photo and original logo clear above the corners', async () => {
  const logo = { id: 'logo', role: 'logo' as const, bytes: await pixelSource(160, 80) };
  const plain = await composeReelsOriginalOverlay([logo]);

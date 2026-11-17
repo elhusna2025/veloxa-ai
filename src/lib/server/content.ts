@@ -15,7 +15,7 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareReelsCopyBatch, reelsUnderlineArea, shortVisualCta, visualWebsite } from './content-compositor';
+import { REELS_ARTWORK, composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareReelsCopyBatch, reelsPhotoSweepBounds, reelsUnderlineArea, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -124,6 +124,7 @@ export async function createSocialContent(request: Request, dependencies: {
   onProgress?: (progress: GenerationProgress) => void;
   source?:'autonomous_agent';
 } = {}) {
+  const startedAt = Date.now();
   let stage: GenerationStage = 'validation';
   const progress = (next: GenerationStage) => { stage = next; dependencies.onProgress?.({ stage }); };
   try {
@@ -213,6 +214,11 @@ export async function createSocialContent(request: Request, dependencies: {
   }, { model: scriptModel });
   if(scheduledEditorial&&!generated.draft.qualityReview.passed)throw new ApiError(422,'Naskah belum lolos pemeriksaan. Veloxa perlu menyusunnya ulang.','scheduled_script_rejected');
   const draft: ContentDraft = { ...generated.draft, id: scheduledDraft?.id??`draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
+  if (input.format === 'short_video' && draft.videoScenes?.length) {
+    draft.videoScenes = draft.videoScenes.map((scene, index) =>
+      index === 0 ? { ...scene, textOverlay: draft.title } : scene,
+    );
+  }
   if (carouselPlan) {
     draft.slides = carouselPlan.map(({headline, body, visualDirection}, index) => ({
       headline, body, visualDirection, slideNumber: index + 1, badgeText: `${index + 1}/5`,
@@ -334,7 +340,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const verify = dependencies.verifyArtwork || verifyScheduledArtwork;
   const repairTimeout = async (error: unknown) => {
     const budget = dependencies.scheduledRepairBudget?.() ?? 90_000;
-    if (!(error instanceof ApiError) || error.code !== 'scheduled_artwork_rejected' || budget < 45_000) throw error;
+    if (!(error instanceof ApiError) || !['scheduled_artwork_rejected', 'reels_photo_layout_unreadable'].includes(error.code) || budget < 45_000) throw error;
     await dependencies.authorize?.(request, workspaceId);
     return Math.min(90_000, budget - 22_000);
   };
@@ -346,6 +352,11 @@ export async function createSocialContent(request: Request, dependencies: {
   const reelsFrames = reelsImagePlan.length
     ? reelsImagePlan.map((params, sceneIndex) => {
       const { fitted, captionLines } = reelsCopy[sceneIndex];
+      if (sceneIndex === 0 && !fitted.some(block => block.key === 'headline')) {
+        throw new GenerationStageError(new ApiError(422,
+          'Judul pembuka Reels belum muat. Ringkas judul sambil tetap menyebut topiknya, lalu coba lagi.',
+          'visual_composition_invalid'), 'compositing');
+      }
       if (!scheduledEditorial && captionLines.length) {
         throw new GenerationStageError(new ApiError(422,
           'Teks Reels belum muat dengan ukuran yang nyaman dibaca. Ringkas pesannya, lalu coba lagi.',
@@ -353,25 +364,38 @@ export async function createSocialContent(request: Request, dependencies: {
       }
       const scheduledReelsCopyBounds = Object.fromEntries(fitted.map(({ key, box }) => [key, box]));
       if (scheduledReelsCopyBounds.headline) scheduledReelsCopyBounds.accent = reelsUnderlineArea(scheduledReelsCopyBounds.headline);
+      const photoRegions = {
+        ...scheduledReelsCopyBounds,
+        ...(params.hasOriginalLogo ? { logo: REELS_ARTWORK.logo } : {}),
+      };
+      const copySweeps = Object.fromEntries(Object.entries(photoRegions).map(([key, box]) =>
+        [key, reelsPhotoSweepBounds(box, sceneIndex)],
+      ));
       return {
         fitted, captionLines, sceneIndex,
-        params: { ...params, scheduledReelsPhotoOnly: true, sceneOnly: true, scheduledReelsCopyBounds },
+        params: {
+          ...params, scheduledReelsPhotoOnly: true, sceneOnly: true, scheduledReelsCopyBounds,
+          reelsPhotoLayout: {
+            copySweeps, sceneNumber: sceneIndex + 1, seriesDirection: draft.videoScenes?.[0]?.visualDirection,
+          },
+        },
       };
     })
     : null;
   if (reelsFrames) fitReelsCaption(draft, [...new Set(reelsFrames.flatMap(frame => frame.captionLines))]);
   const renderReelsFrame = async ({ params, fitted, sceneIndex }: NonNullable<typeof reelsFrames>[number], fixedOverlay?: Buffer) => {
     const renderFrame = async (timeoutMs?: number, simplifyFraming = false) => {
+      const artworkParams = { ...params, scheduledArtworkRepair: simplifyFraming };
       let photo: Buffer;
       try {
-        photo = await render({ ...params, scheduledArtworkRepair: simplifyFraming }, { timeoutMs });
+        photo = await render(artworkParams, { timeoutMs });
       } catch (error) {
         throw new GenerationStageError(error, 'images');
       }
       if (stage !== 'compositing') progress('compositing');
       try {
-        const frame = await composeReelsScene(photo, fitted, fixedOverlay, params.brandPalette);
-        if (scheduledEditorial) await verify(frame.image, params, photo);
+        const frame = await composeReelsScene(photo, fitted, fixedOverlay, params.brandPalette, sceneIndex);
+        await verify(frame.image, artworkParams, photo);
         return frame;
       } catch (error) {
         if (error instanceof ApiError && error.code === 'scheduled_artwork_rejected') {
@@ -380,7 +404,18 @@ export async function createSocialContent(request: Request, dependencies: {
         throw new GenerationStageError(error, 'compositing');
       }
     };
-    if (!scheduledEditorial) return renderFrame();
+    if (!scheduledEditorial) {
+      // The Studio route has 300s total. Leave time for visual review, encoding and persistence.
+      const photoTimeLeft = () => 185_000 - (Date.now() - startedAt);
+      try {
+        return await renderFrame(Math.max(1, Math.min(180_000, photoTimeLeft())));
+      } catch (error) {
+        const remaining = photoTimeLeft();
+        if (!(error instanceof ApiError) || !['reels_photo_layout_unreadable', 'scheduled_artwork_rejected'].includes(error.code)
+          || remaining < 40_000) throw error;
+        return await renderFrame(Math.min(90_000, remaining), true);
+      }
+    }
     const budget = dependencies.scheduledRepairBudget?.() ?? 202_000;
     if (budget < 45_000) throw new ApiError(503, 'Waktu pemulihan visual Reels belum cukup.', 'scheduled_artwork_review_unavailable');
     try {

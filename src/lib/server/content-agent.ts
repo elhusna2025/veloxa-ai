@@ -104,6 +104,9 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
             ? `Untuk short_video Reels Instagram dan Facebook berdurasi ${REELS_SPEC.minDurationSeconds}–${REELS_SPEC.maxDurationSeconds} detik, hasilkan tepat ${REELS_SPEC.sceneCount} adegan. Total seluruh voiceover harus ${REELS_SPEC.minVoiceWords}–${REELS_SPEC.maxVoiceWords} kata Bahasa Indonesia; durasi mengikuti banyaknya pesan dan panjang naskah, tidak harus selalu 60 detik.  voiceover keempat adegan harus sudah memuat opening dan closing, tanpa narasi terpisah. Gunakan kalimat pendek yang nyaman diucapkan, ritme bervariasi, pembuka mengundang rasa ingin tahu dan penutup menenangkan. Tulis sebagai percakapan lisan yang luwes sesuai brandTone, bukan bahasa presentasi; pilih sapaan dan penghubung sehari-hari secukupnya, tanpa kalimat kaku atau nada iklan. Gaya bercerita hangat seperti berbagi tips kepada teman, bukan membaca pengumuman. Sertakan opening yang sama persis dengan voiceover adegan pertama dan closing yang sama persis dengan voiceover adegan terakhir; scenes berisi time, visual, voiceover, textOverlay.`
             : undefined,
       };
+      if (params.format === 'short_video') {
+        brief.extraInstructions += ' Tulis title yang langsung menyebut topik atau manfaat konkret Reels ini, maksimum 7 kata dan 48 karakter. Gunakan title yang sama persis sebagai textOverlay adegan pertama. Sebut topiknya secara alami pada kalimat pembuka voiceover dan tunjukkan konteksnya pada visual pembuka. Pakai angka, contoh, atau langkah sebagai poin pendukung pada adegan berikutnya. Setiap adegan lanjutan menerangkan topik yang sama, dengan satu frasa visual yang singkat.';
+      }
       brief.extraInstructions = [brief.extraInstructions, 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan.'].filter(Boolean).join(' ');
       if(params.format!=='single_post') brief.extraInstructions=[brief.extraInstructions,'Setiap visualDirection (carousel) atau visual (Reels) harus menggambarkan pesan spesifik headline/body atau narasi pada slide/adegan tersebut, dengan subjek dan aktivitas yang relevan. Bedakan adegan sesuai pesan: jangan ulang satu latar abstrak atau adegan bisnis umum untuk semua slide. Pilih satu arahan seni dan nuansa visual yang konsisten sebagai satu seri; jaga variasi komposisi per slide. Gunakan konteks deskripsi dan produk bisnis yang benar, tanpa mengarang antarmuka produk, angka, harga atau testimoni.'].filter(Boolean).join(' ');
       brief.extraInstructions = [brief.extraInstructions,CONTENT_COPY_INSTRUCTION].filter(Boolean).join(' ');
@@ -201,7 +204,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
           timeRange: scene.time,
           visualDirection: scene.visual,
           voiceover: scene.voiceover,
-          textOverlay: scene.textOverlay,
+          textOverlay: index === 0 ? draft.title : scene.textOverlay,
         }));
         draft.videoDurationSeconds = estimateReelsDuration(ai.videoScript.scenes.map(scene=>scene.voiceover).join(' '));
         draft.voiceoverModel = 'gpt-realtime-2.1-mini';

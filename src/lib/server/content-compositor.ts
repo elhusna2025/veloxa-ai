@@ -2,7 +2,7 @@ import sharp, { type OverlayOptions } from 'sharp';
 import path from 'node:path';
 import { ApiError } from './http';
 import { CONTENT_TYPOGRAPHY } from '../content-typography';
-import { REELS_SPEC } from '../reels-spec';
+import { REELS_PHOTO_MOTIONS, REELS_PHOTO_VERTICAL_ANCHOR } from '../reels-spec';
 
 // Next ships this licensed Latin font; trace it into the runtime instead of relying on OS fonts.
 const visualFontFile=path.join(process.cwd(),'node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf');
@@ -96,7 +96,7 @@ const REELS_COPY_METRICS = {
   businessName: CONTENT_TYPOGRAPHY.brand, headline: CONTENT_TYPOGRAPHY.reelsTitle,
   cta: CONTENT_TYPOGRAPHY.cta, website: CONTENT_TYPOGRAPHY.website,
 };
-const OUTLINE_PADDING = 6;
+const REELS_TEXT_INSET = 6;
 
 export async function prepareScheduledReelsCopy(copy: ReelsCopy, hasLogo: boolean, headlineMax: number = CONTENT_TYPOGRAPHY.reelsTitle.max) {
   const areas = scheduledReelsCopyAreas(hasLogo);
@@ -108,7 +108,7 @@ export async function prepareScheduledReelsCopy(copy: ReelsCopy, hasLogo: boolea
     const { max, min } = REELS_COPY_METRICS[key];
     const headline = key === 'headline';
     const fit = async () => {
-      const text = await fitText(copy[key], box.width - OUTLINE_PADDING * 2, box.height - OUTLINE_PADDING * 2,
+      const text = await fitText(copy[key], box.width - REELS_TEXT_INSET * 2, box.height - REELS_TEXT_INSET * 2,
         headline ? headlineMax : max, min, '#000000', {
           font: headline ? 'Inter Ultra-Bold' : 'Inter Medium',
           file: headline ? reelsHeadlineFont : reelsLabelFont,
@@ -127,7 +127,7 @@ export async function prepareScheduledReelsCopy(copy: ReelsCopy, hasLogo: boolea
         text = await fit();
       }
       fitted.push({
-        key, text, box: { left: box.left + OUTLINE_PADDING, top: box.top + OUTLINE_PADDING, width: text.width, height: text.height },
+        key, text, box: { left: box.left + REELS_TEXT_INSET, top: box.top + REELS_TEXT_INSET, width: text.width, height: text.height },
       });
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== 'visual_composition_invalid') throw error;
@@ -250,24 +250,43 @@ export interface ReelsArtworkFrame {
 
 type LuminanceRange = { darkest: number; brightest: number };
 
-function sweptLuminance(pixels: Buffer, box: Rect): LuminanceRange {
+export function reelsPhotoSweepBounds(box: Rect, sceneIndex: number): Rect {
   const { width, height } = REELS_MASTER;
-  const zoom = REELS_SPEC.maxPhotoZoom;
-  const left = Math.max(0, Math.floor(box.left / zoom) - 2);
-  const top = Math.max(0, Math.floor(box.top / zoom) - 2);
-  const right = Math.min(width, Math.ceil(width - (width - box.left - box.width) / zoom) + 2);
-  const bottom = Math.min(height, Math.ceil(height - (height - box.top - box.height) / zoom) + 2);
+  const { zoom, horizontal } = REELS_PHOTO_MOTIONS[sceneIndex];
+  const project = (position: number, dimension: number, firstAnchor: number, lastAnchor: number) => [
+    position / zoom[0] + dimension * (1 - 1 / zoom[0]) * firstAnchor,
+    position / zoom[1] + dimension * (1 - 1 / zoom[1]) * lastAnchor,
+  ];
+  // The eased crop is monotonic on each axis. Pad for resize/zoom interpolation.
+  const left = Math.max(0, Math.floor(Math.min(...project(box.left, width, horizontal[0], horizontal[1]))) - 4);
+  const top = Math.max(0, Math.floor(Math.min(...project(box.top, height, REELS_PHOTO_VERTICAL_ANCHOR, REELS_PHOTO_VERTICAL_ANCHOR))) - 4);
+  const right = Math.min(width, Math.ceil(Math.max(...project(box.left + box.width, width, horizontal[0], horizontal[1]))) + 4);
+  const bottom = Math.min(height, Math.ceil(Math.max(...project(box.top + box.height, height, REELS_PHOTO_VERTICAL_ANCHOR, REELS_PHOTO_VERTICAL_ANCHOR))) + 4);
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+function photoRegion(pixels: Buffer, { left, top, width, height }: Rect) {
+  const stride = REELS_MASTER.width * 3;
+  const lightAt = (offset: number) => luminance(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+  const right = left + width;
+  const bottom = top + height;
   let darkest = 1;
   let brightest = 0;
+  let texture = 0;
+  let samples = 0;
   for (let y = top; y < bottom; y++) {
     for (let x = left; x < right; x++) {
-      const offset = (y * width + x) * 3;
-      const value = luminance(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+      const offset = y * stride + x * 3;
+      const value = lightAt(offset);
       darkest = Math.min(darkest, value);
       brightest = Math.max(brightest, value);
+      if (x >= left + 4 && y >= top + 4 && x % 4 === 0 && y % 4 === 0) {
+        texture += Math.abs(value - lightAt(offset - 12)) + Math.abs(value - lightAt(offset - 4 * stride));
+        samples += 2;
+      }
     }
   }
-  return { darkest, brightest };
+  return { darkest, brightest, texture: texture / Math.max(1, samples) };
 }
 
 function minimumContrast(ink: Ink, { darkest, brightest }: LuminanceRange) {
@@ -281,45 +300,78 @@ function editorialInk(range: LuminanceRange, brandedInk: Ink) {
   return [brandedInk, EDITORIAL_INK, WHITE, BLACK].find(ink => minimumContrast(ink, range) >= 4.5);
 }
 
-/** Check contrast across the photo area that can pass behind each fixed line of copy. */
+type ReelsTextBlock = Awaited<ReturnType<typeof prepareScheduledReelsCopy>>['fitted'][number];
+
+function placeReelsText(pixels: Buffer, fitted: ReelsTextBlock[], brandInk: Ink, sceneIndex: number) {
+  const region = (box: Rect) => photoRegion(pixels, reelsPhotoSweepBounds(box, sceneIndex));
+  const inkFor = (blocks: ReelsTextBlock[]) => {
+    const regions = blocks.map(({ box }) => region(box));
+    if (regions.some(({ texture }) => texture > 0.024)) return;
+    return editorialInk({
+      darkest: Math.min(...regions.map(item => item.darkest)),
+      brightest: Math.max(...regions.map(item => item.brightest)),
+    }, brandInk);
+  };
+  const upper = fitted.filter(({ key }) => key === 'businessName' || key === 'headline');
+  const closing = fitted.filter(({ key }) => key === 'cta' || key === 'website');
+  const brand = upper.find(({ key }) => key === 'businessName');
+  const upperFloor = Math.max(334, brand ? brand.box.top + brand.box.height + 22 : 334);
+  const move = (block: ReelsTextBlock, left: number, top: number): ReelsTextBlock =>
+    ({ ...block, box: { ...block.box, left: block.box.left + left, top: block.box.top + top } });
+  const failure = () => new ApiError(422,
+    'Foto Reels belum menyediakan ruang yang tenang dan cukup kontras untuk teks. Coba lagi dengan arahan visual yang lebih sederhana.',
+    'reels_photo_layout_unreadable');
+
+  // Keep the original logo and brand anchor. Allow the title to settle into a nearby
+  // quiet part of the same composition before asking for a replacement photograph.
+  for (const [left, top] of [[0, 0], [0, -36], [0, 48], [0, 84], [48, 0], [48, 48]]) {
+    const blocks = upper.map(block => block.key === 'headline' ? move(block, left, top) : block);
+    const headline = blocks.find(({ key }) => key === 'headline');
+    const underline = headline && reelsUnderlineArea(headline.box);
+    if (headline && underline && (headline.box.top < upperFloor || headline.box.left + headline.box.width > 900
+      || underline.top + underline.height > 1038 || region(underline).texture > 0.024)) continue;
+    const ink = inkFor(blocks);
+    if (!ink) continue;
+    const output = blocks.map(block => ({ ...block, ink }));
+    if (!closing.length) return { blocks: output, headline };
+
+    const closingBottom = Math.max(...closing.map(({ box }) => box.top + box.height));
+    const closingTop = Math.min(...closing.map(({ box }) => box.top));
+    const belowTitle = underline ? underline.top + underline.height + 36 - closingTop : undefined;
+    for (const shift of [0, -60, 40, -36, ...(belowTitle === undefined ? [] : [belowTitle])]) {
+      const nearTitle = shift === belowTitle;
+      if (nearTitle ? closingBottom + shift > 1028 : closingTop + shift < 1316 || closingBottom + shift > 1600) continue;
+      const footer = closing.map(block => move(block, headline && nearTitle ? headline.box.left - block.box.left : 0, shift));
+      if (footer.some(({ box }) => box.left + box.width > 900)) continue;
+      const footerInk = nearTitle ? inkFor([...blocks, ...footer]) : inkFor(footer);
+      if (footerInk) return {
+        blocks: [...(nearTitle ? blocks.map(block => ({ ...block, ink: footerInk })) : output),
+          ...footer.map(block => ({ ...block, ink: footerInk }))],
+        headline,
+      };
+    }
+  }
+  throw failure();
+}
+
+/** Frame the real photo and its editorial typography together before encoding. */
 export async function composeReelsScene(
   photo: Buffer,
   fitted: Awaited<ReturnType<typeof prepareScheduledReelsCopy>>['fitted'],
   fixedOverlay?: Buffer,
   brandPalette: string[] = [],
+  sceneIndex = 0,
 ): Promise<ReelsArtworkFrame> {
   const { width, height } = REELS_MASTER;
   const pixels = await sharp(photo, { limitInputPixels: 30_000_000 }).rotate()
     .resize(width, height, { fit: 'cover' }).toColourspace('srgb').removeAlpha().raw().toBuffer();
   const palette = reelsPalette(brandPalette);
-  const brandedInk = darkBrandInk(palette);
+  const { blocks, headline } = placeReelsText(pixels, fitted, darkBrandInk(palette), sceneIndex);
   const layers: OverlayOptions[] = [];
-  const copyRegions = fitted.map(item => ({ ...item, range: sweptLuminance(pixels, item.box) }));
-  const sceneInk = editorialInk({
-    darkest: Math.min(...copyRegions.map(item => item.range.darkest)),
-    brightest: Math.max(...copyRegions.map(item => item.range.brightest)),
-  }, brandedInk);
-  const headline = fitted.find(item => item.key === 'headline');
   if (headline) layers.push(reelsUnderline(headline.box, palette[1] ?? palette[0] ?? DEFAULT_ACCENT));
-  for (const { key, box, text, range } of copyRegions) {
+  for (const { box, text, ink } of blocks) {
     const mask = await sharp(text.data).extractChannel('alpha').toColourspace('b-w').raw().toBuffer();
-    const ink = sceneInk ?? editorialInk(range, brandedInk);
-    if (ink) {
-      layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, ink));
-      continue;
-    }
-    const outline = key === 'headline' ? 4 : 3;
-    const paddedWidth = text.width + outline * 2;
-    const paddedHeight = text.height + outline * 2;
-    const alpha = Buffer.alloc(paddedWidth * paddedHeight);
-    for (let y = 0; y < text.height; y++) {
-      mask.copy(alpha, (y + outline) * paddedWidth + outline, y * text.width, (y + 1) * text.width);
-    }
-    // libvips erosion expands the brighter alpha pixels into their darker neighbors.
-    const stroke = await sharp(alpha, { raw: { width: paddedWidth, height: paddedHeight, channels: 1 } })
-      .erode(outline).toColourspace('b-w').raw().toBuffer();
-    layers.push(glyphLayer(stroke, paddedWidth, paddedHeight, box.left - outline, box.top - outline, BLACK));
-    layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, WHITE));
+    layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, ink));
   }
   const [background, overlay] = await Promise.all([
     sharp(pixels, { raw: { width, height, channels: 3 } }).resize(REELS_OUTPUT.width, REELS_OUTPUT.height).jpeg({ quality: 94 }).toBuffer(),

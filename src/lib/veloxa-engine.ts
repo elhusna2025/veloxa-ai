@@ -391,11 +391,15 @@ export function generateBrandContentDraft(input: {
     ? computeEventCampaignPhase(activeCampaign.eventDateIso)
     : null;
 
+  const explicitTopic = input.customTopic?.trim();
   const topicFocus =
-    input.customTopic?.trim() ||
+    explicitTopic ||
     (activeCampaign
       ? `${activeCampaign.name} (${campaignPhase?.phaseLabel}): ${activeCampaign.ticketOrPromoHighlight}`
       : `${primaryOffering.title} — ${primaryOffering.highlight}`);
+  const draftTitle = format === 'short_video'
+    ? explicitTopic || activeCampaign?.name || primaryOffering.title
+    : topicFocus;
 
   const rawHook =
     brand.category === 'running_event'
@@ -417,7 +421,7 @@ export function generateBrandContentDraft(input: {
     .join('\n');
 
   const { repairedHook, repairedCaption, review } = runAutonomousQualityRepairLoop({
-    title: topicFocus,
+    title: draftTitle,
     hook: rawHook,
     caption: rawCaption,
     brand,
@@ -440,7 +444,7 @@ export function generateBrandContentDraft(input: {
       {
         sceneNumber: 1,
         timeRange: '00:00 - 00:05',
-        textOverlay: repairedHook.slice(0, 68),
+        textOverlay: draftTitle,
         voiceover: repairedHook,
         visualDirection: realAssets[0]
           ? `Gunakan klip/foto asli "${realAssets[0].title}" dengan zoom-in dinamis & badge warna ${brand.accentColorHex}`
@@ -481,7 +485,7 @@ export function generateBrandContentDraft(input: {
       workspaceId: brand.workspaceId,
       source,
       format: 'short_video',
-      title: topicFocus.slice(0, 88),
+      title: draftTitle,
       hook: repairedHook,
       caption: repairedCaption,
       hashtags: baseHashtags,

@@ -155,7 +155,25 @@ test('generateBrandContentDraft integrates user real assets and style reference 
   assert.equal(draft.usedStyleReferenceId, 'ref_1');
   assert.deepEqual(draft.usedRealAssetIds, ['real_1']);
   assert.equal(draft.videoScenes?.length, 4);
+  assert.equal(draft.title, runBrand.offerings[0].title);
+  assert.equal(draft.videoScenes?.[0].textOverlay, draft.title);
   assert.equal(draft.qualityReview.passed, true);
+});
+
+test('deterministic Reels names the supplied topic in the opening', () => {
+  const topic = 'Bedah Satu Soal TKA';
+  const draft = generateBrandContentDraft({
+    brand: BRAND_PRESETS.custom,
+    format: 'short_video',
+    source: 'manual_studio',
+    customTopic: topic,
+    vaultAssets: [],
+    connections: ALL_CONNECTED_CHANNELS,
+    planId: 'pro_1500k',
+  });
+
+  assert.equal(draft.title, topic);
+  assert.equal(draft.videoScenes?.[0].textOverlay, topic);
 });
 
 test('computeEventCampaignPhase calculates accurate countdown phases', () => {

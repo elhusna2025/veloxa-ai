@@ -6,6 +6,8 @@ import { ApiError } from './http';
 import { CAROUSEL_ARTWORK, REELS_ARTWORK } from './content-compositor';
 import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 
+type ImageBounds = { left: number; top: number; width: number; height: number };
+
 export interface SocialPostImageParams {
   businessName: string;
   title: string;
@@ -22,7 +24,12 @@ export interface SocialPostImageParams {
   scheduledEditorial?: boolean;
   scheduledArtworkRepair?: boolean;
   scheduledReelsPhotoOnly?: boolean;
-  scheduledReelsCopyBounds?: Record<string, { left: number; top: number; width: number; height: number }>;
+  scheduledReelsCopyBounds?: Record<string, ImageBounds>;
+  reelsPhotoLayout?: {
+    copySweeps: Record<string, ImageBounds>;
+    sceneNumber: number;
+    seriesDirection?: string;
+  };
   sceneReferenceLabels?: string[];
   carouselSlide?: boolean;
   hasOriginalScreenshot?: boolean;
@@ -77,26 +84,62 @@ export function scheduledArtworkCopy(params: SocialPostImageParams) {
   };
 }
 
+function reelsPhotoRegion(boxes: Record<string, ImageBounds>, keys: string[]) {
+  const regions = keys.flatMap(key => boxes[key] ? [boxes[key]] : []);
+  if (!regions.length) return undefined;
+  const left = Math.min(...regions.map(box => box.left));
+  const top = Math.min(...regions.map(box => box.top));
+  const right = Math.max(...regions.map(box => box.left + box.width));
+  const bottom = Math.max(...regions.map(box => box.top + box.height));
+  return {
+    left: Math.floor(left * 100 / 1080),
+    top: Math.floor(top * 100 / 1920),
+    right: Math.ceil(right * 100 / 1080),
+    bottom: Math.ceil(bottom * 100 / 1920),
+  };
+}
+
+function reelsPhotoPrompt(params: SocialPostImageParams) {
+  const layout = params.reelsPhotoLayout;
+  const rectangles = layout?.copySweeps ?? params.scheduledReelsCopyBounds ?? {};
+  const headlineRegion = reelsPhotoRegion(rectangles, ['businessName', 'logo', 'headline', 'accent', 'body', 'supporting']);
+  const footerRegion = reelsPhotoRegion(rectangles, ['cta', 'website']);
+  return [
+    'Create one full-bleed 9:16 editorial photograph composed together with the eventual type, like an editorial magazine cover. Output only the photograph. Do not draw captions, letters, numbers, watermarks, logos, readable screen text, sweeps, underlines, text panels, or placeholders. The app layers the exact copy, brand artwork, and original assets afterward.',
+    'Make room for the headline before framing the subject. Compose one continuous natural surface through the entire headline region, including the business mark area. Leave its full width and height uninterrupted, including the gaps between lines. Use a softly lit pale surface such as an out-of-focus wall or tabletop for dark type in daylight, or an evenly dark natural surface for light type in an explicitly dark scene. The surface belongs to the location and blends into the photograph. Keep faces, hair, hands, products, equipment, busy patterns, window mullions, reflections, and sharp shadow edges out of all reserved regions for the full motion of the photo.',
+    ...(headlineRegion ? [
+      `Headline region, measured from the top-left of the final portrait as percentages of width and height: x ${headlineRegion.left}–${headlineRegion.right}%, y ${headlineRegion.top}–${headlineRegion.bottom}%. Stage every focal detail fully below y ${headlineRegion.bottom}% or beyond this region on the open side of the composition. Build this into the camera framing: use a slightly wider view and allow natural space above the focal subject. The headline space should feel like part of the photographed scene.`,
+    ] : []),
+    ...(footerRegion ? [
+      `Closing copy region: x ${footerRegion.left}–${footerRegion.right}%, y ${footerRegion.top}–${footerRegion.bottom}%. Use a separate naturally calm part of the same photo there. Keep the call-to-action area clear of the focal action.`,
+    ] : []),
+    'Leave an extra margin around each reserved region for slow camera pans and zooms. Use the frame rectangle data on the 1080 × 1920 master to preserve the original logo and screenshot areas; keep the screenshot area part of a believable foreground when it is supplied.',
+    ...(layout?.sceneNumber === 1 ? [
+      'This opening is the cover of the story. Show the whole topic through one recognizable focal subject and setting. Use the narration context only as context for the action; any specific example or calculation is a detail in this broader story.',
+    ] : []),
+    'Keep the four photos in one visual world. Match the environment, color temperature, camera level, recognizable people and objects from the same sequence, and overall editorial finish. Vary the action and framing to illustrate this exact beat. Preserve requested night or neon light with visible subject detail, original product colors, and natural skin tones. Avoid a global tint, wash, box or band.',
+    ...(params.brandPalette?.length ? [
+      'Repeat the saved brand colors visibly in physical details appropriate to this business, subject and setting. Let the selected business context, scene direction and visual references determine the people, setting, objects and materials. Use a distinctive palette color as a recurring anchor and a second shade, when available, as a supporting accent. Leave both bottom corners uncluttered for small brand sweeps added by the app and keep the central foreground available for the subject.',
+    ] : []),
+    ...(params.scheduledArtworkRepair ? [
+      'Recompose from a wider viewpoint and stage one clean focal action farther away from the entire headline region. Check clearance for the subject’s full outline through the motion margin. Use a single soft natural scene surface behind the headline and an independent calm foreground for closing copy. Preserve the topic, selected references, original assets, and setting.',
+    ] : []),
+    JSON.stringify({
+      copyAreas: params.scheduledReelsCopyBounds,
+      copySweeps: layout?.copySweeps,
+      sceneNumber: layout?.sceneNumber,
+      seriesDirection: layout?.seriesDirection,
+      ...(params.hasOriginalLogo ? { reservedLogo: REELS_ARTWORK.logo } : {}),
+      ...(params.hasOriginalScreenshot ? { reservedScreenshot: REELS_ARTWORK.screenshot } : {}),
+      subject: params.title, narrationContext: params.hook, sceneDirection: params.visualDirection,
+      businessContext: params.businessContext, brandPalette: params.brandPalette,
+      compositionBrief: params.referenceInstruction, attachedVisualReferences: params.sceneReferenceLabels,
+    }),
+  ].join('\n\n');
+}
+
 function buildPrompt(params: SocialPostImageParams): string {
-  if (params.scheduledReelsPhotoOnly) {
-    return [
-      'Create a full-bleed 9:16 editorial photograph with a clear focal subject and believable materials, lighting and detail. Output only the photograph. Do not draw captions, letters, numbers, watermarks, logos, readable screen text, sweeps, underlines, text panels, or placeholders. The app layers the exact copy, brand artwork, and original assets afterward.',
-      'Keep light, color temperature and visual style coherent across the four photographs. Use bright, natural daylight when appropriate to the scene. Preserve an explicitly requested night or neon setting with clear light on the subject and natural detail. Preserve skin tones and the actual colors and design of referenced products. Avoid a global color tint or heavy wash.',
-      ...(params.brandPalette?.length ? [
-        'Repeat the saved brand colors visibly in physical details appropriate to this business, subject and setting. Let the selected business context, scene direction and visual references determine the people, setting, objects and materials. Use a distinctive palette color as the recurring anchor and a second shade, when available, as a supporting accent. Keep the hues coherent across scenes. Leave both bottom corners uncluttered for small brand sweeps added by the app and keep the central foreground available for the subject.',
-      ] : []),
-      'On the 1080 × 1920 master, keep the supplied copy, accent, and original asset rectangles over naturally calm, softly lit pale surfaces such as a wall or tabletop. Leave an extra margin around each area for slow camera pans and zooms. Keep faces, hands, product details, high-contrast edges, and bright reflections outside those margins. Keep important action inside the artwork edges.',
-      ...(params.scheduledArtworkRepair ? ['Use a simpler, wider composition with one clear focal action and the subject fully visible. Keep a single quiet natural surface behind the copy and use fewer physical brand-colored details outside the reserved areas. Preserve the selected references and original asset space.'] : []),
-      JSON.stringify({
-        copyAreas: params.scheduledReelsCopyBounds,
-        ...(params.hasOriginalLogo ? { reservedLogo: REELS_ARTWORK.logo } : {}),
-        ...(params.hasOriginalScreenshot ? { reservedScreenshot: REELS_ARTWORK.screenshot } : {}),
-        subject: params.title, narrationContext: params.hook, sceneDirection: params.visualDirection,
-        businessContext: params.businessContext, brandPalette: params.brandPalette,
-        compositionBrief: params.referenceInstruction, attachedVisualReferences: params.sceneReferenceLabels,
-      }),
-    ].join('\n\n');
-  }
+  if (params.scheduledReelsPhotoOnly) return reelsPhotoPrompt(params);
   if (params.scheduledEditorial) {
     const vertical = params.aspectRatio === '9:16';
     const layout = vertical ? REELS_ARTWORK : CAROUSEL_ARTWORK;

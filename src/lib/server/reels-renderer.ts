@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { ApiError } from './http';
-import { REELS_SPEC } from '../reels-spec';
+import { REELS_PHOTO_MOTIONS, REELS_PHOTO_VERTICAL_ANCHOR, REELS_SPEC } from '../reels-spec';
 
 const execFileAsync = promisify(execFile);
 const ffmpegBinary = ffmpegInstaller.path;
@@ -83,12 +83,11 @@ function framesPerScene(weights: number[], totalFrames: number, weightTotal: num
 }
 
 function photoMotion(index: number, input: number, start: number, frames: number, duration: number, output: string): string {
-  const maxZoom = REELS_SPEC.maxPhotoZoom;
-  const zoomTravel = (maxZoom - 1).toFixed(3);
   const ease = `(0.5-0.5*cos(PI*(on+${start})/${Math.max(1, duration - 1)}))`;
-  const zoom = [`1+${zoomTravel}*${ease}`, String(maxZoom), String(maxZoom), `${maxZoom}-${zoomTravel}*${ease}`][index];
-  const horizontal = ['0.49', `0.10+0.80*${ease}`, `0.90-0.80*${ease}`, '0.52'][index];
-  return `[${input}:v]scale=iw:ih:in_range=pc:out_range=tv,format=yuv420p,zoompan=z='${zoom}':x='(iw-iw/zoom)*(${horizontal})':y='(ih-ih/zoom)*0.57':d=${frames}:s=${WIDTH}x${HEIGHT}:fps=${FPS},setsar=1[${output}]`;
+  const motion = REELS_PHOTO_MOTIONS[index];
+  const interpolate = ([from, to]: readonly [number, number]) =>
+    from === to ? String(from) : `${from}+(${to}-${from})*${ease}`;
+  return `[${input}:v]scale=iw:ih:in_range=pc:out_range=tv,format=yuv420p,zoompan=z='${interpolate(motion.zoom)}':x='(iw-iw/zoom)*(${interpolate(motion.horizontal)})':y='(ih-ih/zoom)*${REELS_PHOTO_VERTICAL_ANCHOR}':d=${frames}:s=${WIDTH}x${HEIGHT}:fps=${FPS},setsar=1[${output}]`;
 }
 
 async function renderMotionClips(

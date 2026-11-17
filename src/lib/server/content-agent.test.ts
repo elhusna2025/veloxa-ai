@@ -243,10 +243,11 @@ test('kegagalan provider menjadi error aman dan tidak menghasilkan draf buatan',
   });
 });
 
-test('short_video memetakan empat adegan dari skrip AI tanpa placeholder dan meminta format Reels IG/FB', async () => {
+test('Reels memakai judul topik di adegan pertama dan mempertahankan naskah serta adegan lainnya', async () => {
   const params = makeParams();
   params.format = 'short_video';
-  const { client, calls } = mockClient({ ...generatedCopy, videoScript });
+  const title = 'Cara Menikmati Menu Seimbang';
+  const { client, calls } = mockClient({ ...generatedCopy, title, videoScript });
   const result = await createContentAgentGenerator(client as never, agentId)(params);
   const brief = JSON.parse(String(calls.request?.input));
 
@@ -254,12 +255,15 @@ test('short_video memetakan empat adegan dari skrip AI tanpa placeholder dan mem
   assert.match(brief.extraInstructions, /20–60 detik/);
   assert.match(brief.extraInstructions, /tepat 4 adegan/);
   assert.match(brief.extraInstructions, /40–130 kata Bahasa Indonesia/);
+  assert.match(brief.extraInstructions, /title yang langsung menyebut topik/);
+  assert.match(brief.extraInstructions, /kalimat pembuka voiceover/);
+  assert.equal(result.draft.title, title);
   assert.deepEqual(result.draft.videoScenes, videoScript.scenes.map((scene, index) => ({
     sceneNumber: index + 1,
     timeRange: scene.time,
     visualDirection: scene.visual,
     voiceover: scene.voiceover,
-    textOverlay: scene.textOverlay,
+    textOverlay: index === 0 ? title : scene.textOverlay,
   })));
   assert.equal(result.draft.videoScenes?.length, 4);
   assert.equal(result.draft.videoDurationSeconds, estimateReelsDuration(videoScript.scenes.map(s=>s.voiceover).join(' ')));
