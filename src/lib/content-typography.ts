@@ -7,5 +7,6 @@ export const CONTENT_TYPOGRAPHY = {
  cta: { max: 44, min: 40 },
  website: { max: 38, min: 36 },
  lineGapRatio: 0.24,
+ reelsHeadlineGapRatio: 0.09,
 } as const;
 export const CONTENT_COPY_INSTRUCTION = 'Teks visual memakai ukuran minimum agar terbaca di layar ponsel. Judul maksimal 8 kata dan 64 karakter; isi pendukung satu gagasan maksimal 18 kata dan 125 karakter; overlay Reels maksimal 7 kata dan 48 karakter. Letakkan penjelasan lebih panjang di caption atau voiceover. Pertahankan fakta, angka penting, dan makna saat meringkas; jangan memotong kata atau kalimat. CTA visual singkat; URL berasal dari website bisnis tersimpan.';

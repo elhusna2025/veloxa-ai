@@ -133,7 +133,9 @@ export function scheduledReelsCheckpoint(
   const file = (name: string) => bucket().file(`${prefix}${name}`);
   const scriptFile = 'script.json';
   const voiceFile = 'voice-v2.bin';
-  const frameFile = (index: number) => `frame-v2-${index}.bin`;
+  // A checkpoint contains the rendered type as well as the photo. A new render
+  // must use the current type across every scene, even during a rolling deploy.
+  const frameFile = (index: number, version = 3) => `frame-v${version}-${index}.bin`;
   let resuming = false;
   const read = async (name: string, maxBytes: number) => {
     const result = await withinStorageBudget(() => file(name).download());
@@ -210,7 +212,7 @@ export function scheduledReelsCheckpoint(
       return voice;
     },
     async remove() {
-      const frames = Array.from({ length: REELS_SPEC.sceneCount }, (_, index) => frameFile(index));
+      const frames = Array.from({ length: REELS_SPEC.sceneCount }, (_, index) => [frameFile(index), frameFile(index, 2)]).flat();
       await withinStorageBudget(() => Promise.allSettled([scriptFile, ...frames, voiceFile].map(async name => {
         await file(name).delete({ ignoreNotFound: true });
       })));

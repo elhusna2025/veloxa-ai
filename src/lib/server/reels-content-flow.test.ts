@@ -444,7 +444,7 @@ test('mixed light and dark behind one line recovers without another image reques
 });
 
 test('scheduled Reels preserves wide headlines within safe areas and keeps overflow text whole', async () => {
- const wideHeadline = Array(7).fill('WWWWW').join(' ');
+ const wideHeadline = Array(7).fill('WWWWWW').join(' ');
  const longName = Array(10).fill('Worldwide').join(' ');
  const { fitted, captionLines } = await prepareScheduledReelsCopy({
   headline:wideHeadline, businessName:longName, cta:'', website:'',

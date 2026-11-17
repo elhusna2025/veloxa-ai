@@ -15,7 +15,7 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareScheduledReelsCopy, shortVisualCta, visualWebsite } from './content-compositor';
+import { REELS_ACCENT, composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareReelsCopyBatch, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -338,21 +338,26 @@ export async function createSocialContent(request: Request, dependencies: {
     await dependencies.authorize?.(request, workspaceId);
     return Math.min(90_000, budget - 22_000);
   };
-  const reelsFrames = input.format === 'short_video'
-    ? await Promise.all(visualPlan.map(async (rawParams, sceneIndex) => {
-      const params = { ...scheduledImageParams(rawParams), scheduledEditorial };
-      const { fitted, captionLines } = await prepareScheduledReelsCopy(scheduledArtworkCopy(params), params.hasOriginalLogo);
+  const reelsImagePlan = input.format === 'short_video'
+    ? visualPlan.map(params => ({ ...scheduledImageParams(params), scheduledEditorial })) : [];
+  const reelsCopy = await prepareReelsCopyBatch(
+    reelsImagePlan.map(scheduledArtworkCopy), originalAssets.some(asset => asset.role === 'logo'),
+  );
+  const reelsFrames = reelsImagePlan.length
+    ? reelsImagePlan.map((params, sceneIndex) => {
+      const { fitted, captionLines } = reelsCopy[sceneIndex];
       if (!scheduledEditorial && captionLines.length) {
         throw new GenerationStageError(new ApiError(422,
           'Teks Reels belum muat dengan ukuran yang nyaman dibaca. Ringkas pesannya, lalu coba lagi.',
           'visual_composition_invalid'), 'compositing');
       }
       const scheduledReelsCopyBounds = Object.fromEntries(fitted.map(({ key, box }) => [key, box]));
+      if (scheduledReelsCopyBounds.headline) scheduledReelsCopyBounds.accent = REELS_ACCENT;
       return {
         fitted, captionLines, sceneIndex,
         params: { ...params, scheduledReelsPhotoOnly: true, sceneOnly: true, scheduledReelsCopyBounds },
       };
-    }))
+    })
     : null;
   if (reelsFrames) fitReelsCaption(draft, [...new Set(reelsFrames.flatMap(frame => frame.captionLines))]);
   const renderReelsFrame = async ({ params, fitted, sceneIndex }: NonNullable<typeof reelsFrames>[number], fixedOverlay?: Buffer) => {
@@ -365,7 +370,7 @@ export async function createSocialContent(request: Request, dependencies: {
       }
       if (stage !== 'compositing') progress('compositing');
       try {
-        const frame = await composeReelsScene(photo, fitted, fixedOverlay);
+        const frame = await composeReelsScene(photo, fitted, fixedOverlay, params.brandPalette);
         if (scheduledEditorial) await verify(frame.image, params, photo);
         return frame;
       } catch (error) {

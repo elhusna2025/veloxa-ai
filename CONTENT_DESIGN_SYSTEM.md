@@ -14,7 +14,7 @@ Master feed/carousel 1080 × 1350; master Reels 1080 × 1920, dikodekan ke video
 | CTA | 44 | 44 | 40 |
 | Domain website | 38 | 38 | 36 |
 
-Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px. Jangan menganggap piksel master sama dengan piksel layar. Jarak tambahan antarbaris adalah 24% ukuran font.
+Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px. Jangan menganggap piksel master sama dengan piksel layar. Jarak tambahan antarbaris adalah 24% ukuran font, dengan 9% untuk judul Reels.
 
 ## Durasi Reels
 
@@ -35,6 +35,7 @@ Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px.
 - Model menyusun foto dan tipografi draf post tunggal dan carousel Studio sekaligus. Pada post tunggal, CTA dan domain mengikuti komposisi yang sama dalam bentuk teks. Tinjau ejaan, kontras, dan kesesuaian gambar pada ukuran ponsel sebelum menerbitkan.
 - Logo dan screenshot asli dipasang proporsional, tidak dipotong, digambar ulang, atau ditimpa teks. Screenshot asli di carousel ditempatkan utuh dalam bingkai perangkat. Screenshot aplikasi yang dipilih sebagai acuan visual ikut dikirim sebagai gambar pada slide yang relevan. Arahkan tampilan aplikasi ke perangkat dalam adegan, atau gunakan detailnya sebagai inspirasi topik sesuai arahan pengguna. Foto referensi membentuk satu adegan yang utuh.
 - Nomor slide dan petunjuk geser ada di navigasi Studio. Gambar carousel hanya menampilkan CTA dan alamat website pada slide penutup.
+- Pada keempat adegan Reels, gunakan Inter ExtraBold untuk judul dan Inter Medium untuk nama bisnis, CTA, serta domain. Ukur seluruh judul sebelum membuat foto dan pakai satu ukuran judul dalam satu video. Jaga perataan kiri dan gunakan garis pendek berwarna merek di posisi yang sama. Gunakan tinta biru gelap di area terang dan putih di area gelap. Beri garis tepi tipis bila kontras foto berubah di belakang huruf saat foto bergerak.
 
 ## Overflow dan konsistensi
 

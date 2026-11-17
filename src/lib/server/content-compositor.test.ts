@@ -1,17 +1,118 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { CAROUSEL_ARTWORK, composeSocialVisual, finishEditorialCarousel, compositionLayout, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
+import { CAROUSEL_ARTWORK, REELS_ACCENT, REELS_ARTWORK, composeReelsScene, composeSocialVisual, finishEditorialCarousel, compositionLayout, prepareReelsCopyBatch, renderCompositionText, shortVisualCta, visualWebsite } from './content-compositor';
 import { resolveReferenceRoles } from '../content-reference-roles';
+import { CONTENT_TYPOGRAPHY } from '../content-typography';
 const params={businessName:'Berez ERP',title:'Penjualan & Stok Lebih Terpantau',hook:'Kelola transaksi dan persediaan dalam satu sistem.',cta:'Kenali Berez ERP',websiteUrl:'https://berez.dafinicode.com/',brandPalette:['#0061AD','#FFFFFF']};
 async function pixelSource(width:number,height:number){const data=Buffer.alloc(width*height*3);for(let i=0;i<data.length;i++)data[i]=(i*29+47)%256;return sharp(data,{raw:{width,height,channels:3}}).png().toBuffer();}
 
-test('bundled font renders readable Latin copy without any installed system fonts',async()=>{
+async function runWithIsolatedFonts(script: string) {
  const{mkdtemp,writeFile,rm,mkdir}=await import('node:fs/promises');const{tmpdir}=await import('node:os');const path=await import('node:path');const{execFile}=await import('node:child_process');const{promisify}=await import('node:util');const dir=await mkdtemp(path.join(tmpdir(),'veloxa-isolated-font-'));
  try{await mkdir(path.join(dir,'empty'));const config=path.join(dir,'fonts.conf');await writeFile(config,`<?xml version="1.0"?><fontconfig><dir>${dir}/empty</dir><cachedir>${dir}/cache</cachedir></fontconfig>`);
-  const script=`import sharp from 'sharp';import assert from 'node:assert/strict';import{composeSocialVisual,compositionLayout}from './src/lib/server/content-compositor.ts';const scene=await sharp({create:{width:1080,height:1350,channels:3,background:'#000000'}}).jpeg().toBuffer();const output=await composeSocialVisual(scene,${JSON.stringify(params)});const box=compositionLayout(false,false).title;const rendered=await sharp(output).extract(box).threshold(230).trim({background:'#000000'}).png().toBuffer({resolveWithObject:true});assert.ok(rendered.info.width>400,'Latin headline must not degrade into narrow missing-glyph boxes');assert.ok(rendered.info.height>55,'Latin headline must retain its intended font size');`;
   await promisify(execFile)(process.execPath,['--import','tsx','--input-type=module','-e',script],{cwd:process.cwd(),env:{...process.env,FONTCONFIG_FILE:config,FONTCONFIG_PATH:dir},timeout:30000});
  }finally{await rm(dir,{recursive:true,force:true});}
+}
+
+test('bundled font renders readable Latin copy without any installed system fonts',async()=>{
+ const script=`import sharp from 'sharp';import assert from 'node:assert/strict';import{composeSocialVisual,compositionLayout}from './src/lib/server/content-compositor.ts';const scene=await sharp({create:{width:1080,height:1350,channels:3,background:'#000000'}}).jpeg().toBuffer();const output=await composeSocialVisual(scene,${JSON.stringify(params)});const box=compositionLayout(false,false).title;const rendered=await sharp(output).extract(box).threshold(230).trim({background:'#000000'}).png().toBuffer({resolveWithObject:true});assert.ok(rendered.info.width>400,'Latin headline must not degrade into narrow missing-glyph boxes');assert.ok(rendered.info.height>55,'Latin headline must retain its intended font size');`;
+ await runWithIsolatedFonts(script);
+});
+
+test('bundled Reels fonts retain distinct weights with readable Latin glyphs in an isolated font config', async () => {
+ await runWithIsolatedFonts(`
+   import assert from 'node:assert/strict';
+   import { readFile } from 'node:fs/promises';
+   import sharp from 'sharp';
+   import { prepareReelsCopyBatch } from './src/lib/server/content-compositor.ts';
+
+   for (const face of ['Inter-ExtraBold.ttf', 'Inter-Medium.ttf']) {
+     const font = await readFile(new URL('./src/lib/server/fonts/inter/' + face, import.meta.url));
+     assert.equal(font.readUInt32BE(0), 0x00010000, face + ' must be a bundled TrueType face');
+   }
+   const value = 'Satu topik';
+   const [{ fitted, captionLines }] = await prepareReelsCopyBatch([
+     { businessName: value, headline: value, cta: '', website: '' },
+   ], false);
+   assert.deepEqual(captionLines, []);
+   const headline = fitted.find(({ key }) => key === 'headline').text;
+   const brand = fitted.find(({ key }) => key === 'businessName').text;
+   assert.ok(headline.width > 280 && headline.height > 48);
+   assert.ok(brand.width > 100 && brand.height > 20);
+   const inkDensity = async ({ data }) => {
+     const mask = await sharp(data).extractChannel('alpha').raw().toBuffer();
+     return mask.reduce((sum, alpha) => sum + alpha / 255, 0) / mask.length;
+   };
+   assert.ok(await inkDensity(headline) > (await inkDensity(brand)) + 0.06,
+     'headline needs a visibly heavier face than the brand label');
+ `);
+});
+
+test('Reels scenes use one headline size and the same safe accent position across different photo tones', async () => {
+ const copies = [
+   { headline: 'Kenapa Jawabanku Salah?', cta: '', website: '' },
+   { headline: 'Tandai langkah pertama', cta: '', website: '' },
+   { headline: 'Pahami kesalahan sebelum mengulang latihan', cta: '', website: '' },
+   { headline: 'Coba satu soal serupa', cta: 'Pelajari selengkapnya', website: 'cendekiaai.com' },
+ ].map(copy => ({ businessName: 'Cendekia AI', ...copy }));
+ const prepared = await prepareReelsCopyBatch(copies, true);
+ assert.equal(prepared.length, 4);
+ const sizes = new Set<number>();
+ for (const { fitted, captionLines } of prepared) {
+   assert.deepEqual(captionLines, []);
+   const headline = fitted.find(({ key }) => key === 'headline');
+   assert.ok(headline);
+   sizes.add(headline.text.fontSize);
+   assert.equal(headline.box.left, prepared[0].fitted.find(({ key }) => key === 'headline')!.box.left);
+   assert.equal(headline.box.top, prepared[0].fitted.find(({ key }) => key === 'headline')!.box.top);
+   assert.ok(headline.box.top >= REELS_ACCENT.top + REELS_ACCENT.height);
+   assert.ok(headline.box.top + headline.box.height < REELS_ARTWORK.screenshot.top);
+   for (const { box } of fitted) {
+     assert.ok(box.left >= 0 && box.left + box.width <= 1080);
+     assert.ok(box.top >= 224 && box.top + box.height <= 1600);
+   }
+ }
+ assert.equal(sizes.size, 1);
+ assert.ok([...sizes][0] >= CONTENT_TYPOGRAPHY.reelsTitle.min);
+ const wideCopy = { ...copies[2], headline: Array(7).fill('WWWWWW').join(' ') };
+ const constrained = await prepareReelsCopyBatch([copies[0], wideCopy], true);
+ const constrainedSizes = constrained.map(({ fitted }) => fitted.find(({ key }) => key === 'headline')?.text.fontSize);
+ assert.ok(constrainedSizes[0] && constrainedSizes[0] < CONTENT_TYPOGRAPHY.reelsTitle.max);
+ assert.equal(constrainedSizes[0], constrainedSizes[1], 'a tighter title adjusts the entire set');
+
+ const brandPalette = ['#F3EEE4', '#123B60'];
+ const backgrounds = ['#F3EEE4', '#FAF8F2', '#131C25', '#F8E9D3'];
+ const frames = await Promise.all(prepared.map(async ({ fitted }, index) => {
+   const photo = await sharp({
+     create: { width: 1080, height: 1920, channels: 3, background: backgrounds[index] },
+   }).png().toBuffer();
+   return composeReelsScene(photo, fitted, undefined, brandPalette);
+ }));
+ const outputScale = 720 / 1080;
+ const accentPixel = {
+   left: Math.round((REELS_ACCENT.left + REELS_ACCENT.width / 2) * outputScale),
+   top: Math.round((REELS_ACCENT.top + REELS_ACCENT.height / 2) * outputScale),
+   width: 1,
+   height: 1,
+ };
+ for (const [index, { overlay }] of frames.entries()) {
+   const actual = await sharp(overlay).extract(accentPixel).raw().toBuffer();
+   assert.ok(actual[3] > 240, 'accent remains visible against the photo');
+   const expected = index === 2 ? [0xF3, 0xEE, 0xE4] : [0x12, 0x3B, 0x60];
+   assert.ok(expected.every((channel, i) => Math.abs(channel - actual[i]) <= 4),
+     'accent selects the first sufficiently contrasting brand color');
+   const headline = prepared[index].fitted.find(({ key }) => key === 'headline')!;
+   const ink = await sharp(overlay).extract({
+     left: Math.ceil(headline.box.left * outputScale),
+     top: Math.ceil(headline.box.top * outputScale),
+     width: Math.floor(headline.box.width * outputScale) - 2,
+     height: Math.floor(headline.box.height * outputScale) - 2,
+   }).raw().toBuffer();
+   const visibleGlyph = ink.findIndex((value, offset) => offset % 4 === 3 && value >= 245) - 3;
+   assert.ok(visibleGlyph >= 0);
+   assert.ok(index === 2 ? ink[visibleGlyph] >= 240 : ink[visibleGlyph] <= 30,
+     'headline keeps high contrast on the current photo');
+ }
 });
 
 
