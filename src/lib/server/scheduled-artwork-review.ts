@@ -58,11 +58,15 @@ export async function verifyScheduledArtwork(
   const rejected = () => new ApiError(422, 'Visual otomatis perlu diperiksa. Teks atau tata letak belum lolos pemeriksaan, sehingga slot ini tidak dikirim.', 'scheduled_artwork_rejected');
   const typesetReels = isTypesetReels(params);
   const studioReels = typesetReels && params.scheduledEditorial === false;
-  const unavailable = () => studioReels
-    ? new ApiError(503, 'Pemeriksaan visual Reels belum selesai. Silakan coba lagi.', 'reels_photo_review_unavailable')
-    : new ApiError(503, 'Pemeriksaan visual otomatis belum selesai. Slot ini tidak dikirim.', 'scheduled_artwork_review_unavailable');
+  const startedAt = Date.now();
+  const unavailable = (reason: string, providerStatus?: number) => {
+    if (!studioReels) return new ApiError(503, 'Pemeriksaan visual otomatis belum selesai. Slot ini tidak dikirim.', 'scheduled_artwork_review_unavailable');
+    console.warn(JSON.stringify({ event: 'studio_reels_visual_review_unavailable', reason, providerStatus, elapsedMs: Date.now() - startedAt }));
+    return new ApiError(503, 'Pemeriksaan visual Reels belum selesai. Silakan coba lagi.', 'reels_photo_review_unavailable');
+  };
   const reelsRejectionCode = studioReels ? 'reels_photo_layout_unreadable' : 'scheduled_artwork_rejected';
-  if ((!reviewClient && !process.env.OPENAI_API_KEY) || (typesetReels && !comparisonImage)) throw unavailable();
+  if (!reviewClient && !process.env.OPENAI_API_KEY) throw unavailable('missing_provider_configuration');
+  if (typesetReels && !comparisonImage) throw unavailable('missing_original_photo');
   const vertical = params.aspectRatio === '9:16';
   const layout = vertical ? REELS_ARTWORK : CAROUSEL_ARTWORK;
   const reserved = [
@@ -73,6 +77,8 @@ export async function verifyScheduledArtwork(
     } },
   ].filter(Boolean);
   const client = reviewClient ?? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: 'https://api.openai.com/v1', timeout: 22_000, maxRetries: 0 });
+  let failureReason = 'image_preprocessing';
+  let reviewDeadline: AbortSignal | undefined;
   let result: z.infer<typeof providerReview>;
   try {
     const reviewImages: { type: 'input_image'; detail: 'high' | 'low'; image_url: string }[] = [{
@@ -90,6 +96,9 @@ export async function verifyScheduledArtwork(
         .rotate().resize(512, 512, { fit: 'inside', withoutEnlargement: true }).jpeg().toBuffer();
       reviewImages.push({ type: 'input_image', detail: 'low', image_url: `data:image/jpeg;base64,${thumbnail.toString('base64')}` });
     }
+    failureReason = 'provider_request';
+    // Studio's 300s route leaves time for one retry, video encoding and saving after the photo budget.
+    reviewDeadline = studioReels ? AbortSignal.timeout(45_000) : undefined;
     const response = await client.responses.create({
       model: 'gpt-6-luna',
       store: false,
@@ -117,11 +126,19 @@ export async function verifyScheduledArtwork(
         ...reviewImages,
       ] }],
       text: { format: { type: 'json_schema', name: 'veloxa_scheduled_artwork', strict: true, schema: z.toJSONSchema(providerReview) } },
-    });
-    if (response.status !== 'completed' || !response.output_text) throw unavailable();
+    }, reviewDeadline ? { timeout: 30_000, maxRetries: 1, signal: reviewDeadline } : undefined);
+    if (response.status !== 'completed' || !response.output_text) {
+      failureReason = response.incomplete_details?.reason === 'max_output_tokens'
+        ? 'response_token_limit' : 'incomplete_response';
+      throw new Error('Artwork review did not produce a result');
+    }
+    failureReason = 'invalid_response';
     result = providerReview.parse(JSON.parse(response.output_text));
-  } catch {
-    throw unavailable();
+  } catch (error) {
+    if (reviewDeadline?.aborted || error instanceof OpenAI.APIConnectionTimeoutError) throw unavailable('provider_timeout');
+    if (error instanceof OpenAI.APIConnectionError) throw unavailable('provider_connection');
+    if (error instanceof OpenAI.APIError && typeof error.status === 'number') throw unavailable('provider_http', error.status);
+    throw unavailable(failureReason);
   }
   const { visibleCopy, layoutPasses } = result;
   if (typesetReels && visibleCopy.trim()) {

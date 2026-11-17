@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import OpenAI from 'openai';
 import sharp from 'sharp';
 import { passesScheduledArtworkReview, verifyScheduledArtwork } from './scheduled-artwork-review';
 
@@ -85,6 +86,50 @@ test('repaired Reels reviews layout and unexpected copy on the original photo', 
     code: 'reels_photo_layout_unreadable', message: /Teks dan subjek/,
   });
   assert.equal(calls.length, 4);
+});
+
+test('Studio Reels retries a transient review failure on the same photos', async () => {
+  const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  const studioReels = { ...params, aspectRatio: '9:16' as const, scheduledReelsPhotoOnly: true, scheduledEditorial: false };
+  const reviewResponse = (layoutPasses: boolean) => Response.json({
+    object: 'response',
+    status: 'completed',
+    output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({
+      visibleCopy: '', layoutPasses, layoutReason: layoutPasses ? '' : 'Copy overlaps the subject',
+    }) }] }],
+  });
+  const requests: unknown[] = [];
+  const client = new OpenAI({ apiKey: 'not-a-real-key', maxRetries: 0, fetch: async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    if (requests.length === 1) return Response.json({ error: { message: 'Service unavailable' } }, {
+      status: 503, headers: { 'retry-after-ms': '1' },
+    });
+    return reviewResponse(requests.length === 2);
+  } });
+
+  await verifyScheduledArtwork(photo, studioReels, photo, client);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0], requests[1]);
+  await assert.rejects(verifyScheduledArtwork(photo, studioReels, photo, client), {
+    status: 422, code: 'reels_photo_layout_unreadable',
+  });
+  assert.equal(requests.length, 3);
+});
+
+test('Studio Reels blocks a malformed review result without logging its contents', async t => {
+  const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  const studioReels = { ...params, aspectRatio: '9:16' as const, scheduledReelsPhotoOnly: true, scheduledEditorial: false };
+  const warning = t.mock.method(console, 'warn', () => {});
+  const sensitiveBody = 'example-private-provider-output';
+  const client = { responses: { create: async () => ({ status: 'completed', output_text: sensitiveBody }) } } as never;
+
+  await assert.rejects(verifyScheduledArtwork(photo, studioReels, photo, client), {
+    status: 503, code: 'reels_photo_review_unavailable',
+  });
+  assert.equal(warning.mock.callCount(), 1);
+  const log = String(warning.mock.calls[0].arguments[0]);
+  assert.equal(JSON.parse(log).reason, 'invalid_response');
+  assert.ok(!log.includes(sensitiveBody));
 });
 
 test('feed review uses exact final bytes, a same-sized comparison and selected reference thumbnails', async () => {
