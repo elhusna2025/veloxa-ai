@@ -36,8 +36,14 @@ const reelsOutput = z.object({
       time: z.string().trim().min(1),
       visual: z.string().trim().min(1).max(1000),
       voiceover: z.string().trim().min(1).max(REELS_SPEC.maxSceneVoiceChars),
-      textOverlay: z.string().trim().min(1).max(120),
-    })),
+      textOverlay: z.string().trim().min(1),
+    }).transform(scene => {
+      // Some saved agent responses put the headline and the already-supplied narration on separate lines.
+      const [headline, ...supportingLines] = scene.textOverlay.split(/\r?\n/);
+      const supportingCopy = supportingLines.join(' ').replace(/\s+/g, ' ').trim();
+      const voiceover = scene.voiceover.replace(/\s+/g, ' ');
+      return supportingCopy === voiceover ? { ...scene, textOverlay: headline.trim() } : scene;
+    }).refine(scene => scene.textOverlay.length <= 120, { path: ['textOverlay'] })),
     closing: z.string().trim().min(1),
   }),
 });
@@ -106,6 +112,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
       };
       if (params.format === 'short_video') {
         brief.extraInstructions += ' Tulis title yang langsung menyebut topik atau manfaat konkret Reels ini, maksimum 7 kata dan 48 karakter. Gunakan title yang sama persis sebagai textOverlay adegan pertama. Sebut topiknya secara alami pada kalimat pembuka voiceover dan tunjukkan konteksnya pada visual pembuka. Pakai angka, contoh, atau langkah sebagai poin pendukung pada adegan berikutnya. Setiap adegan lanjutan menerangkan topik yang sama, dengan satu frasa visual yang singkat. Tulis voiceover tiap adegan dalam 1–2 kalimat singkat dengan sasaran 10–20 kata. Kalimat yang sama tampil sebagai teks pendukung di bawah judul, jadi buat setiap kalimat mudah dibaca dan nyaman diucapkan.';
+        brief.extraInstructions += ' Isi textOverlay hanya dengan judul adegan dalam satu baris, maksimum 7 kata dan 48 karakter. Teks pendukung cukup ditulis di voiceover karena aplikasi menampilkannya sendiri.';
       }
       brief.extraInstructions = [brief.extraInstructions, 'categoryLabel adalah bidang bisnis penyedia, bukan bidang pelanggannya. targetAudience adalah pelanggan yang ingin dijangkau. serviceArea adalah cakupan layanan pelanggan, bukan alamat kantor; jika kosong jangan mengarang lokasi. Jangan menyimpulkan harga atau promosi jika tidak dicantumkan.'].filter(Boolean).join(' ');
       if(params.format!=='single_post') brief.extraInstructions=[brief.extraInstructions,'Setiap visualDirection (carousel) atau visual (Reels) harus menggambarkan pesan spesifik headline/body atau narasi pada slide/adegan tersebut, dengan subjek dan aktivitas yang relevan. Bedakan adegan sesuai pesan: jangan ulang satu latar abstrak atau adegan bisnis umum untuk semua slide. Pilih satu arahan seni dan nuansa visual yang konsisten sebagai satu seri; jaga variasi komposisi per slide. Gunakan konteks deskripsi dan produk bisnis yang benar, tanpa mengarang antarmuka produk, angka, harga atau testimoni.'].filter(Boolean).join(' ');

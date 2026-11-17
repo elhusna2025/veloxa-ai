@@ -277,6 +277,28 @@ test('Reels memakai judul topik di adegan pertama dan mempertahankan naskah sert
 
 test('Reels accepts a longer100/130-word story and rejects131 before images or voice',async()=>{for(const words of[100,130,131]){const parts=Array.from({length:4},(_,i)=>Array.from({length:Math.floor(words/4)+(i<words%4?1:0)},()=> 'kata').join(' '));const script={opening:parts[0],closing:parts[3],scenes:parts.map((voiceover,i)=>({time:`${i*15}–${(i+1)*15}`,visual:'Guru menjelaskan pelajaran',voiceover,textOverlay:`Pesan ${i+1}`}))};const{client,calls}=mockClient({...generatedCopy,videoScript:script});const params={...makeParams(),format:'short_video' as const};const run=createContentAgentGenerator(client as never,agentId)(params);if(words>REELS_SPEC.maxVoiceWords)await assert.rejects(run,{code:'invalid_content_agent_response'});else{const result=await run;assert.equal(result.draft.videoScenes?.map(s=>s.voiceover).join(' ').split(' ').length,words);assert.equal(result.draft.videoDurationSeconds,estimateReelsDuration(parts.join(' ')));assert.ok(result.draft.videoDurationSeconds!>30);assert.match(JSON.parse(String(calls.request!.input)).extraInstructions,/20–60 detik/);}}});
 
+test('Reels keeps a short headline when the agent repeats its narration below it', async () => {
+  const params = { ...makeParams(), format: 'short_video' as const };
+  const headline = 'Coba Satu Soal Serupa';
+  const voiceover = 'Kerjakan satu soal serupa tanpa melihat pembahasan, lalu periksa lagi alasan di setiap langkah. Pelan-pelan saja.';
+  const overlay = `${headline}\r\n${voiceover.replace('lalu ', 'lalu\r\n')}`;
+  assert.ok(overlay.length > 120);
+  const scenes = videoScript.scenes.map((scene, index) => index === 3
+    ? { ...scene, voiceover, textOverlay: overlay } : scene);
+  const { client, calls } = mockClient({ ...generatedCopy, videoScript: { ...videoScript, closing: voiceover, scenes } });
+  const { draft } = await createContentAgentGenerator(client as never, agentId)(params);
+
+  assert.equal(draft.videoScenes?.[3].textOverlay, headline);
+  assert.equal(draft.videoScenes?.[3].voiceover, voiceover);
+  assert.match(JSON.parse(String(calls.request?.input)).extraInstructions, /Isi textOverlay hanya dengan judul adegan dalam satu baris/);
+
+  scenes[3] = { ...scenes[3], textOverlay: `${overlay}\nTambahan berbeda` };
+  const malformed = mockClient({ ...generatedCopy, videoScript: { ...videoScript, closing: voiceover, scenes } });
+  await assert.rejects(createContentAgentGenerator(malformed.client as never, agentId)(params), {
+    code: 'invalid_content_agent_response',
+  });
+});
+
 test('short_video menolak skrip malformed dengan error aman dan tanpa fallback placeholder', async () => {
   const malformedOutputs: Array<{ label: string; output: unknown }> = [
     { label: 'skrip hilang', output: generatedCopy },
