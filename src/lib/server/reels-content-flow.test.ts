@@ -157,14 +157,26 @@ test('Studio and Otonom pin the workspace script and voice models and inherit th
         }));
         return { draft, engineMode: 'deterministic_local' };
       },
-      renderImage: async (_params, options) => {
+      renderImage: async (params, options) => {
+        assert.equal(params.sceneOnly, true);
+        assert.equal(params.scheduledReelsPhotoOnly, true);
         receivedImageModels.push(options?.model);
         return photo;
       },
       verifyArtwork: async () => {},
       generateVoice: async (transcript, options) => {
         assert.equal(options?.model, voiceModel);
-        return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript, model: voiceModel };
+        assert.deepEqual(options?.sceneLines, Array(4).fill('Pelajari langkah ini.'));
+        return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript, model: voiceModel, sceneDurations: [4, 6, 7, 3] };
+      },
+      renderVideo: async ({ images, motionLayers, sceneWeights }) => {
+        assert.deepEqual(sceneWeights, [4, 6, 7, 3]);
+        assert.equal(motionLayers?.length, 4);
+        const [first] = motionLayers!;
+        const [photoMeta, overlayMeta] = await Promise.all([sharp(first.photo).metadata(), sharp(first.overlay).metadata()]);
+        assert.deepEqual([photoMeta.width, photoMeta.height], [720, 1280]);
+        assert.equal(overlayMeta.hasAlpha, true);
+        return { mp4: Buffer.from('test-media'), poster: images[0], width: 720, height: 1280, durationSeconds: 20, mimeType: 'video/mp4' };
       },
     });
     assert.equal(draft.voiceoverModel, voiceModel);
@@ -561,7 +573,12 @@ test('a scheduled Reels retry reuses its approved script, good scenes and voiceo
     },
     generateVoice: async script => {
       voiceCalls++;
-      return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript: script, model: 'gpt-realtime-2.1-mini' };
+      return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript: script, model: 'gpt-realtime-2.1-mini', sceneDurations: [4, 6, 7, 3] };
+    },
+    renderVideo: async ({ images, motionLayers, sceneWeights }) => {
+      assert.equal(motionLayers?.length, 4);
+      assert.deepEqual(sceneWeights, [4, 6, 7, 3]);
+      return { mp4: Buffer.from('test-media'), poster: images[0], width: 720, height: 1280, durationSeconds: 20, mimeType: 'video/mp4' };
     },
   };
 

@@ -5,6 +5,7 @@ import { REELS_SPEC } from '../reels-spec';
 import type { AdminModelOverrides } from '../admin-settings';
 import { wibDay } from './clock';
 import type { ContentAgentResult } from './content-agent';
+import type { ReelsArtworkFrame } from './content-compositor';
 import { adminBucket } from './firebase';
 import { REELS_VOICE_MODEL } from './reels-voice';
 
@@ -16,6 +17,7 @@ const storageTimeoutMs = 2_000;
 const maxScriptBytes = 128 * 1024;
 const maxFrameBytes = 2 * 1024 * 1024;
 const maxPcmBytes = REELS_SPEC.maxSourceAudioSeconds * 48_000;
+const maxTimingBytes = 256;
 const socialChannel = z.enum(['instagram', 'facebook', 'tiktok', 'youtube_shorts']);
 const savedScript = z.object({
   savedAt: z.number().int(),
@@ -56,8 +58,34 @@ function digest(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-type Voice = { pcm: Buffer; sampleRate: 24000; model: string };
+type Voice = { pcm: Buffer; sampleRate: 24000; model: string; sceneDurations?: number[] };
 type Bucket = ReturnType<typeof adminBucket>;
+
+// Store the reviewed result and its motion layers in one immutable object.
+function packParts(parts: Buffer[]) {
+  const sizes = Buffer.alloc(parts.length * 4);
+  parts.forEach((part, index) => sizes.writeUInt32LE(part.length, index * 4));
+  return Buffer.concat([sizes, ...parts]);
+}
+
+function unpackParts(bytes: Buffer, maxSizes: number[]): Buffer[] | null {
+  let offset = maxSizes.length * 4;
+  if (bytes.length < offset) return null;
+  const parts: Buffer[] = [];
+  for (const [index, maximum] of maxSizes.entries()) {
+    const size = bytes.readUInt32LE(index * 4);
+    if (size < 1 || size > maximum || offset + size > bytes.length) return null;
+    parts.push(bytes.subarray(offset, offset + size));
+    offset += size;
+  }
+  return offset === bytes.length ? parts : null;
+}
+
+function validSceneDurations(value: unknown, pcm: Buffer): value is number[] {
+  return Array.isArray(value) && value.length === REELS_SPEC.sceneCount
+    && value.every(seconds => typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0)
+    && Math.abs(value.reduce((total, seconds) => total + seconds, 0) - pcm.length / 48_000) < 0.001;
+}
 
 async function withinStorageBudget<T>(operation: () => Promise<T>): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -104,8 +132,8 @@ export function scheduledReelsCheckpoint(
   const sourceKey = digest(JSON.stringify({ version: 1, day: wibDay(), ...source, images: source.images.map(digest) }));
   const file = (name: string) => bucket().file(`${prefix}${name}`);
   const scriptFile = 'script.json';
-  const voiceFile = 'voice.pcm';
-  const frameFile = (index: number) => `frame-${index}.jpg`;
+  const voiceFile = 'voice-v2.bin';
+  const frameFile = (index: number) => `frame-v2-${index}.bin`;
   let resuming = false;
   const read = async (name: string, maxBytes: number) => {
     const result = await withinStorageBudget(() => file(name).download());
@@ -143,26 +171,41 @@ export function scheduledReelsCheckpoint(
       const bytes = Buffer.from(JSON.stringify(saved));
       return bytes.length <= maxScriptBytes ? write(scriptFile, bytes, 'application/json') : Promise.resolve(false);
     },
-    async frame(index: number, render: () => Promise<Buffer>) {
+    async frame(index: number, render: () => Promise<ReelsArtworkFrame>): Promise<ReelsArtworkFrame> {
       if (!Number.isInteger(index) || index < 0 || index >= REELS_SPEC.sceneCount) {
         throw new RangeError('Indeks adegan checkpoint Reels tidak valid.');
       }
       const name = frameFile(index);
-      const cached = resuming ? await read(name, maxFrameBytes) : null;
-      if (cached) {
-        const metadata = await sharp(cached, { limitInputPixels: 720 * 1280 }).metadata().catch(() => null);
-        if (metadata?.format === 'jpeg' && metadata.width === 720 && metadata.height === 1280) return cached;
+      const cached = resuming ? await read(name, 3 * maxFrameBytes + 12) : null;
+      const parts = cached && unpackParts(cached, [maxFrameBytes, maxFrameBytes, maxFrameBytes]);
+      if (parts) {
+        const [image, photo, overlay] = parts;
+        const metadata = await Promise.all(parts.map(part => sharp(part, { limitInputPixels: 720 * 1280 }).metadata().catch(() => null)));
+        if (metadata.every((item, index) => item?.width === 720 && item.height === 1280 &&
+            (index === 2 ? item.format === 'png' && item.hasAlpha : item.format === 'jpeg'))) {
+          return { image, photo, overlay };
+        }
       }
-      const bytes = await render();
-      if (bytes.length <= maxFrameBytes) await write(name, bytes, 'image/jpeg');
-      return bytes;
+      const frame = await render();
+      const buffers = [frame.image, frame.photo, frame.overlay];
+      if (buffers.every(bytes => bytes.length <= maxFrameBytes)) await write(name, packParts(buffers), 'application/octet-stream');
+      return frame;
     },
     async voice(render: () => Promise<Voice>): Promise<Voice> {
-      const cached = resuming ? await read(voiceFile, maxPcmBytes) : null;
-      if (cached && cached.length % 2 === 0) return { pcm: cached, sampleRate: 24000, model: voiceModel };
+      const cached = resuming ? await read(voiceFile, maxPcmBytes + maxTimingBytes + 8) : null;
+      const parts = cached && unpackParts(cached, [maxPcmBytes, maxTimingBytes]);
+      if (parts && parts[0].length % 2 === 0) {
+        const [pcm, timing] = parts;
+        try {
+          const sceneDurations: unknown = JSON.parse(timing.toString('utf8'));
+          if (sceneDurations === null) return { pcm, sampleRate: 24000, model: voiceModel };
+          if (validSceneDurations(sceneDurations, pcm)) return { pcm, sampleRate: 24000, model: voiceModel, sceneDurations };
+        } catch { /* A damaged checkpoint is rebuilt from the approved script. */ }
+      }
       const voice = await render();
       if (voice.model === voiceModel && voice.pcm.length <= maxPcmBytes && voice.pcm.length % 2 === 0) {
-        await write(voiceFile, voice.pcm, 'application/octet-stream');
+        const timing = Buffer.from(JSON.stringify(validSceneDurations(voice.sceneDurations, voice.pcm) ? voice.sceneDurations : null));
+        await write(voiceFile, packParts([voice.pcm, timing]), 'application/octet-stream');
       }
       return voice;
     },

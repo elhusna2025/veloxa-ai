@@ -31,6 +31,38 @@ function emitCompletion(connection: MockConnection, audio = Buffer.from([1, 0, 2
   connection.emit('response.done', { response: { status: 'completed' } });
 }
 
+const sceneLines = [
+  'Mau latihan TKA? Coba buat peta konsep dahulu supaya belajar lebih terarah.',
+  'Tulis satu topik di tengah kertas, lalu tarik tiga cabang untuk ide utama.',
+  'Isi setiap cabang dengan satu contoh dan tandai bagian yang masih membuatmu ragu.',
+  'Pilih satu cabang lalu mulai latihan dari situ. Coba gunakan cara ini besok juga.',
+];
+
+function mockScenes(transcriptFor: (line: string, attempt: number) => string, lines = sceneLines, audioForScene?: (index: number) => Buffer) {
+  const requests: { line: string; instructions: string }[] = [];
+  const connections: MockConnection[] = [];
+  const attempts = new Map<string, number>();
+  const createConnection = () => {
+    const connection = new MockConnection();
+    connections.push(connection);
+    queueMicrotask(() => {
+      connection.emit('session.created', {});
+      const response = connection.sent[0].response as { instructions: string; input: { content: { text: string }[] }[] };
+      const line = response.input[0].content[0].text;
+      const index = lines.indexOf(line);
+      assert.notEqual(index, -1);
+      const attempt = (attempts.get(line) ?? 0) + 1;
+      attempts.set(line, attempt);
+      requests.push({ line, instructions: response.instructions });
+      connection.emit('response.output_audio.delta', makeAudioEvent(audioForScene?.(index) ?? Buffer.alloc((index + 2) * 48_000, index + 1)));
+      connection.emit('response.output_audio_transcript.done', { transcript: transcriptFor(line, attempt) });
+      connection.emit('response.done', { response: { status: 'completed' } });
+    });
+    return connection as never;
+  };
+  return { requests, connections, createConnection };
+}
+
 test('memvalidasi panjang dan jumlah kata sebelum membuka koneksi', async () => {
   let started = false;
   await assert.rejects(
@@ -111,6 +143,113 @@ test('membuka koneksi Realtime dengan model pilihan dan mencatatnya pada hasil',
   });
   emitCompletion(connection);
   assert.equal((await result).model, model);
+});
+
+test('membaca setiap adegan, menerima ejaan akronim, serta menjaga batas PCM untuk transisi', async () => {
+  const { requests, connections, createConnection } = mockScenes(line => line.replace('TKA', 'Te Ka A').toUpperCase().replace(/[.,?]/g, ''));
+  const result = await generateReelsVoiceover(sceneLines.join(' '), { createConnection, sceneLines });
+
+  assert.deepEqual(requests.map(request => request.line), sceneLines);
+  assert.match(requests[0].instructions, /intonasi tanya/);
+  assert.match(requests[1].instructions, /kata kunci/);
+  assert.match(requests[2].instructions, /contoh atau detail/);
+  assert.match(requests[3].instructions, /penuh dukungan/);
+  assert.ok(connections.every(connection => connection.closeCount === 1));
+  assert.deepEqual(result.sceneDurations, [3.5, 4.5, 5.5, 6.5]);
+  assert.equal(result.pcm.length, 20 * 48_000);
+  let offset = 0;
+  for (const [index, duration] of result.sceneDurations!.entries()) {
+    const leadBytes = Math.round(0.28 * 48_000);
+    const voiceBytes = (index + 2) * 48_000;
+    const end = offset + duration * 48_000;
+    assert.ok(result.pcm.subarray(offset, offset + leadBytes).every(byte => byte === 0));
+    const gained = Math.round((index + 1) * 257 * 10 ** (6 / 20));
+    assert.equal(result.pcm.readInt16LE(offset + leadBytes), gained);
+    assert.equal(result.pcm.readInt16LE(offset + leadBytes + voiceBytes - 2), gained);
+    assert.ok(result.pcm.subarray(offset + leadBytes + voiceBytes, end).every(byte => byte === 0));
+    offset = end;
+  }
+});
+
+test('menerapkan gain yang seragam sambil menjaga puncak narasi sekitar -2 dBFS', async () => {
+  const samples = [-32_000, 16_000, -8_000, 2_000];
+  const { createConnection } = mockScenes(line => line, sceneLines, index => {
+    const pcm = Buffer.alloc(2);
+    pcm.writeInt16LE(samples[index]);
+    return pcm;
+  });
+  const result = await generateReelsVoiceover(sceneLines.join(' '), { createConnection, sceneLines });
+  const peak = Math.floor(32767 * 10 ** (-2 / 20));
+  let offset = 0;
+  for (const [index, duration] of result.sceneDurations!.entries()) {
+    assert.equal(result.pcm.readInt16LE(offset + Math.round(0.28 * 48_000)), Math.round(samples[index] * peak / 32_000));
+    offset += Math.round(duration * 48_000);
+  }
+});
+
+test('mengulang satu kali jika voiceover menambah pengantar dan menolak pengulangan yang masih berubah', async () => {
+  const first = mockScenes((line, attempt) => line === sceneLines[0] && attempt === 1 ? `Halo semua. ${line}` : line);
+  const result = await generateReelsVoiceover(sceneLines.join(' '), { createConnection: first.createConnection, sceneLines });
+  assert.equal(first.requests.length, 5);
+  assert.equal(result.transcript, sceneLines.join(' '));
+
+  const second = mockScenes(line => line === sceneLines[0] ? `Halo semua. ${line}` : line);
+  await assert.rejects(generateReelsVoiceover(sceneLines.join(' '), { createConnection: second.createConnection, sceneLines }), { code: 'reels_voice_unavailable' });
+  assert.equal(second.requests.filter(request => request.line === sceneLines[0]).length, 2);
+  assert.equal(second.requests.length, 3);
+  assert.ok(second.connections.every(connection => connection.closeCount === 1));
+});
+
+test('menerima pengucapan angka Indonesia dengan nilai dan satuan yang sama', async () => {
+  const lines = [
+    'Untuk memulai, gunakan 3 ide pokok dan catat peningkatan latihan sebesar 12,5%.',
+    'Siapkan Rp50.000 untuk bahan dan catat pengeluarannya agar mudah diperiksa.',
+    'Tulis angka dua ratus empat belas di kartu bagian depan dan seribu di belakang.',
+    'Periksa penurunan sebesar −4,05% dengan teliti sebelum merangkum hasil latihan ini.',
+  ];
+  const transcripts = [
+    'Untuk memulai, gunakan tiga ide pokok dan catat peningkatan latihan sebesar dua belas koma lima persen.',
+    'Siapkan lima puluh ribu rupiah untuk bahan dan catat pengeluarannya agar mudah diperiksa.',
+    'Tulis angka 214 di kartu bagian depan dan 1.000 di belakang.',
+    'Periksa penurunan sebesar minus empat koma nol lima persen dengan teliti sebelum merangkum hasil latihan ini.',
+  ];
+  const correct = mockScenes(line => transcripts[lines.indexOf(line)], lines);
+  const result = await generateReelsVoiceover(lines.join(' '), { createConnection: correct.createConnection, sceneLines: lines });
+  assert.equal(correct.requests.length, lines.length);
+  assert.equal(result.transcript, transcripts.join(' '));
+
+  const changed = [
+    [0, 'dua belas koma lima persen', 'tiga belas koma lima persen'],
+    [0, 'lima persen', 'lima'],
+    [1, 'lima puluh ribu rupiah', 'enam puluh ribu rupiah'],
+    [1, 'lima puluh ribu rupiah', 'lima puluh ribu'],
+    [3, 'minus empat', 'empat'],
+  ] as const;
+  for (const [index, phrase, replacement] of changed) {
+    const incorrect = mockScenes(line => line === lines[index] ? transcripts[index].replace(phrase, replacement) : transcripts[lines.indexOf(line)], lines);
+    await assert.rejects(generateReelsVoiceover(lines.join(' '), { createConnection: incorrect.createConnection, sceneLines: lines }), { code: 'reels_voice_unavailable' });
+    assert.equal(incorrect.requests.filter(request => request.line === lines[index]).length, 2);
+  }
+});
+
+test('menolak skrip adegan yang berbeda dan membatalkan semua koneksi pada batas waktu', async () => {
+  const invalid = mockScenes(line => line);
+  await assert.rejects(generateReelsVoiceover(sceneLines.join(' '), {
+    createConnection: invalid.createConnection, sceneLines: [...sceneLines.slice(0, 3), 'Penutup berbeda.'],
+  }), { code: 'invalid_reels_script' });
+  assert.equal(invalid.connections.length, 0);
+
+  const connections: MockConnection[] = [];
+  await assert.rejects(generateReelsVoiceover(sceneLines.join(' '), {
+    sceneLines, timeoutMs: 10,
+    createConnection: () => {
+      const connection = new MockConnection();
+      connections.push(connection);
+      return connection as never;
+    },
+  }), { code: 'reels_voice_unavailable' });
+  assert.equal(connections.length, 2);
+  assert.ok(connections.every(connection => connection.closeCount === 1));
 });
 
 test('menolak audio malformed, kosong, terlalu besar, dan respons gagal dengan error aman', async () => {

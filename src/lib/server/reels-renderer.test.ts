@@ -19,6 +19,8 @@ test('menolak jumlah gambar, audio, sampel, dan bobot adegan yang tidak valid', 
   await assert.rejects(renderReelsVideo({ images, pcm: Buffer.alloc(0), sampleRate: 24000 }), { code: 'invalid_reels_render_input' });
   await assert.rejects(renderReelsVideo({ images, pcm, sampleRate: 48000 as 24000 }), { code: 'invalid_reels_render_input' });
   await assert.rejects(renderReelsVideo({ images, pcm, sampleRate: 24000, sceneWeights: [1, 0, 1, 1] }), { code: 'invalid_reels_render_input' });
+  await assert.rejects(renderReelsVideo({ images, pcm, sampleRate: 24000, motionLayers: [] }), { code: 'invalid_reels_render_input' });
+  await assert.rejects(renderReelsVideo({ images, pcm, sampleRate: 24000, fixedOverlay: images[0] }), { code: 'invalid_reels_render_input' });
   await assert.rejects(renderReelsVideo({ images, pcm: Buffer.alloc(24000 * 2 * 9), sampleRate: 24000 }), { code: 'reels_render_unavailable' });
   await assert.rejects(renderReelsVideo({ images, pcm: Buffer.alloc(REELS_SPEC.maxSourceAudioSeconds * 48_000 + 2), sampleRate: 24000 }), { code: 'reels_render_unavailable' });
 });
@@ -84,6 +86,58 @@ test('merender MP4 H.264/AAC potret dari empat gambar dan audio PCM nyata secara
     const lastPixel = [...last.subarray(centerOffset, centerOffset + 3)];
     assert.ok(firstPixel[0] > firstPixel[1] * 2 && firstPixel[0] > firstPixel[2] * 2, `Warna frame pertama tidak sesuai: ${firstPixel}`);
     assert.ok(lastPixel[0] > lastPixel[2] * 2 && lastPixel[1] > lastPixel[2] * 2, `Warna frame terakhir tidak sesuai: ${lastPixel}`);
+  } finally {
+    await rm(sampleDir, { recursive: true, force: true });
+  }
+});
+
+test('motion changes photo framing and blends all three cuts while artwork stays at fixed coordinates', { timeout: 120_000 }, async () => {
+  const width = 720;
+  const height = 1280;
+  const canvas = (background: string) => sharp({ create: { width, height, channels: 4, background } });
+  const marker = await sharp({ create: { width: 36, height: 100, channels: 3, background: '#ffffff' } }).png().toBuffer();
+  const photos = await Promise.all(['#de302f', '#35c634', '#3232dc', '#dcca32'].map(background =>
+    canvas(background).composite([{ input: marker, left: 176, top: 620 }]).jpeg().toBuffer()));
+  const title = await canvas('#00000000').composite([{ input: marker, left: 70, top: 160 }]).png().toBuffer();
+  const fixedOverlay = await canvas('#00000000').composite([{ input: marker, left: 70, top: 40 }]).png().toBuffer();
+  const pcm = Buffer.alloc(24_000 * 2 * 20);
+  const result = await renderReelsVideo({
+    images: photos, pcm, sampleRate: 24000, sceneWeights: [4, 5, 6, 5], useReviewedFrames: true,
+    motionLayers: photos.map(photo => ({ photo, overlay: title })), fixedOverlay,
+  });
+  assert.deepEqual(result.poster, photos[0]);
+  assert.ok(Math.abs(result.durationSeconds - 20) < 0.15);
+
+  const sampleDir = await mkdtemp(path.join(tmpdir(), 'veloxa-reels-motion-test-'));
+  try {
+    const videoPath = path.join(sampleDir, 'motion.mp4');
+    await writeFile(videoPath, result.mp4);
+    const sampleFrame = (seconds: number) => execFileSync(ffmpegBinary, [
+      '-hide_banner', '-loglevel', 'error', '-ss', String(seconds), '-i', videoPath,
+      '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
+    ], { maxBuffer: 4 * 1024 * 1024 });
+    const rgb = (frame: Buffer, x: number, y: number) => {
+      const offset = (y * width + x) * 3;
+      return [...frame.subarray(offset, offset + 3)];
+    };
+    const white = (frame: Buffer, x: number, y: number) => rgb(frame, x, y).every(value => value > 235);
+    const first = sampleFrame(0.2);
+    const pushed = sampleFrame(3.6);
+    assert.equal(white(first, 179, 660), true, 'photo marker starts near its source position');
+    assert.equal(white(pushed, 175, 660), true, 'photo marker moves under the zoom');
+    assert.equal(white(first, 174, 660), false);
+    assert.equal(white(first, 82, 180), true, `title remains at its source position, RGB ${rgb(first, 82, 180)}`);
+    assert.equal(white(pushed, 82, 180), true, `title does not zoom with photo, RGB ${rgb(pushed, 82, 180)}`);
+    for (const cut of [4, 9, 15]) {
+      const before = rgb(sampleFrame(cut - 0.32), 500, 400);
+      const middle = sampleFrame(cut);
+      const after = rgb(sampleFrame(cut + 0.32), 500, 400);
+      assert.ok(rgb(middle, 500, 400).some((value, channel) =>
+        value > Math.min(before[channel], after[channel]) + 20 && value < Math.max(before[channel], after[channel]) - 20),
+      `cut at ${cut}s must contain a blend of both photos`);
+      assert.equal(white(middle, 83, 64), true, `fixed asset stays visible through the ${cut}s blend`);
+      assert.equal(white(middle, 83, 180), false, `titles leave room for the ${cut}s blend`);
+    }
   } finally {
     await rm(sampleDir, { recursive: true, force: true });
   }

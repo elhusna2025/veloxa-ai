@@ -4,6 +4,7 @@ import path from 'node:path';
 const visualFontFile=path.join(process.cwd(),'node_modules/next/dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf');
 import { ApiError } from './http';
 import { CONTENT_TYPOGRAPHY } from '../content-typography';
+import { REELS_SPEC } from '../reels-spec';
 export interface OriginalVisualAsset { id: string; role: 'logo' | 'screenshot'; bytes: Buffer }
 export interface VisualCompositionParams {
  businessName: string; title: string; hook: string; cta: string;
@@ -116,24 +117,50 @@ function glyphLayer(alpha: Buffer, width: number, height: number, left: number, 
   return { input, raw: { width, height, channels: 4 }, left, top };
 }
 
-/** Preserve natural contrast where possible, otherwise outline the letters locally. */
-export async function composeScheduledReelsCopy(
+const REELS_MASTER = { width: 1080, height: 1920 } as const;
+const REELS_OUTPUT = { width: 720, height: 1280 } as const;
+
+async function renderReelsOverlay(layers: OverlayOptions[]) {
+  const canvas = sharp({ create: { ...REELS_MASTER, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } });
+  if (layers.length) canvas.composite(layers);
+  const png = await canvas.png().toBuffer();
+  return sharp(png).resize(REELS_OUTPUT.width, REELS_OUTPUT.height).png().toBuffer();
+}
+
+export async function composeReelsOriginalOverlay(assets: OriginalVisualAsset[]) {
+  if (!assets.length) return undefined;
+  const layers = await Promise.all(assets.map(asset => placeOriginalAsset(asset, REELS_ARTWORK[asset.role], asset.role === 'screenshot')));
+  return renderReelsOverlay(layers.flat());
+}
+
+export interface ReelsArtworkFrame {
+  image: Buffer;
+  photo: Buffer;
+  overlay: Buffer;
+}
+
+/** Check contrast across the photo area that can pass behind each fixed line of copy. */
+export async function composeReelsScene(
   photo: Buffer,
   fitted: Awaited<ReturnType<typeof prepareScheduledReelsCopy>>['fitted'],
-): Promise<Buffer> {
-  const width = 1080;
-  const height = 1920;
+  fixedOverlay?: Buffer,
+): Promise<ReelsArtworkFrame> {
+  const { width, height } = REELS_MASTER;
   const pixels = await sharp(photo, { limitInputPixels: 30_000_000 }).rotate()
     .resize(width, height, { fit: 'cover' }).toColourspace('srgb').removeAlpha().raw().toBuffer();
   const layers: OverlayOptions[] = [];
   for (const { box, text } of fitted) {
     const mask = await sharp(text.data).extractChannel('alpha').toColourspace('b-w').raw().toBuffer();
+    const zoom = REELS_SPEC.maxPhotoZoom;
+    const left = Math.max(0, Math.floor(box.left / zoom) - 2);
+    const top = Math.max(0, Math.floor(box.top / zoom) - 2);
+    const right = Math.min(width, Math.ceil(width - (width - box.left - text.width) / zoom) + 2);
+    const bottom = Math.min(height, Math.ceil(height - (height - box.top - text.height) / zoom) + 2);
     let darkest = 1;
     let brightest = 0;
-    for (let y = 0; y < text.height; y++) {
-      for (let x = 0; x < text.width; x++) {
-        if (mask[y * text.width + x] < 220) continue;
-        const offset = ((box.top + y) * width + box.left + x) * 3;
+    for (let y = top; y < bottom; y++) {
+      for (let x = left; x < right; x++) {
+        const offset = (y * width + x) * 3;
         const luminance = 0.2126 * linearColor[pixels[offset]] + 0.7152 * linearColor[pixels[offset + 1]] + 0.0722 * linearColor[pixels[offset + 2]];
         darkest = Math.min(darkest, luminance);
         brightest = Math.max(brightest, luminance);
@@ -157,7 +184,15 @@ export async function composeScheduledReelsCopy(
     layers.push(glyphLayer(stroke, paddedWidth, paddedHeight, box.left - OUTLINE, box.top - OUTLINE, 0));
     layers.push(glyphLayer(mask, text.width, text.height, box.left, box.top, 255));
   }
-  return sharp(pixels, { raw: { width, height, channels: 3 } }).composite(layers).jpeg({ quality: 96 }).toBuffer();
+  const [background, overlay] = await Promise.all([
+    sharp(pixels, { raw: { width, height, channels: 3 } }).resize(REELS_OUTPUT.width, REELS_OUTPUT.height).jpeg({ quality: 94 }).toBuffer(),
+    renderReelsOverlay(layers),
+  ]);
+  const image = await sharp(background).composite([
+    { input: overlay },
+    ...(fixedOverlay ? [{ input: fixedOverlay }] : []),
+  ]).jpeg({ quality: 94 }).toBuffer();
+  return { image, photo: background, overlay };
 }
 export function shortVisualCta(cta: string): string {return cta.trim().length<=36?cta.trim():'Pelajari selengkapnya';}
 export function visualWebsite(url?: string): string {if(!url)return '';try{const parsed=new URL(url);return ['https:','http:'].includes(parsed.protocol)&&!parsed.username&&!parsed.password?parsed.host:'';}catch{return '';}}

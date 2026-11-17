@@ -21,6 +21,8 @@ Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px.
 - Reels mengikuti panjang pesan dengan durasi final 20–60 detik, bukan selalu 60 detik. Empat adegan membentuk satu cerita.
 - Narasi 40–130 kata tetap luwes dan mengikuti gaya suara yang dipilih. Durasi akhir dibaca dari video aktual; estimasi naskah bukan bukti durasi final.
 - Sisakan 0,2 detik di bawah batas encoding untuk padding AAC. Bila audio melewati target, sesuaikan tempo secara proporsional agar akhir narasi tetap termuat.
+- Gunakan narasi Indonesia seperti tutor yang sedang mengobrol. Beri ruang setelah pertanyaan, penekanan pada gagasan penting, dan nada yang lebih tenang saat menutup. Gunakan durasi suara per adegan dan letakkan transisi di jeda antarkalimat.
+- Gerakkan foto pelan dengan zoom masuk, geser kiri dan kanan, lalu zoom keluar. Batasi zoom sekitar 9% dan lembutkan pergantian dengan crossfade sekitar 0,32 detik. Pasang teks, logo, dan screenshot sebagai lapisan tetap di area aman. Periksa kontras teks di seluruh jangkauan gerak foto.
 
 ## Hierarki dan ruang
 

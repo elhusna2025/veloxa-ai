@@ -15,7 +15,7 @@ import { savedBrandPalette } from '../brand-visual-dna';
 import { MAX_CONTENT_REFERENCES } from '../content-reference-options';
 import { resolveReferenceRoles } from '../content-reference-roles';
 import { forbiddenContentMatches } from '../content-policy';
-import { composeScheduledReelsCopy, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareScheduledReelsCopy, shortVisualCta, visualWebsite } from './content-compositor';
+import { composeReelsOriginalOverlay, composeReelsScene, composeSocialVisual, finishEditorialCarousel, preflightSocialVisualText, prepareScheduledReelsCopy, shortVisualCta, visualWebsite } from './content-compositor';
 import { loadContentReferences } from './content-references';
 import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './brand-assets';
 import type { GenerationProgress, GenerationStage } from '../content-generation';
@@ -71,7 +71,7 @@ export async function uploadBrandPhoto(request: Request) {
 
 export const contentInput = z.object({ operationId:z.string().uuid().optional(), sourceMode:z.enum(['manual','offerings']).optional(),offeringIds:z.array(z.string().min(1).max(180)).max(30).optional(),contentIntent:z.enum(['auto','education','introduction','promotion']).optional(), workspaceId: z.string(), businessId:z.string().optional(), selectedConnectionIds: z.array(connectionIdSchema).max(MAX_PUBLISH_ACCOUNTS).refine(ids => new Set(ids).size === ids.length).optional(), topic: z.string().trim().max(1000).default(''), expectedProfileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(), format: z.enum(['single_post', 'carousel', 'short_video']).default('single_post'), sourceAssetId: z.string().uuid().optional(), referenceAssetIds: z.array(z.string().uuid()).max(MAX_CONTENT_REFERENCES).refine(ids => new Set(ids).size === ids.length).optional(), referenceInstruction: z.string().trim().max(1000).optional(), referenceRoles:z.record(z.string().uuid(),z.enum(['visual','logo','screenshot'])).optional(), carouselPlan: carouselPlanSchema.optional() });
 
-function fitScheduledReelsCaption(draft: ContentDraft, overflow: string[]) {
+function fitReelsCaption(draft: ContentDraft, overflow: string[]) {
   const maxLength = 2_200;
   const join = (...parts: string[]) => parts.filter(Boolean).join('\n\n');
   const length = (value: string) => [...value].length;
@@ -233,7 +233,7 @@ export async function createSocialContent(request: Request, dependencies: {
   if(input.sourceAssetId){
     draft.visualText=[brand.businessName,brand.businessName.slice(0,2).toUpperCase(),brand.city,brand.defaultCta.slice(0,48),draft.slides?.[0]?.badgeText||'CAROUSEL · FEED 4:5'];
   }else{
-    const ctas=carousel?[brand.defaultCta||'Simpan']:input.format==='short_video'?Array.from({length:4},(_,index)=>index===3?brand.defaultCta||'Simpan tips ini':scheduledEditorial?'':`${index+1}/4`).filter(Boolean):[brand.defaultCta||'Selengkapnya'];
+    const ctas=carousel?[brand.defaultCta||'Simpan']:input.format==='short_video'?[brand.defaultCta||'Simpan tips ini']:[brand.defaultCta||'Selengkapnya'];
     draft.visualText=[brand.businessName,visualWebsite(brand.websiteUrl),...ctas.map(shortVisualCta)];
   }
   if(forbiddenContentMatches(draft,brand.forbiddenWords).length)throw new GenerationStageError(new ApiError(409,'Teks visual memuat kata yang dihindari dalam profil bisnis. Periksa panduan konten dan CTA sebelum membuat ulang.','content_policy_violation'),'compositing');
@@ -252,7 +252,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const visualPlan: Parameters<typeof generateSocialPostImage>[0][]=[];
   if(input.format==='short_video'){
     if(!draft.videoScenes||draft.videoScenes.length!==4)throw new ApiError(502,'Naskah Reels belum lengkap.','invalid_content_agent_response');
-    visualPlan.push(...draft.videoScenes.map((scene,index)=>({businessName:brand.businessName,title:scene.textOverlay,hook:scene.voiceover,cta:index===3?brand.defaultCta||'Simpan tips ini':scheduledEditorial?'':`${index+1}/4`,aspectRatio:'9:16' as const,visualDirection:scene.visualDirection,...imageContextParams,...paletteParams,...referenceImageParams})));
+    visualPlan.push(...draft.videoScenes.map((scene,index)=>({businessName:brand.businessName,title:scene.textOverlay,hook:scene.voiceover,cta:index===3?brand.defaultCta||'Simpan tips ini':'',aspectRatio:'9:16' as const,visualDirection:scene.visualDirection,...imageContextParams,...paletteParams,...referenceImageParams})));
   }else if(input.format==='carousel'){
     const slides = draft.slides;
     if (!slides || slides.length !== 5) throw new ApiError(502, 'Agen konten menghasilkan jumlah slide yang tidak valid. Silakan coba lagi.', 'invalid_content_agent_response');
@@ -317,7 +317,7 @@ export async function createSocialContent(request: Request, dependencies: {
       } : {}),
     });
   }
-  if (!scheduledEditorial) {
+  if (!scheduledEditorial && input.format !== 'short_video') {
     try{for(const params of visualPlan)await preflightSocialVisualText({...params,websiteUrl:brand.websiteUrl,originalAssets});}catch(error){throw new GenerationStageError(error,'compositing');}
   }
   const scheduledImageParams = (params: typeof visualPlan[number]) => ({
@@ -338,10 +338,15 @@ export async function createSocialContent(request: Request, dependencies: {
     await dependencies.authorize?.(request, workspaceId);
     return Math.min(90_000, budget - 22_000);
   };
-  const scheduledReelsFrames = scheduledEditorial && input.format === 'short_video'
+  const reelsFrames = input.format === 'short_video'
     ? await Promise.all(visualPlan.map(async (rawParams, sceneIndex) => {
-      const params = scheduledImageParams(rawParams);
+      const params = { ...scheduledImageParams(rawParams), scheduledEditorial };
       const { fitted, captionLines } = await prepareScheduledReelsCopy(scheduledArtworkCopy(params), params.hasOriginalLogo);
+      if (!scheduledEditorial && captionLines.length) {
+        throw new GenerationStageError(new ApiError(422,
+          'Teks Reels belum muat dengan ukuran yang nyaman dibaca. Ringkas pesannya, lalu coba lagi.',
+          'visual_composition_invalid'), 'compositing');
+      }
       const scheduledReelsCopyBounds = Object.fromEntries(fitted.map(({ key, box }) => [key, box]));
       return {
         fitted, captionLines, sceneIndex,
@@ -349,17 +354,20 @@ export async function createSocialContent(request: Request, dependencies: {
       };
     }))
     : null;
-  if (scheduledReelsFrames) fitScheduledReelsCaption(draft, [...new Set(scheduledReelsFrames.flatMap(frame => frame.captionLines))]);
-  const renderScheduledReels = async ({ params, fitted, sceneIndex }: NonNullable<typeof scheduledReelsFrames>[number]) => {
-    const renderFrame = async (timeoutMs: number, simplifyFraming: boolean) => {
-      const photo = await render({ ...params, scheduledArtworkRepair: simplifyFraming }, { timeoutMs });
+  if (reelsFrames) fitReelsCaption(draft, [...new Set(reelsFrames.flatMap(frame => frame.captionLines))]);
+  const renderReelsFrame = async ({ params, fitted, sceneIndex }: NonNullable<typeof reelsFrames>[number], fixedOverlay?: Buffer) => {
+    const renderFrame = async (timeoutMs?: number, simplifyFraming = false) => {
+      let photo: Buffer;
+      try {
+        photo = await render({ ...params, scheduledArtworkRepair: simplifyFraming }, { timeoutMs });
+      } catch (error) {
+        throw new GenerationStageError(error, 'images');
+      }
       if (stage !== 'compositing') progress('compositing');
       try {
-        const withText = await composeScheduledReelsCopy(photo, fitted);
-        const master = await finishEditorialCarousel(withText, originalAssets, true);
-        const output = await sharp(master).resize(720, 1280).jpeg({ quality: 94 }).toBuffer();
-        await verify(output, params, photo);
-        return output;
+        const frame = await composeReelsScene(photo, fitted, fixedOverlay);
+        if (scheduledEditorial) await verify(frame.image, params, photo);
+        return frame;
       } catch (error) {
         if (error instanceof ApiError && error.code === 'scheduled_artwork_rejected') {
           console.warn(JSON.stringify({ event: 'scheduled_reels_scene_rejected', draftId: draft.id, scene: sceneIndex + 1, reason: error.message }));
@@ -367,6 +375,7 @@ export async function createSocialContent(request: Request, dependencies: {
         throw new GenerationStageError(error, 'compositing');
       }
     };
+    if (!scheduledEditorial) return renderFrame();
     const budget = dependencies.scheduledRepairBudget?.() ?? 202_000;
     if (budget < 45_000) throw new ApiError(503, 'Waktu pemulihan visual Reels belum cukup.', 'scheduled_artwork_review_unavailable');
     try {
@@ -421,17 +430,24 @@ export async function createSocialContent(request: Request, dependencies: {
   let storagePaths: string[] | undefined;
   let videoStoragePath: string | undefined;
   if (input.format === 'short_video') {
-    if (!draft.videoScenes || draft.videoScenes.length !== 4) throw new ApiError(502, 'Naskah Reels belum lengkap.', 'invalid_content_agent_response');
+    if (!draft.videoScenes || !reelsFrames) throw new ApiError(502, 'Naskah Reels belum lengkap.', 'invalid_content_agent_response');
     progress('media');
     const checkpoint = reuseReelsMedia ? reelsCheckpoint : null;
-    const frames = scheduledReelsFrames ? scheduledReelsFrames.map((frame, index) => checkpoint
-      ? checkpoint.frame(index, () => renderScheduledReels(frame)) : renderScheduledReels(frame)) : visualPlan.map(params => renderVisual(params));
+    const fixedOverlay = await composeReelsOriginalOverlay(originalAssets);
+    const frames = reelsFrames.map((frame, index) => {
+      const renderFrame = () => renderReelsFrame(frame, fixedOverlay);
+      return checkpoint ? checkpoint.frame(index, renderFrame) : renderFrame();
+    });
+    const sceneLines = draft.videoScenes.map(scene => scene.voiceover.trim());
     const generateVoice = () => (dependencies.generateVoice || generateReelsVoiceover)(
-      draft.videoScenes!.map(scene => scene.voiceover).join(' '),
-      { model: voiceModel },
+      sceneLines.join(' '),
+      { model: voiceModel, sceneLines },
     );
     const results = await Promise.allSettled([
-      Promise.allSettled(frames).then(images => { const failed=images.find(image=>image.status==='rejected');if(failed?.status==='rejected')throw failed.reason; return images.map(image => image.status === 'fulfilled' ? image.value : Buffer.alloc(0)); }),
+      Promise.allSettled(frames).then(settled => settled.map(frame => {
+        if (frame.status === 'rejected') throw frame.reason;
+        return frame.value;
+      })),
       checkpoint ? checkpoint.voice(generateVoice) : generateVoice(),
     ] as const);
     if(results[0].status==='rejected'&&results[0].reason instanceof GenerationStageError)throw results[0].reason;
@@ -440,8 +456,11 @@ export async function createSocialContent(request: Request, dependencies: {
     const voice = results[1].value;
     progress('rendering');
     const video = await (dependencies.renderVideo || renderReelsVideo)({
-      images: results[0].value, pcm: voice.pcm, sampleRate: voice.sampleRate,
-      sceneWeights: draft.videoScenes.map(scene => scene.voiceover.trim().split(/\s+/).length),
+      images: results[0].value.map(frame => frame.image),
+      motionLayers: results[0].value.map(({ photo, overlay }) => ({ photo, overlay })),
+      fixedOverlay,
+      pcm: voice.pcm, sampleRate: voice.sampleRate,
+      sceneWeights: voice.sceneDurations ?? sceneLines.map(line => line.split(/\s+/).length),
       useReviewedFrames: scheduledEditorial,
     });
     progress('saving');

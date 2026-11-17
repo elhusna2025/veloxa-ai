@@ -82,6 +82,7 @@ function buildPrompt(params: SocialPostImageParams): string {
     return [
       'Create a naturally lit 9:16 full-bleed editorial photograph for this Reels scene. Output only the photograph. Do not draw captions, letters, numbers, watermarks, logos, readable screen text, overlays, text panels, or placeholders. The app adds the exact marketing copy later.',
       'In the following rectangles on the 1080 × 1920 master, leave natural, softly lit, consistently pale space like a plain wall. Keep faces, products, hands, bright reflections, and dark edges outside these areas. Give the subject a clear, realistic place in the rest of the frame. Use the attached references and brand colors to guide the scene.',
+      'The camera will slowly pan or zoom into this photo. Leave breathing room between the main action and the artwork edges, and keep copy and original asset rectangles clear with an extra margin on every side.',
       ...(params.scheduledArtworkRepair ? ['Use a simpler, wider composition. Frame one clear focal action with the subject fully visible. Keep a single softly lit, plain natural surface behind all copy areas, and give the original assets their own unobstructed space. Keep the subject, brand colors, and selected references.'] : []),
       JSON.stringify({
         copyAreas: params.scheduledReelsCopyBounds,
@@ -193,7 +194,7 @@ function validateParams(params: SocialPostImageParams): void {
 
   for (const field of Object.keys(limits) as Array<keyof typeof limits>) {
     const value = params?.[field];
-    if (typeof value !== 'string' || (!value.trim() && !(field === 'cta' && (params.carouselSlide || params.scheduledEditorial))) || value.length > limits[field]) {
+    if (typeof value !== 'string' || (!value.trim() && !(field === 'cta' && (params.carouselSlide || params.scheduledEditorial || params.scheduledReelsPhotoOnly))) || value.length > limits[field]) {
       throw new ApiError(400, 'Informasi teks gambar tidak valid.', 'invalid_social_image_input');
     }
   }
