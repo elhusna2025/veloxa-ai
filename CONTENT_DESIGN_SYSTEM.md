@@ -9,7 +9,7 @@ Master feed/carousel 1080 × 1350; master Reels 1080 × 1920, dikodekan ke video
 | Elemen | Feed/carousel | Reels | Batas minimum |
 |---|---:|---:|---:|
 | Judul | 80 | 88 | 64 / 72 |
-| Isi pendukung | 46 | lewat voiceover | 42 |
+| Isi pendukung | 46 | 46 | 42 |
 | Nama bisnis | 40 | 40 | 34 |
 | CTA | 44 | 44 | 40 |
 | Domain website | 38 | 38 | 36 |
@@ -22,12 +22,13 @@ Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px.
 - Adegan pertama menampilkan judul utama yang menyebut topik secara konkret, sama dengan judul draf. Kalimat awal narasi mengenalkan topik sebelum masuk ke contoh atau detail. Tiga adegan berikutnya mengembangkan topik itu.
 - Narasi 40–130 kata tetap luwes dan mengikuti gaya suara yang dipilih. Durasi akhir dibaca dari video aktual; estimasi naskah bukan bukti durasi final.
 - Sisakan 0,2 detik di bawah batas encoding untuk padding AAC. Bila audio melewati target, sesuaikan tempo secara proporsional agar akhir narasi tetap termuat.
+- Setiap adegan mempunyai judul singkat dan satu atau dua kalimat pendukung dari naskah yang sama dengan narasinya. Pakai teks pendukung yang lebih kecil dari judul dan tempatkan keduanya pada permukaan foto yang tenang. Untuk naskah lama yang panjang, tampilkan kalimat pembuka yang utuh sejauh muat dan pertahankan narasi lengkap.
 - Gunakan narasi Indonesia seperti tutor yang sedang mengobrol. Beri ruang setelah pertanyaan, penekanan pada gagasan penting, dan nada yang lebih tenang saat menutup. Gunakan durasi suara per adegan dan letakkan transisi di jeda antarkalimat.
 - Gerakkan foto pelan dengan zoom masuk, geser kiri dan kanan, lalu zoom keluar. Batasi zoom sekitar 9% dan lembutkan pergantian dengan crossfade sekitar 0,32 detik. Pasang teks, logo, dan screenshot sebagai lapisan tetap di area aman. Periksa kontras teks di seluruh jangkauan gerak foto.
 
 ## Hierarki dan ruang
 
-- Satu gagasan utama per slide; judul maksimal delapan kata/64 karakter. Isi pendukung maksimal 18 kata/125 karakter. Overlay Reels maksimal tujuh kata/48 karakter. Penjelasan rinci berada di caption atau voiceover.
+- Satu gagasan utama per slide; judul feed dan carousel maksimal delapan kata/64 karakter, dengan isi pendukung maksimal 18 kata/125 karakter. Judul Reels maksimal tujuh kata/48 karakter; targetkan 10–20 kata pada teks pendukung.
 - Judul dan isi tidak boleh bertabrakan dengan logo, panel screenshot, CTA, atau tepi gambar. Copy post tunggal menempati area kiri hingga 680 px. Pada draf carousel Studio, judul besar dan isi yang lebih pendek menyatu dengan foto. Tempatkan keduanya di ruang alami yang tenang dengan margin yang lega. Ukuran huruf tidak turun di bawah batas minimum.
 - Reels menyisakan 224 px di atas header dan setidaknya 320 px di bawah footer sebagai ruang antarmuka platform. Panel screenshot dan footer harus tetap terpisah.
 - CTA memiliki area sendiri; website berada di baris terpisah. Pada penutup Reels, kelompokkan CTA dan domain di bawah judul jika keduanya muat pada permukaan alami yang sama. Gunakan area penutup terpisah untuk judul panjang. Jangan menumpuk dua baris CTA di atas domain.
@@ -44,7 +45,7 @@ Pada lebar tampilan 390 px, isi minimum menjadi sekitar 15,2 px dan CTA 14,4 px.
 
 Render Studio memeriksa judul, isi yang dicetak, CTA, dan domain dengan pengukur teks compositor sebelum permintaan gambar atau voiceover dimulai. Ukuran font hanya boleh turun sampai batas token. Untuk Reels Otonom, beri ruang tambahan bagi judul di area aman. Pindahkan teks yang tetap terlalu panjang ke caption secara utuh. Di Studio, tampilkan pesan bila teks tidak muat pada ukuran minimum. Agen diminta meringkas sebelum menghasilkan gambar dengan tetap mempertahankan fakta, angka penting, dan makna. CTA panjang dapat menggunakan ajakan umum “Pelajari selengkapnya”; informasi lengkap tetap di caption.
 
-Visual per slide mengikuti isi slide tersebut, dengan identitas warna dan arahan seni yang konsisten. Warna brand tidak berarti seluruh gambar harus menjadi blok warna atau latar putih. Reels menggunakan overlay pendek dan narasi audio, bukan paragraf pada setiap adegan.
+Visual per slide mengikuti isi slide tersebut, dengan identitas warna dan arahan seni yang konsisten. Warna brand tidak berarti seluruh gambar harus menjadi blok warna atau latar putih.
 
 ## Verifikasi perubahan
 

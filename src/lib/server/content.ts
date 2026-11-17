@@ -347,7 +347,8 @@ export async function createSocialContent(request: Request, dependencies: {
   const reelsImagePlan = input.format === 'short_video'
     ? visualPlan.map(params => ({ ...scheduledImageParams(params), scheduledEditorial })) : [];
   const reelsCopy = await prepareReelsCopyBatch(
-    reelsImagePlan.map(scheduledArtworkCopy), originalAssets.some(asset => asset.role === 'logo'),
+    reelsImagePlan.map(params => ({ ...scheduledArtworkCopy(params), supporting: params.hook })),
+    originalAssets.some(asset => asset.role === 'logo'),
   );
   const reelsFrames = reelsImagePlan.length
     ? reelsImagePlan.map((params, sceneIndex) => {

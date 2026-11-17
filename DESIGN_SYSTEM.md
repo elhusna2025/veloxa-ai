@@ -114,7 +114,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 ## Pratinjau dan status proses
 
 - Post tunggal menggunakan pratinjau besar dengan rasio utuh. Carousel dapat digeser dan memiliki panah, nomor slide, serta thumbnail. Reels memiliki video/audio controls.
-- Pratinjau Reels memutar MP4 akhir agar pengguna dapat menilai kejelasan judul pembuka, kesatuan foto dan tipografi, gerak, transisi di jeda narasi, serta penerapan palet DNA Visual. Gunakan [panduan desain konten](CONTENT_DESIGN_SYSTEM.md) untuk komposisi dan cara membawakan narasi.
+- Pratinjau Reels memutar MP4 akhir agar pengguna dapat menilai judul, kesesuaian teks pendukung dengan narasi, foto, gerak, dan penerapan palet DNA Visual. Gunakan [panduan desain konten](CONTENT_DESIGN_SYSTEM.md) untuk komposisi serta narasi.
 - Sediakan tindakan buka/unduh; jangan menampilkan thumbnail kecil sebagai satu-satunya cara meninjau hasil.
 - Operasi jaringan memiliki indikator tahap dan tombol sibuk/disabled. Kegagalan menyebut tahap, status hasil yang diketahui, dan langkah berikutnya.
 - Jangan menampilkan persen atau waktu selesai palsu. Jangan mengklaim berhasil ketika hanya permintaan yang terkirim.

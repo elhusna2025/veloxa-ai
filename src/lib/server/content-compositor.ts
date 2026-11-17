@@ -89,20 +89,34 @@ const linearColor = Array.from({ length: 256 }, (_, byte) => {
   return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 });
 
-type ReelsCopyKey = keyof ReturnType<typeof scheduledReelsCopyAreas>;
-type ReelsCopy = Record<ReelsCopyKey, string>;
+type ReelsLayoutKey = keyof ReturnType<typeof scheduledReelsCopyAreas>;
+type ReelsCopyKey = ReelsLayoutKey | 'supporting';
+type ReelsCopy = Record<ReelsLayoutKey, string> & { supporting?: string };
 type FittedReelsText = NonNullable<Awaited<ReturnType<typeof fitText>>>;
 const REELS_COPY_METRICS = {
   businessName: CONTENT_TYPOGRAPHY.brand, headline: CONTENT_TYPOGRAPHY.reelsTitle,
   cta: CONTENT_TYPOGRAPHY.cta, website: CONTENT_TYPOGRAPHY.website,
 };
 const REELS_TEXT_INSET = 6;
+const reelsSentences = new Intl.Segmenter('id', { granularity: 'sentence' });
+
+function reelsNarrationCopy(voiceover: string) {
+  const sentences = Array.from(reelsSentences.segment(voiceover.trim()), item => item.segment.trim()).filter(Boolean);
+  const prefixes: string[] = [];
+  for (const sentence of sentences) {
+    const previous = prefixes.at(-1);
+    const text = previous ? `${previous} ${sentence}` : sentence;
+    if (text.length > 180) break;
+    prefixes.push(text);
+  }
+  return prefixes.reverse();
+}
 
 export async function prepareScheduledReelsCopy(copy: ReelsCopy, hasLogo: boolean, headlineMax: number = CONTENT_TYPOGRAPHY.reelsTitle.max) {
   const areas = scheduledReelsCopyAreas(hasLogo);
   const fitted: { key: ReelsCopyKey; box: Rect; text: FittedReelsText }[] = [];
   const captionLines: string[] = [];
-  for (const key of Object.keys(areas) as ReelsCopyKey[]) {
+  for (const key of Object.keys(areas) as ReelsLayoutKey[]) {
     if (!copy[key].trim()) continue;
     let box = areas[key];
     const { max, min } = REELS_COPY_METRICS[key];
@@ -135,10 +149,27 @@ export async function prepareScheduledReelsCopy(copy: ReelsCopy, hasLogo: boolea
     }
   }
   const headline = fitted.find(({ key }) => key === 'headline');
+  const underline = headline && reelsUnderlineArea(headline.box);
+  const supportTop = underline ? underline.top + underline.height + 26 : 381;
+  const supportHeight = Math.min(245, 965 - supportTop);
+  let supportBottom = supportTop;
+  if (supportHeight > 0 && copy.supporting?.trim()) {
+    for (const candidate of reelsNarrationCopy(copy.supporting)) {
+      try {
+        const text = await fitText(candidate, 798, supportHeight, CONTENT_TYPOGRAPHY.body.max, CONTENT_TYPOGRAPHY.body.min,
+          '#000000', { font: 'Inter Medium', file: reelsLabelFont, wrap: 'word', gapRatio: 0.12 });
+        if (!text) continue;
+        fitted.push({ key: 'supporting', text, box: { left: 76, top: supportTop, width: text.width, height: text.height } });
+        supportBottom += text.height;
+        break;
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== 'visual_composition_invalid') throw error;
+      }
+    }
+  }
   const closing = fitted.filter(({ key }) => key === 'cta' || key === 'website');
   if (headline && closing.length) {
-    const underline = reelsUnderlineArea(headline.box);
-    const start = underline.top + underline.height + 34;
+    const start = supportBottom + 28;
     const originalTop = closing[0].box.top;
     const bottom = Math.max(...closing.map(({ box }) => box.top + box.height));
     if (start + bottom - originalTop <= 960) {

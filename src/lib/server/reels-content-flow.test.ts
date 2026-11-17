@@ -426,6 +426,8 @@ test('Studio repairs only the cluttered Reels scene, leads with the subject titl
  const { disruptive, clean } = await studioReelsPhotoFixtures();
  const imageRequests: Array<{ title: string; repaired: boolean }> = [];
  const verified = new Map<string, Buffer>();
+ const visibleNarration = new Map<number, string>();
+ let spokenScenes: readonly string[] | undefined;
  const { draft } = await f.create({
    topic,
    renderImage: async params => {
@@ -436,7 +438,16 @@ test('Studio repairs only the cluttered Reels scene, leads with the subject titl
    verifyArtwork: async (image, params, photo) => {
      assert.equal(photo, clean, 'the verifier compares the final frame with the original selected photo');
      if (params.title === 'Langkah 2') assert.equal(params.scheduledArtworkRepair, true);
+     const layout = params.scheduledReelsCopyBounds;
+     assert.ok(layout?.supporting && layout.headline && layout.accent);
+     assert.ok(layout.supporting.top >= layout.accent.top + layout.accent.height);
+     assert.ok(params.reelsPhotoLayout?.copySweeps.supporting);
+     visibleNarration.set(params.reelsPhotoLayout.sceneNumber, params.hook);
      verified.set(params.title, image);
+   },
+   generateVoice: async (script, options) => {
+     spokenScenes = options?.sceneLines;
+     return { pcm: Buffer.alloc(20 * 48000), sampleRate: 24000, transcript: script, model: 'gpt-realtime-2.1-mini' };
    },
    renderVideo: async params => {
      assert.equal(params.images.length, 4);
@@ -458,6 +469,7 @@ test('Studio repairs only the cluttered Reels scene, leads with the subject titl
  assert.deepEqual(imageRequests.filter(request => request.repaired).map(request => request.title), ['Langkah 2']);
  assert.equal(draft.title, topic);
  assert.equal(draft.videoScenes?.[0].textOverlay, draft.title);
+ assert.deepEqual([1, 2, 3, 4].map(index => visibleNarration.get(index)), spokenScenes);
  assert.equal(f.generationCount(), 1);
  assert.ok(draft.renderedVideo!.durationSeconds >= 20 && draft.renderedVideo!.durationSeconds <= 60);
  const sends: string[] = [];

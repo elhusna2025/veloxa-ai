@@ -257,6 +257,8 @@ test('Reels memakai judul topik di adegan pertama dan mempertahankan naskah sert
   assert.match(brief.extraInstructions, /40–130 kata Bahasa Indonesia/);
   assert.match(brief.extraInstructions, /title yang langsung menyebut topik/);
   assert.match(brief.extraInstructions, /kalimat pembuka voiceover/);
+  assert.match(brief.extraInstructions, /1–2 kalimat singkat dengan sasaran 10–20 kata/);
+  assert.match(brief.extraInstructions, /Kalimat yang sama tampil sebagai teks pendukung di bawah judul/);
   assert.equal(result.draft.title, title);
   assert.deepEqual(result.draft.videoScenes, videoScript.scenes.map((scene, index) => ({
     sceneNumber: index + 1,
