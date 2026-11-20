@@ -380,15 +380,20 @@ function placeReelsText(pixels: Buffer, fitted: ReelsTextBlock[], brandInk: Ink,
 
     const closingBottom = Math.max(...closing.map(({ box }) => box.top + box.height));
     const closingTop = Math.min(...closing.map(({ box }) => box.top));
-    const belowTitle = underline ? underline.top + underline.height + 36 - closingTop : undefined;
-    for (const shift of [0, -60, 40, -36, ...(belowTitle === undefined ? [] : [belowTitle])]) {
-      const nearTitle = shift === belowTitle;
-      if (nearTitle ? closingBottom + shift > 1028 : closingTop + shift < 1316 || closingBottom + shift > 1600) continue;
-      const footer = closing.map(block => move(block, headline && nearTitle ? headline.box.left - block.box.left : 0, shift));
+    const upperCopyBottom = Math.max(...blocks.map(({ box }) => box.top + box.height),
+      underline ? underline.top + underline.height : 0);
+    const placements = [0, -60, 40, -36].map(shift => ({ shift, nearCopy: false }));
+    // A footer moved into the upper quiet area must follow the supporting copy,
+    // not just the headline underline, and leave the same gap as the initial fit.
+    if (headline) placements.push({ shift: upperCopyBottom + 28 - closingTop, nearCopy: true });
+    for (const { shift, nearCopy } of placements) {
+      if (nearCopy ? closingTop + shift < upperCopyBottom + 28 || closingBottom + shift > 1028
+        : closingTop + shift < 1316 || closingBottom + shift > 1600) continue;
+      const footer = closing.map(block => move(block, headline && nearCopy ? headline.box.left - block.box.left : 0, shift));
       if (footer.some(({ box }) => box.left + box.width > 900)) continue;
-      const footerInk = nearTitle ? inkFor([...blocks, ...footer]) : inkFor(footer);
+      const footerInk = nearCopy ? inkFor([...blocks, ...footer]) : inkFor(footer);
       if (footerInk) return {
-        blocks: [...(nearTitle ? blocks.map(block => ({ ...block, ink: footerInk })) : output),
+        blocks: [...(nearCopy ? blocks.map(block => ({ ...block, ink: footerInk })) : output),
           ...footer.map(block => ({ ...block, ink: footerInk }))],
         headline,
       };

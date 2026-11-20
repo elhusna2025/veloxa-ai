@@ -21,8 +21,8 @@ import { isWorkspacePhoto, listWorkspacePhotos, persistWorkspacePhoto } from './
 import type { GenerationProgress, GenerationStage } from '../content-generation';
 import { effectiveWorkspacePlan } from '../subscription';
 import { generateContentWithSavedAgent } from './content-agent';
-import { generateSocialPostImage, scheduledArtworkCopy } from './content-image';
-import { verifyScheduledArtwork } from './scheduled-artwork-review';
+import { generateSocialPostImage, scheduledArtworkCopy, type SocialPostImageParams } from './content-image';
+import { verifyScheduledArtwork, scheduledArtworkRepairFeedback } from './scheduled-artwork-review';
 import { verifyScheduledScript } from './scheduled-script-review';
 import { generateReelsVoiceover, REELS_VOICE_DISCLOSURE } from './reels-voice';
 import { resolveAdminModels } from './admin-settings';
@@ -124,6 +124,10 @@ export async function createSocialContent(request: Request, dependencies: {
   onProgress?: (progress: GenerationProgress) => void;
   source?:'autonomous_agent';
   studioJob?: FirebaseFirestore.DocumentReference;
+  studioArtworkRepair?: {
+    load: (sceneIndex: number) => Promise<SocialPostImageParams['artworkRepairFeedback']>;
+    save: (sceneIndex: number, feedback: NonNullable<SocialPostImageParams['artworkRepairFeedback']>) => Promise<void>;
+  };
   persistStudioDraft?: (ref: FirebaseFirestore.DocumentReference, record: FirebaseFirestore.DocumentData) => Promise<void>;
 } = {}) {
   const startedAt = Date.now();
@@ -392,8 +396,11 @@ export async function createSocialContent(request: Request, dependencies: {
     : null;
   if (reelsFrames) fitReelsCaption(draft, [...new Set(reelsFrames.flatMap(frame => frame.captionLines))]);
   const renderReelsFrame = async ({ params, fitted, sceneIndex }: NonNullable<typeof reelsFrames>[number], fixedOverlay?: Buffer) => {
+    let repairFeedback = await dependencies.studioArtworkRepair?.load(sceneIndex);
     const renderFrame = async (timeoutMs?: number, simplifyFraming = false) => {
-      const artworkParams = { ...params, scheduledArtworkRepair: simplifyFraming };
+      const artworkParams = { ...params, scheduledArtworkRepair: simplifyFraming,
+        ...(repairFeedback ? { artworkRepairFeedback: repairFeedback } : {}),
+      };
       let photo: Buffer;
       try {
         photo = await render(artworkParams, { timeoutMs });
@@ -406,6 +413,15 @@ export async function createSocialContent(request: Request, dependencies: {
         await verify(frame.image, artworkParams, photo);
         return frame;
       } catch (error) {
+        const feedback = scheduledArtworkRepairFeedback(error)
+          ?? (error instanceof ApiError && error.code === 'reels_photo_layout_unreadable'
+            ? { kind: 'layout' as const, description: 'Keep all text regions naturally quiet and high contrast, with faces, hands and focal objects outside them throughout camera motion.' } : undefined);
+        if (feedback) {
+          repairFeedback = feedback;
+          await dependencies.studioArtworkRepair?.save(sceneIndex, feedback);
+          console.warn(JSON.stringify({ event: 'reels_scene_repair_requested', draftId: draft.id,
+            scene: sceneIndex + 1, kind: feedback.kind }));
+        }
         if (error instanceof ApiError && error.code === 'scheduled_artwork_rejected') {
           console.warn(JSON.stringify({ event: 'scheduled_reels_scene_rejected', draftId: draft.id, scene: sceneIndex + 1, reason: error.message }));
         }
@@ -416,7 +432,7 @@ export async function createSocialContent(request: Request, dependencies: {
       // The Studio route has 300s total. Leave time for visual review, encoding and persistence.
       const photoTimeLeft = () => 185_000 - (Date.now() - startedAt);
       try {
-        return await renderFrame(Math.max(1, Math.min(180_000, photoTimeLeft())));
+        return await renderFrame(Math.max(1, Math.min(180_000, photoTimeLeft())), !!repairFeedback);
       } catch (error) {
         const remaining = photoTimeLeft();
         if (!(error instanceof ApiError) || !['reels_photo_layout_unreadable', 'scheduled_artwork_rejected'].includes(error.code)

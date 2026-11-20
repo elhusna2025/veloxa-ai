@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import OpenAI from 'openai';
 import sharp from 'sharp';
-import { passesScheduledArtworkReview, verifyScheduledArtwork } from './scheduled-artwork-review';
+import { passesScheduledArtworkReview, scheduledArtworkRepairFeedback, verifyScheduledArtwork } from './scheduled-artwork-review';
+import { ApiError, errorResponse } from './http';
 
 const params = {
   businessName: 'Berez ERP',
@@ -114,6 +115,72 @@ test('Studio Reels retries a transient review failure on the same photos', async
     status: 422, code: 'reels_photo_layout_unreadable',
   });
   assert.equal(requests.length, 3);
+});
+
+test('rejected Reels retain bounded literal repair observations without exposing them publicly', async () => {
+  const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  const reels = { ...params, aspectRatio: '9:16' as const, scheduledReelsPhotoOnly: true, scheduledEditorial: false };
+  const privateReason = 'private-layout-observation: Title\u0000 overlaps\n\tthe face.\u202e ' + 'x'.repeat(1600);
+  const client = { responses: { create: async () => ({ status: 'completed', output_text: JSON.stringify({
+    visibleCopy: '', layoutPasses: false, layoutReason: privateReason,
+  }) }) } } as never;
+  const error: unknown = await verifyScheduledArtwork(photo, reels, photo, client).catch(error => error);
+  assert.ok(error instanceof ApiError);
+  const feedback = scheduledArtworkRepairFeedback(error);
+  assert.equal(feedback?.kind, 'layout');
+  assert.match(feedback!.description, /^private-layout-observation: Title overlaps the face\. /);
+  assert.equal(feedback!.description.length, 1200);
+  assert.doesNotMatch(feedback!.description, /[\u0000-\u001f\u007f-\u009f\u202a-\u202e]/);
+  assert.ok(Object.isFrozen(feedback));
+  assert.doesNotMatch(error.message, /private-layout-observation/);
+  assert.doesNotMatch(JSON.stringify(error), /private-layout-observation|description|layoutReason/);
+  const publicResponse = errorResponse(error);
+  assert.equal(publicResponse.status, 422);
+  assert.deepEqual(await publicResponse.json(), {
+    ok: false,
+    error: 'Teks dan subjek pada foto Reels belum tertata dengan jelas. Coba lagi dengan arahan visual yang lebih sederhana.',
+    code: 'reels_photo_layout_unreadable',
+  });
+  assert.equal(scheduledArtworkRepairFeedback(new ApiError(422, 'Unrelated error')), undefined);
+  assert.equal(scheduledArtworkRepairFeedback({ layoutReason: privateReason }), undefined);
+});
+
+test('unexpected copy has specific private repair feedback while layout and copy gates stay closed', async () => {
+  const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  const reels = { ...params, aspectRatio: '9:16' as const, scheduledReelsPhotoOnly: true };
+  let result = { visibleCopy: 'Diskon\u0000 80%\nHARI INI', layoutPasses: true, layoutReason: '' };
+  const client = { responses: { create: async () => ({ status: 'completed', output_text: JSON.stringify(result) }) } } as never;
+  const copyError: unknown = await verifyScheduledArtwork(photo, reels, photo, client).catch(error => error);
+  assert.ok(copyError instanceof ApiError);
+  assert.equal(copyError.code, 'scheduled_artwork_rejected');
+  assert.deepEqual(scheduledArtworkRepairFeedback(copyError), {
+    kind: 'unexpected_copy', description: 'Original photo contains unexpected marketing text: Diskon 80% HARI INI',
+  });
+  assert.doesNotMatch(JSON.stringify(await errorResponse(copyError).json()), /80%|HARI INI/);
+
+  result = { visibleCopy: '', layoutPasses: false, layoutReason: '' };
+  const layoutError: unknown = await verifyScheduledArtwork(photo, reels, photo, client).catch(error => error);
+  assert.ok(layoutError instanceof ApiError);
+  assert.equal(layoutError.status, 422);
+  assert.equal(scheduledArtworkRepairFeedback(layoutError)?.kind, 'layout');
+  assert.ok(scheduledArtworkRepairFeedback(layoutError)?.description);
+});
+
+test('feed rejection preserves layout observations or observed copy for a repair without changing acceptance', async () => {
+  const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  let result = { visibleCopy: copy, layoutPasses: false, layoutReason: 'Added logo obscures the main subject.' };
+  const client = { responses: { create: async () => ({ status: 'completed', output_text: JSON.stringify(result) }) } } as never;
+  const layoutError: unknown = await verifyScheduledArtwork(photo, params, undefined, client).catch(error => error);
+  assert.ok(layoutError instanceof ApiError);
+  assert.deepEqual(scheduledArtworkRepairFeedback(layoutError), {
+    kind: 'layout', description: 'Added logo obscures the main subject.',
+  });
+  result = { visibleCopy: copy + ' DISKON', layoutPasses: true, layoutReason: '' };
+  const copyError: unknown = await verifyScheduledArtwork(photo, params, undefined, client).catch(error => error);
+  assert.ok(copyError instanceof ApiError);
+  assert.equal(copyError.code, 'scheduled_artwork_rejected');
+  assert.equal(scheduledArtworkRepairFeedback(copyError)?.kind, 'copy_mismatch');
+  assert.match(scheduledArtworkRepairFeedback(copyError)!.description, /Observed copy: Berez ERP .* DISKON$/);
 });
 
 test('Studio Reels blocks a malformed review result without logging its contents', async t => {

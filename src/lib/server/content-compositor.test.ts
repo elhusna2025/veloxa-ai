@@ -223,6 +223,61 @@ test('Reels moves its headline and underline together into quiet space on the sa
    'the underline follows the repositioned headline');
 });
 
+test('Reels footer fallback leaves supporting copy clear and refuses an overcrowded upper area', async () => {
+ const copy = {
+   businessName: 'Berez ERP', headline: 'Hubungkan Semua Laporan Operasional Keuangan Dalam Satu Sistem',
+   supporting: 'Nah, begitulah alurnya: penjualan, persediaan, pembukuan, dan laporan keuangan ada dalam satu sistem.',
+   cta: 'Pelajari selengkapnya', website: 'berez.dafinicode.com',
+ };
+ const { fitted, captionLines } = await prepareScheduledReelsCopy(copy, false);
+ assert.deepEqual(captionLines, []);
+ const support = fitted.find(({ key }) => key === 'supporting');
+ const cta = fitted.find(({ key }) => key === 'cta');
+ const website = fitted.find(({ key }) => key === 'website');
+ assert.ok(support && cta && website);
+ assert.ok(cta.box.top > 1050, 'long copy starts with the separate lower footer');
+
+ // The upper natural surface is quiet, but lower detail makes the original footer
+ // unreadable. The compositor must relocate it without writing over narration.
+ const size = { width: 1080, height: 1920 };
+ const pixels = Buffer.alloc(size.width * size.height * 3, 240);
+ for (let y = 1200; y < size.height; y++) {
+   for (let x = 0; x < size.width; x++) {
+     const value = Math.floor(x / 90) % 2 * 255;
+     const offset = (y * size.width + x) * 3;
+     pixels.fill(value, offset, offset + 3);
+   }
+ }
+ const photo = await sharp(pixels, { raw: { ...size, channels: 3 } }).png().toBuffer();
+ const { overlay } = await composeReelsScene(photo, fitted, undefined, cendekiaPalette, 3);
+ const scale = 720 / 1080;
+ const alphaIn = (top: number, height: number, width = 810) => sharp(overlay).extract({
+   left: Math.floor(support.box.left * scale), top: Math.ceil(top * scale),
+   width: Math.floor(width * scale), height: Math.floor(height * scale),
+ }).extractChannel('alpha').raw().toBuffer();
+ // The nearest safe position moves upper copy up 36px and preserves a 28px gap.
+ const supportBottom = support.box.top + support.box.height - 36;
+ const footerTop = supportBottom + 28;
+ assert.ok((await alphaIn(supportBottom + 4, 20)).every(alpha => alpha === 0),
+   'the gap after narration must remain clear of CTA and domain glyphs');
+ assert.ok((await alphaIn(footerTop, cta.box.height, cta.box.width)).some(alpha => alpha > 230),
+   'CTA follows the whole supporting paragraph');
+ const websiteTop = footerTop + website.box.top - cta.box.top;
+ assert.ok((await alphaIn(websiteTop, website.box.height, website.box.width)).some(alpha => alpha > 230),
+   'domain remains a separate line below CTA');
+ assert.ok(websiteTop + website.box.height <= 1028, 'the entire closing copy fits above the screenshot area');
+ assert.ok((await alphaIn(1038, 560)).every(alpha => alpha === 0),
+   'fallback leaves the screenshot and lower footer regions clear');
+
+ const crowded = await prepareScheduledReelsCopy({ ...copy,
+   supporting: 'Penjualan, persediaan, pembukuan, dan laporan keuangan terhubung dalam satu sistem untuk membahas catatan harian bersama seluruh staf.',
+ }, false);
+ assert.ok(crowded.fitted.find(({ key }) => key === 'supporting')!.box.height > support.box.height);
+ await assert.rejects(composeReelsScene(photo, crowded.fitted, undefined, cendekiaPalette, 3),
+   { code: 'reels_photo_layout_unreadable' },
+   'an unreadable footer cannot be rescued by overlapping copy or entering the screenshot area');
+});
+
 test('Reels corner accents leave the photo and original logo clear above the corners', async () => {
  const logo = { id: 'logo', role: 'logo' as const, bytes: await pixelSource(160, 80) };
  const plain = await composeReelsOriginalOverlay([logo]);

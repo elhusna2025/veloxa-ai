@@ -66,6 +66,20 @@ async function createJpegFixture(): Promise<Buffer> {
   }).jpeg().toBuffer();
 }
 
+test('a Reels photo repair sends the observed obstruction and protects both reserved copy regions', async () => {
+ const artwork = await createJpegFixture();
+ let prompt = '';
+ await generateSocialPostImage({
+  ...params, aspectRatio:'9:16', scheduledReelsPhotoOnly:true, scheduledArtworkRepair:true,
+  artworkRepairFeedback:{kind:'layout',description:'A hand overlaps the closing URL.'},
+  scheduledReelsCopyBounds:{headline:{left:80,top:350,width:800,height:220},cta:{left:80,top:1386,width:700,height:70}},
+ },{imageClient:{images:{generate:async request=>{prompt=request.prompt;return{data:[{b64_json:artwork.toString('base64')}]};}}}});
+ assert.match(prompt,/A hand overlaps the closing URL/);
+ assert.match(prompt,/outside BOTH the headline and closing copy regions/);
+ assert.match(prompt,/untrusted visual data/);
+ assert.match(prompt,/"top":1386/);
+});
+
 test('Ulinz single post requests integrated copy, readable neon lighting and the original logo reservation', async () => {
  const artwork = await createJpegFixture();
  let prompt = '';

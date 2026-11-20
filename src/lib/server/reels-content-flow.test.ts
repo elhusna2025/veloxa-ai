@@ -9,6 +9,8 @@ import { MetaRequestError } from './meta-graph';
 import { renderReelsVideo } from './reels-renderer';
 import { prepareScheduledReelsCopy } from './content-compositor';
 import { scheduledReelsCheckpoint, sweepExpiredReelsCheckpoints } from './scheduled-reels-checkpoint';
+import { verifyScheduledArtwork } from './scheduled-artwork-review';
+import { studioGenerationCheckpoint } from './studio-generation-checkpoint';
 import type { publishMetaReel } from './meta-reels';
 import { BRAND_PRESETS, generateBrandContentDraft } from '../veloxa-engine';
 
@@ -81,6 +83,7 @@ function fixture() {
     verifyScript?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyScript'];
     scheduledDraft?: NonNullable<Parameters<typeof createSocialContent>[1]>['scheduledDraft'];
     studioJob?: NonNullable<Parameters<typeof createSocialContent>[1]>['studioJob'];
+    studioArtworkRepair?: NonNullable<Parameters<typeof createSocialContent>[1]>['studioArtworkRepair'];
     operationId?: string;
     recoverScheduledReelsArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['recoverScheduledReelsArtwork'];
     generateVoice?: NonNullable<Parameters<typeof createSocialContent>[1]>['generateVoice'];
@@ -100,6 +103,7 @@ function fixture() {
     verifyScript: options.verifyScript ?? (async () => {}),
     scheduledDraft: options.scheduledDraft,
     studioJob: options.studioJob,
+    studioArtworkRepair: options.studioArtworkRepair,
     generate: async (input, optionsForModel) => {
       generateCalls++;
       if (options.generate) return options.generate(input, optionsForModel);
@@ -696,8 +700,10 @@ test('a Studio Reels retry keeps reviewed frames and voice while rebuilding only
   const imageCalls = [0, 0, 0, 0];
   let voiceCalls = 0;
   let firstAttempt = true;
+  const feedback = 'Move the focal hands out of the closing text region.';
+  const repair = studioGenerationCheckpoint(job as never, async () => {}, values => job.update(values)).studioArtworkRepair;
   const options: NonNullable<Parameters<typeof f.create>[0]> = {
-    operationId, studioJob: job as never, topic: titles[0],
+    operationId, studioJob: job as never, studioArtworkRepair: repair, topic: titles[0],
     generate: async input => {
       const draft = generateBrandContentDraft(input);
       draft.qualityReview.passed = false;
@@ -707,12 +713,18 @@ test('a Studio Reels retry keeps reviewed frames and voice while rebuilding only
       }));
       return { draft, engineMode: 'deterministic_local' };
     },
-    renderImage: async ({ title }) => {
+    renderImage: async ({ title, artworkRepairFeedback, scheduledArtworkRepair }) => {
       imageCalls[titles.indexOf(title)]++;
+      if (title === 'Langkah 3' && imageCalls[2] > 1) {
+        assert.equal(artworkRepairFeedback?.description, feedback, 'the actual review guides both the immediate retry and the resumed request');
+        assert.equal(scheduledArtworkRepair, true);
+      }
       return photo;
     },
-    verifyArtwork: async (_image, { title }) => {
-      if (firstAttempt && title === 'Langkah 3') throw new ApiError(422, 'Visual ditolak', 'reels_photo_layout_unreadable');
+    verifyArtwork: async (image, params, original) => {
+      if (firstAttempt && params.title === 'Langkah 3') await verifyScheduledArtwork(image, params, original, {
+        responses: { create: async () => ({ status: 'completed', output_text: JSON.stringify({ visibleCopy: '', layoutPasses: false, layoutReason: feedback }) }) },
+      } as never);
     },
     generateVoice: async script => {
       voiceCalls++;
@@ -722,6 +734,7 @@ test('a Studio Reels retry keeps reviewed frames and voice while rebuilding only
 
   await assert.rejects(f.create(options), { code: 'reels_photo_layout_unreadable' });
   assert.deepEqual(imageCalls, [1, 1, 2, 1]);
+  assert.equal((await repair.load(2))?.description, feedback, 'repair observations survive the worker request');
   assert.equal(f.blobs.size, 5);
   firstAttempt = false;
   const result = await f.create(options);

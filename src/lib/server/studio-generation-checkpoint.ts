@@ -4,6 +4,7 @@ import { generateContentWithSavedAgent } from './content-agent';
 import { generateSocialPostImage } from './content-image';
 import { adminBucket } from './firebase';
 import { ApiError } from './http';
+import type { SocialPostImageParams } from './content-image';
 
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 
@@ -16,6 +17,19 @@ export function studioGenerationCheckpoint(
   providers: { generate?: typeof generateContentWithSavedAgent; renderImage?: typeof generateSocialPostImage } = {},
 ) {
   return {
+    studioArtworkRepair: {
+      async load(index: number): Promise<SocialPostImageParams['artworkRepairFeedback']> {
+        if (!Number.isInteger(index) || index < 0 || index > 3) throw new RangeError('Indeks adegan tidak valid.');
+        const saved = (await job.get()).data()?.[`artworkRepair${index}`];
+        return saved && ['layout', 'unexpected_copy', 'copy_mismatch'].includes(saved.kind)
+          && typeof saved.description === 'string' && saved.description.length <= 1200
+          ? { kind: saved.kind, description: saved.description } : undefined;
+      },
+      async save(index: number, feedback: NonNullable<SocialPostImageParams['artworkRepairFeedback']>) {
+        if (!Number.isInteger(index) || index < 0 || index > 3) throw new RangeError('Indeks adegan tidak valid.');
+        await updateJob({ [`artworkRepair${index}`]: feedback });
+      },
+    },
     generate: (async (params, options) => {
       const key = digest(JSON.stringify({ params, model: options?.model }));
       const record = (await job.get()).data()!;
