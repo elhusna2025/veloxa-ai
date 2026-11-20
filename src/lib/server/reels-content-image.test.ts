@@ -70,7 +70,7 @@ test('Reels photo repair reserves separate final copy and preserves a dark brief
 
   assert.match(prompt, /Closing copy region: x 6–55%, y 69–81%/);
   assert.match(prompt, /evenly dark natural surface for light type in an explicitly dark scene/);
-  assert.match(prompt, /Recompose from a wider viewpoint.*lower half of the frame/);
+  assert.match(prompt, /Recompose from a wider viewpoint.*outside BOTH the headline and closing copy regions/);
   assert.match(prompt, /"reservedScreenshot"/);
   assert.doesNotMatch(prompt, /This opening is the cover|Lihat jadwal pertunjukan/);
 });
