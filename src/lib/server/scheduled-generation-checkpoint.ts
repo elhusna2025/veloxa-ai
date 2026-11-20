@@ -4,7 +4,7 @@ import { generateContentWithSavedAgent } from './content-agent';
 import { generateSocialPostImage, type SocialPostImageParams } from './content-image';
 import { verifyScheduledArtwork } from './scheduled-artwork-review';
 import { verifyScheduledScript } from './scheduled-script-review';
-import { adminBucket } from './firebase';
+import { adminBucket, adminDb } from './firebase';
 import { ApiError } from './http';
 import { wibDay } from './clock';
 import { REELS_SPEC } from '../reels-spec';
@@ -18,6 +18,10 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const revision = 1;
 const checkpointRoot = 'private_autonomy_checkpoints/';
 const retentionMs = 7 * 24 * 60 * 60_000;
+const sweepCursorFile = 'private_autonomy_maintenance/checkpoint_cursor.json';
+const terminalStates = new Set(['published', 'failed', 'cancelled', 'skipped']);
+
+const timestamp = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
 async function within<T>(operation: () => Promise<T>, milliseconds: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -30,13 +34,77 @@ async function within<T>(operation: () => Promise<T>, milliseconds: number): Pro
   } finally { if (timer) clearTimeout(timer); }
 }
 
-export async function sweepExpiredScheduledCheckpoints(now: number, bucket = adminBucket) {
+export async function sweepExpiredScheduledCheckpoints(
+  now: number,
+  bucket = adminBucket,
+  readJob: (path: string) => Promise<Record<string, unknown> | undefined> = async path => (await adminDb().doc(path).get()).data(),
+) {
+  if (timestamp(now) === null) return;
   const cutoff = `${checkpointRoot}${String(now).padStart(16, '0')}/`;
+  const deadlineAt = Date.now() + 2_000;
+  const inBudget = () => Date.now() < deadlineAt;
   try {
     await within(async () => {
-      const [files] = await bucket().getFiles({ prefix: checkpointRoot, endOffset: cutoff, maxResults: 24, autoPaginate: false });
-      await Promise.allSettled(files.filter(file => file.name.startsWith(checkpointRoot) && file.name < cutoff)
-        .map(file => file.delete({ ignoreNotFound: true })));
+      const storage = bucket();
+      const cursor = storage.file(sweepCursorFile);
+      let after: string | undefined;
+      try {
+        const [bytes] = await cursor.download({ start: 0, end: 2048 });
+        if (bytes.length <= 2048) {
+          try {
+            const value: unknown = JSON.parse(bytes.toString('utf8'));
+            const saved = (value as { after?: unknown } | null)?.after;
+            if (typeof saved === 'string' && saved.startsWith(checkpointRoot) && saved < cutoff
+              && saved.length <= 1800 && !/[\u0000-\u001f\u007f]/.test(saved)) after = saved;
+          } catch { /* A damaged maintenance cursor restarts the bounded scan. */ }
+        }
+      } catch (error) {
+        if (Number((error as { code?: unknown }).code) !== 404) throw error;
+      }
+      if (!inBudget()) return;
+      const [files] = await storage.getFiles({ prefix: checkpointRoot, endOffset: cutoff,
+        ...(after ? { startOffset: after } : {}), maxResults: 24, autoPaginate: false });
+      if (!inBudget()) return;
+      const candidates = files.slice(0, 24).filter(file => file.name.startsWith(checkpointRoot) && file.name < cutoff
+        && file.name.length <= 1800 && !/[\u0000-\u001f\u007f]/.test(file.name) && (!after || file.name > after));
+      // Persist progress before inspecting jobs. A slow or permanently active
+      // object must not keep the next tick at the front of the same page.
+      await cursor.save(Buffer.from(JSON.stringify({ after: candidates.at(-1)?.name ?? null })), {
+        resumable: false, timeout: Math.max(1, deadlineAt - Date.now()),
+        metadata: { contentType: 'application/json', cacheControl: 'private, no-store' },
+      });
+      if (!inBudget()) return;
+      const jobs = new Map<string, ReturnType<typeof readJob>>();
+      await Promise.allSettled(candidates.map(async file => {
+        const location = /^private_autonomy_checkpoints\/(\d{16})\/([^/]{1,512})\/([a-f0-9]{64})\/(?:image-[a-f0-9]{64}\.jpg|voice-[a-f0-9]{64}\.bin|review-[a-f0-9]{64}\.json)$/.exec(file.name);
+        if (!location || location[2] === '.' || location[2] === '..' || !inBudget()) return;
+        const [metadata] = await file.getMetadata();
+        if (!inBudget()) return;
+        const jobPath = metadata.metadata?.autonomyJobPath;
+        const savedAt = metadata.metadata?.savedAt;
+        if (typeof jobPath !== 'string' || !/^auto_content_rules\/[A-Za-z0-9_-]{1,180}\/jobs\/slot_\d{1,16}$/.test(jobPath)
+          || digest(jobPath) !== location[3] || typeof savedAt !== 'string' || !/^\d{1,16}$/.test(savedAt)) return;
+        const scheduledAt = Number(jobPath.slice(jobPath.lastIndexOf('slot_') + 5));
+        if (timestamp(scheduledAt) === null || Number(location[1]) !== scheduledAt + retentionMs) return;
+        const savedTime = timestamp(Number(savedAt));
+        const objectTime = Math.max(...[metadata.updated, metadata.timeCreated]
+          .map(value => Date.parse(value || '')).filter(Number.isFinite));
+        const generation = metadata.generation;
+        if (savedTime === null || !Number.isFinite(objectTime) || Math.max(savedTime, objectTime) > now - retentionMs
+          || !/^[1-9]\d{0,30}$/.test(String(generation))) return;
+        if (!jobs.has(jobPath)) jobs.set(jobPath, readJob(jobPath));
+        const job = await jobs.get(jobPath)!;
+        if (!inBudget()) return;
+        if (job) {
+          if (typeof job.state !== 'string' || !terminalStates.has(job.state)) return;
+          const finishedAt = timestamp(job.finishedAt);
+          const updatedAt = timestamp(job.updatedAt);
+          if (finishedAt === null && updatedAt === null
+            || Math.max(finishedAt ?? 0, updatedAt ?? 0) > now - retentionMs) return;
+        }
+        // An object replaced after metadata inspection belongs to newer work.
+        await file.delete({ ignoreNotFound: true, ifGenerationMatch: generation });
+      }));
     }, 2_000);
   } catch { /* Maintenance cannot block a scheduler tick. */ }
 }
@@ -58,8 +126,7 @@ export function scheduledGenerationCheckpoint(
 ) {
   const scheduledAt = options.scheduledAt ?? Number(job.id.replace(/^slot_/, ''));
   if (!Number.isFinite(scheduledAt) || scheduledAt < 0) throw new TypeError('Waktu checkpoint otomatis tidak valid.');
-  const retentionWindow = Math.floor(Math.max(0, Date.now() - scheduledAt) / retentionMs) + 1;
-  const prefix = `${checkpointRoot}${String(scheduledAt + retentionWindow * retentionMs).padStart(16, '0')}/${workspaceId}/${digest(job.path)}/`;
+  const prefix = `${checkpointRoot}${String(scheduledAt + retentionMs).padStart(16, '0')}/${workspaceId}/${digest(job.path)}/`;
   const storageBudgetMs = options.storageBudgetMs ?? 5_000;
   const imageKey = (params: SocialPostImageParams, model?: string) => fingerprint({ revision, params, model });
   const read = async (name: string) => {
@@ -78,7 +145,9 @@ export function scheduledGenerationCheckpoint(
     await within(() => bucket().file(prefix + name).save(bytes, {
       resumable: false,
       timeout: storageBudgetMs,
-      metadata: { contentType, cacheControl: 'private, no-store' },
+      metadata: { contentType, cacheControl: 'private, no-store', metadata: {
+        autonomyJobPath: job.path, savedAt: String(Date.now()),
+      } },
     }), storageBudgetMs);
     await assertActive();
   };

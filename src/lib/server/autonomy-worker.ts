@@ -293,15 +293,17 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    }
    if(recoverable&&ownsJob){
     const job=(await tx.get(jobRef!)).data()!;
-    const reelsArtworkRecovery=job.format==='short_video'&&(job.reelsArtworkRecovery===true||failure.generationFailure?.code==='scheduled_artwork_rejected');
-    const retryAt=recoveryTime(reelsArtworkRecovery?'reels_artwork':'generation',job.generationAttempts,job.scheduledAt,now(),current.nextSlotMs);
+    const code=failure.generationFailure?.code;
+    const artworkRepair=code==='scheduled_artwork_rejected'||code==='reels_photo_layout_unreadable';
+    const reelsArtworkRecovery=job.format==='short_video'&&(job.reelsArtworkRecovery===true||artworkRepair);
+    const recoveryKind=code==='content_agent_pending'?'continuation':artworkRepair?'artwork_repair':reelsArtworkRecovery?'reels_artwork':'generation';
+    const retryAt=recoveryTime(recoveryKind,job.generationAttempts,job.scheduledAt,now(),current.nextSlotMs);
     const hasNextSlot=typeof current.nextSlotMs==='number';
     const nextState=retryAt?'retry_generation':'failed';
-    const code=failure.generationFailure?.code;
     const retryMessage=code&&['scheduled_artwork_review_unavailable','reels_photo_review_unavailable'].includes(code)
      ?'Pemeriksaan visual akan dilanjutkan otomatis. Bagian yang sudah selesai tetap tersimpan.'
      :reelsArtworkRecovery?'Veloxa sedang memulihkan visual Reels dan akan mencoba slot ini lagi.'
-     :code==='scheduled_artwork_rejected'?'Visual sedang diperbaiki otomatis. Bagian yang sudah selesai tetap tersimpan.':message;
+     :artworkRepair?'Visual sedang diperbaiki otomatis. Bagian yang sudah selesai tetap tersimpan.':message;
     tx.update(jobRef!,{state:nextState,error:retryAt?retryMessage:message,retryAt,updatedAt:now(),finishedAt:retryAt?null:now(),...failure,...(reelsArtworkRecovery?{reelsArtworkRecovery:true}:{})});
     tx.update(ruleRef,{
      ...reset,

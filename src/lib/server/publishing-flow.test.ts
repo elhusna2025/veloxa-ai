@@ -428,7 +428,7 @@ test('autonomy repairs every format across invocations past 30 minutes using one
     await reserveGenerationAttempt(f.ref as never,f.ref.id,'free_trial',scheduled.quotaJob);
     await scheduled.updateJob!({testCheckpoint:{completedParts:['script','image-1']}});
     options!.onProgress!({stage:'compositing'});
-    if(creates<7)throw new GenerationStageError(new ApiError(creates%2?503:422,'Pemeriksaan visual belum selesai.',creates%2?'visual_review_incomplete':'scheduled_artwork_rejected'),'compositing');
+    if(creates<7)throw new GenerationStageError(new ApiError(creates===2?422:503,'Pemeriksaan visual belum selesai.',creates===2?'scheduled_artwork_rejected':'visual_review_incomplete'),'compositing');
     return{draft:{id:scheduled.id,title:'Arus kas'}};
    })as never,
    publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
@@ -452,6 +452,41 @@ test('autonomy repairs every format across invocations past 30 minutes using one
   const rule=f.database.values.get(f.ruleRef.path)!;
   assert.equal(rule.sequence,1);assert.equal(rule.pendingJob,null);assert.equal(rule.nextSlotMs,secondSlot);
  }
+});
+
+test('autonomy resumes pending script sessions and known quality repairs promptly after many prior attempts',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const {GenerationStageError}=await import('./content-generation-stream');
+ const f=await autonomyFixture();
+ let clock=Date.now(),creates=0,published=0;
+ const failures=[
+  {code:'provider_timeout',status:503,stage:'images'},
+  {code:'content_agent_pending',status:202,stage:'script'},
+  {code:'scheduled_artwork_rejected',status:422,stage:'compositing'},
+  {code:'reels_photo_layout_unreadable',status:422,stage:'compositing'},
+  {code:'provider_timeout',status:503,stage:'images'},
+ ]as const;
+ const delays=[120_000,1_000,120_000,120_000,15*60_000];
+ const keys:string[]=[];
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(_request:Request,options:Parameters<typeof createSocialContent>[1])=>{
+   keys.push(options!.scheduledDraft!.id);
+   const failure=failures[creates++];
+   if(failure)throw new GenerationStageError(new ApiError(failure.status,'Proses belum selesai.',failure.code),failure.stage);
+   return{draft:{id:options!.scheduledDraft!.id,title:'Konten lengkap'}};
+  })as never,
+  publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ for(let index=0;index<failures.length;index++){
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+  const rule=f.database.values.get(f.ruleRef.path)!;
+  const job=f.database.values.get(`${f.ruleRef.path}/jobs/${rule.pendingJob}`)!;
+  assert.equal(rule.nextDueMs-clock,delays[index]);assert.equal(job.generationAttempts,index===0?1:40+index);
+  if(index===0)job.generationAttempts=40;
+  clock=rule.nextDueMs;
+ }
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ assert.equal(creates,6);assert.equal(new Set(keys).size,1);assert.equal(published,1);
 });
 
 test('real autonomous carousel resumes a transient review with one script, five images and one saved draft',async()=>{

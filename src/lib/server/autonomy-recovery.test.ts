@@ -18,8 +18,8 @@ test('known-unsent repair keeps retrying with a capped delay past the next slot 
 });
 
 test('repair only retries known generation stages and never uncertain script creation or saving',()=>{
- for(const code of ['visual_review_incomplete','scheduled_artwork_rejected','scheduled_script_rejected','content_agent_pending']){
-  assert.equal(canRetryGeneration(new GenerationStageError(new ApiError(code.endsWith('_rejected')?422:503,'retry',code),'compositing')),true);
+ for(const code of ['visual_review_incomplete','scheduled_artwork_rejected','reels_photo_layout_unreadable','scheduled_script_rejected','content_agent_pending']){
+  assert.equal(canRetryGeneration(new GenerationStageError(new ApiError(code.endsWith('_rejected')||code==='reels_photo_layout_unreadable'?422:503,'retry',code),'compositing')),true);
  }
  for(const stage of ['saving','validation'] as const){
   assert.equal(canRetryGeneration(new GenerationStageError(new ApiError(503,'unknown'),stage)),false);
@@ -28,4 +28,15 @@ test('repair only retries known generation stages and never uncertain script cre
   assert.equal(canRetryGeneration(new GenerationStageError(new ApiError(503,'stop',code),'script')),false);
  }
  assert.equal(canRetryGeneration(new ApiError(503,'unscoped failure')),false);
+});
+
+test('continuations and known quality repairs do not inherit long provider-outage backoff',()=>{
+ const slot=1_000_000,now=slot+2*60*60_000;
+ assert.equal(recoveryTime('artwork_repair',1,slot,now,null),now+60_000);
+ for(const attempts of [2,6,100_000]){
+  assert.equal(recoveryTime('continuation',attempts,slot,now,null),now+1_000);
+  assert.equal(recoveryTime('artwork_repair',attempts,slot,now,null),now+120_000);
+ }
+ assert.equal(recoveryTime('generation',100_000,slot,now,null),now+15*60_000);
+ assert.equal(recoveryTime('publication',100_000,slot,now,null),now+15*60_000);
 });
