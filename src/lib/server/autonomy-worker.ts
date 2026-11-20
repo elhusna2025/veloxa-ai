@@ -7,7 +7,7 @@ import {isWorkspacePhoto} from './brand-assets';
 import {assetBusiness} from '../business-context';
 import {resolveBusinessContext} from './business-contexts';
 import {profileFingerprint} from '../profile-fingerprint';
-import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource} from '../autonomy-rules';
+import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource,type AutoContentConfig} from '../autonomy-rules';
 import {readSocialAccounts} from './social-accounts';
 import {createSocialContent} from './content';
 import {GenerationStageError} from './content-generation-stream';
@@ -26,6 +26,36 @@ import {reconcileDueAutonomyPublications,recoverInterruptedPublication} from './
 type Database=ReturnType<typeof adminDb>;
 type RuleRef=FirebaseFirestore.DocumentReference;
 interface Dependencies{database?:Database;create?:typeof createSocialContent;publish?:typeof publishSocialContent;now?:()=>number}
+async function currentRuleProfile(tx:FirebaseFirestore.Transaction,ref:RuleRef,rule:FirebaseFirestore.DocumentData,config:AutoContentConfig,at:number){
+ const ws=(await tx.get(ref)).data();
+ if(!ws||ws.ownerUid!==rule.ownerUid)throw new ApiError(409,'Pemilik workspace berubah. Tinjau ulang aturan otomatis.');
+ const {context}=await resolveBusinessContext(ref,ws,rule.businessId,tx);
+ validateAutonomySource(config,context.brand);
+ const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);
+ if(config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>at))))throw new ApiError(409,'Akun tujuan berubah atau izinnya berakhir. Periksa akun sebelum melanjutkan.');
+ for(const assetId of new Set([...config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){
+  const asset=(await tx.get(ref.collection('server_assets').doc(assetId))).data();
+  if(!isWorkspacePhoto(asset,ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==rule.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');
+ }
+ return{ws,context,accounts,fingerprint:await profileFingerprint(context.brand)};
+}
+/** Only an opted-in, scoped, known-unsent remainder may yield to the next slot. */
+async function cancelOutdatedProfileSlot(tx:FirebaseFirestore.Transaction,ruleRef:RuleRef,job:RuleRef,rule:FirebaseFirestore.DocumentData,at:number,extra:Record<string,unknown>={}){
+ if(rule.config?.followProfileUpdates!==true)return false;
+ const ref=ruleRef.firestore.collection('workspaces').doc(rule.workspaceId);
+ if((await tx.get(dispatchGuard(ref))).data()?.leaseId)return false;
+ const slot=(await tx.get(job)).data();
+ const draftId=typeof extra.draftId==='string'?extra.draftId:slot?.draftId;
+ const ledger=typeof draftId==='string'?(await tx.get(ref.collection('publish_jobs').doc(draftId))).data():undefined;
+ if(slot?.receipts?.some((receipt:{status:string})=>receipt.status==='unknown')||ledger?.state==='needs_attention'||ledger?.receipts?.some((receipt:{status:string})=>receipt.status==='unknown'))return false;
+ let fresh;
+ try{fresh=await currentRuleProfile(tx,ref,rule,autonomyConfigSchema.parse(rule.config),at);}catch{return false;}
+ if(fresh.fingerprint===rule.profileFingerprint)return false;
+ const hasFuture=typeof rule.nextSlotMs==='number';
+ tx.update(job,{...extra,state:'cancelled',retryAt:null,error:'Profil diperbarui. Konten lama yang belum terkirim dilewati; jadwal berikutnya tetap berjalan.',finishedAt:at});
+ tx.update(ruleRef,{processingJob:null,processingRun:null,processingUntil:0,pendingJob:null,profileFingerprint:fresh.fingerprint,nextDueMs:rule.nextSlotMs,lastError:'',...(!hasFuture?{enabled:false,revision:rule.revision+1}:{})});
+ return true;
+}
 /** One durable slot claim; only failures known to precede a save/send can be retried. */
 export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
  const db=deps.database||adminDb();const now=deps.now||Date.now;const initial=(await ruleRef.get()).data();if(!initial?.enabled)return{state:'inactive'};
@@ -34,7 +64,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
  const newDraftKey=`draft_${randomUUID()}`;
  const reset={processingJob:null,processingRun:null,processingUntil:0};
  let jobRef:RuleRef|undefined;let revision=initial.revision;let claimed=false;let generating=false;
- let dispatchContext:AutonomyDispatchContext|undefined;
+ let dispatchContext:AutonomyDispatchContext|undefined;let profileChangedDuringRun=false;
  try{
   const claim=await db.runTransaction(async tx=>{
    const raw=(await tx.get(ruleRef)).data();if(!raw?.enabled||raw.revision!==initial.revision)return null;
@@ -66,9 +96,10 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     return null;
    }
    if(typeof raw.nextDueMs==='number'&&raw.nextDueMs>now())return null;
-   const config=autonomyConfigSchema.parse(raw.config);const ref=db.collection('workspaces').doc(raw.workspaceId);await assertNoAutonomyDispatch(tx,ref);const ws=(await tx.get(ref)).data();if(!ws||ws.ownerUid!==raw.ownerUid)throw new ApiError(409,'Pemilik workspace berubah. Tinjau ulang aturan otomatis.');
-   const {context}=await resolveBusinessContext(ref,ws,raw.businessId,tx);if(await profileFingerprint(context.brand)!==raw.profileFingerprint)throw new ApiError(409,'Profil bisnis berubah. Tinjau dan aktifkan kembali aturan dengan profil terbaru.');validateAutonomySource(config,context.brand);
-   const accounts=readSocialAccounts((await tx.get(ref.collection('private_meta_connections'))).docs);if(config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah atau izinnya berakhir. Periksa akun sebelum melanjutkan.');
+   const config=autonomyConfigSchema.parse(raw.config);const ref=db.collection('workspaces').doc(raw.workspaceId);await assertNoAutonomyDispatch(tx,ref);
+   const {ws,context,accounts,fingerprint}=await currentRuleProfile(tx,ref,raw,config,now());
+   const profileChanged=fingerprint!==raw.profileFingerprint;
+   if(profileChanged&&!config.followProfileUpdates)throw new ApiError(409,'Profil bisnis berubah. Tinjau dan aktifkan kembali aturan dengan profil terbaru.');
    const pending=typeof raw.pendingJob==='string'?raw.pendingJob:null;
    if(!pending&&raw.nextSlotMs===null){tx.update(ruleRef,{enabled:false,revision:raw.revision+1,nextDueMs:null});return null;}
    const slot=raw.nextSlotMs;
@@ -77,6 +108,14 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const job=ruleRef.collection('jobs').doc(id);
    const previous=(await tx.get(job)).data();
    const future=nextConfiguredAutonomySlot(config,now());
+   if(profileChanged&&pending){
+    if(!previous||previous.ruleRevision!==raw.revision||!['retry_generation','queued','retry_publication'].includes(previous.state))throw new ApiError(409,'Antrean publikasi perlu diperiksa; tidak dikirim ulang otomatis.');
+    const ledger=typeof previous.draftId==='string'?(await tx.get(ref.collection('publish_jobs').doc(previous.draftId))).data():undefined;
+    if(previous.receipts?.some((receipt:{status:string})=>receipt.status==='unknown')||ledger?.state==='needs_attention'||ledger?.receipts?.some((receipt:{status:string})=>receipt.status==='unknown'))throw new ApiError(409,'Hasil pengiriman perlu diperiksa sebelum melanjutkan.','delivery_unknown');
+    tx.update(job,{state:'cancelled',retryAt:null,error:'Profil diperbarui. Konten lama yang belum terkirim dilewati; jadwal berikutnya tetap berjalan.',finishedAt:now()});
+    tx.update(ruleRef,{pendingJob:null,profileFingerprint:fingerprint,nextDueMs:raw.nextSlotMs,lastError:'',...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1}:{})});
+    return 'profile_updated' as const;
+   }
    if(!pending&&!previous){
     const planId=effectiveWorkspacePlan(ws,now());
     const quota=await readPublicationQuota(ref,planId,tx,new Date(now()));
@@ -110,17 +149,18 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const publicationAttempts=retryPublication?(previous!.publicationAttempts||1)+1:previous?.publicationAttempts||1;
    const scheduledAt=(previous?.scheduledAt??slot) as number;
    const draftKey=previous?.draftKey as string|undefined||newDraftKey;
-   if(!pending)tx.create(job,{state:'generating',scheduledAt,createdAt:now(),ruleRevision:raw.revision,contentSequence:sequence,draftKey,generationAttempts,publicationAttempts,topic:input.topic,format:input.format});
+   if(!pending)tx.create(job,{state:'generating',scheduledAt,createdAt:now(),ruleRevision:raw.revision,contentSequence:sequence,draftKey,generationAttempts,publicationAttempts,topic:input.topic,format:input.format,profileFingerprint:fingerprint});
    else tx.update(job,{state:retryGeneration?'generating':'publishing',retryAt:null,error:'',generationAttempts,publicationAttempts});
    const processingUntil=now()+6*60_000;
-   tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,...(!pending?{nextSlotMs:future,sequence:sequence+1}:{})});
+   tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,profileFingerprint:fingerprint,...(!pending?{nextSlotMs:future,sequence:sequence+1}:{})});
    const recoverScheduledReelsArtwork=retryGeneration&&input.format==='short_video'&&previous?.reelsArtworkRecovery
     ? (generationAttempts===2?'photo':'simplified') as 'photo'|'simplified' : undefined;
-   return{raw,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork,explicitTopic};
+   return{raw:{...raw,profileFingerprint:fingerprint} as FirebaseFirestore.DocumentData,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork,explicitTopic};
   });
   if(claim==='skipped')return{state:'skipped'};
+  if(claim==='profile_updated')return{state:'cancelled'};
   if(!claim)return{state:'idle'};jobRef=claim.job;claimed=true;revision=claim.raw.revision;
-  const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const ws=(await tx.get(claim.ref)).data();if(!ws||ws.ownerUid!==claim.raw.ownerUid)throw new ApiError(403,'Pemilik workspace berubah.');const {context}=await resolveBusinessContext(claim.ref,ws,claim.raw.businessId,tx);if(await profileFingerprint(context.brand)!==claim.raw.profileFingerprint)throw new ApiError(409,'Profil berubah saat proses berjalan. Tinjau draf sebelum terbit.');const accounts=readSocialAccounts((await tx.get(claim.ref.collection('private_meta_connections'))).docs);if(claim.config.connectionIds.some(id=>!context.connectionIds.includes(id)||!accounts.some(account=>account.connectionId===id&&(!account.expiresAt||account.expiresAt>now()))))throw new ApiError(409,'Akun tujuan berubah. Pengiriman dihentikan.');for(const assetId of new Set([...claim.config.referenceAssetIds,...(context.brand.logoAssetId?[context.brand.logoAssetId]:[])])){const asset=(await tx.get(claim.ref.collection('server_assets').doc(assetId))).data();if(!isWorkspacePhoto(asset,claim.ref.id)||asset.asset.id!==assetId||asset.trashedAt||assetBusiness(asset.asset)!==claim.raw.businessId)throw new ApiError(409,'Logo atau referensi berubah. Tinjau aset sebelum melanjutkan otomatis.');}return ws;};
+  const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const fresh=await currentRuleProfile(tx,claim.ref,claim.raw,claim.config,now());if(fresh.fingerprint!==claim.raw.profileFingerprint){profileChangedDuringRun=true;throw new ApiError(409,'Profil berubah saat proses berjalan. Konten lama belum dikirim.','autonomy_profile_changed');}return fresh.ws;};
   const assertActive=async()=>db.runTransaction(checkActive);
   const authorize:typeof requireWorkspace=async(_request,workspaceId)=>{if(workspaceId!==claim.ref.id)throw new ApiError(403,'Workspace tidak sesuai.');const workspace=await assertActive();return{workspace,ref:claim.ref,workspaceId:claim.ref.id,user:{uid:claim.raw.ownerUid} as DecodedIdToken};};
   let draftId=claim.pendingDraft;let title='';
@@ -168,6 +208,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const current=(await tx.get(ruleRef)).data();
    if(current?.processingJob!==jobRef!.id||current.processingRun!==executionId)return outcome;
    const active=current.enabled&&current.revision===revision;
+   if(active&&profileChangedDuringRun&&!result.receipts.some(receipt=>receipt.status==='unknown')&&await cancelOutdatedProfileSlot(tx,ruleRef,jobRef!,current,now(),{draftId,receipts:JSON.parse(JSON.stringify(result.receipts))}))return 'cancelled';
    const guard=outcome==='needs_attention'?(await tx.get(dispatchGuard(claim.ref))).data():undefined;
    const checking=isDispatchFor(guard,dispatch)&&['instagram_container','facebook_reel'].includes(guard?.kind);
    const transient=outcome==='failed'&&result.receipts.some(receipt=>receipt.status==='failed'&&receipt.retryable===true);
@@ -209,6 +250,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     if(ownsJob){tx.update(jobRef!,{state:generating?'cancelled':state,error:message,finishedAt:now()});tx.update(ruleRef,reset);}
     return generating?'cancelled':state;
    }
+   if(ownsJob&&error instanceof ApiError&&['autonomy_profile_changed','profile_conflict'].includes(error.code||'')&&await cancelOutdatedProfileSlot(tx,ruleRef,jobRef!,current,now()))return 'cancelled';
    if(ownsJob&&error instanceof ApiError&&['daily_publication_quota_exhausted','daily_draft_quota_exhausted'].includes(error.code||'')){
     tx.update(jobRef!,{state:'skipped',error:message,retryAt:null,finishedAt:now()});
     tx.update(ruleRef,{...reset,pendingJob:null,nextDueMs:current.nextSlotMs,lastError:'',...(current.nextSlotMs===null?{enabled:false,revision:revision+1}:{})});

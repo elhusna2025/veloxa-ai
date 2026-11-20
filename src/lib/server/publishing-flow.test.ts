@@ -278,6 +278,121 @@ test('autonomy concurrent ticks claim once and use server generation/publisher w
 
 test('autonomy stops publication on pause, profile change, moved account, owner change and exhausted quota',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const change of['pause','profile','account','owner','quota']as const){const f=await autonomyFixture();let creates=0,publishes=0;if(change==='quota')f.database.values.set(`${f.ref.path}/publish_usage/${wibMonth()}`,{count:SUBSCRIPTION_PLANS.free_trial.monthlyPostQuota});const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,create:(async()=>{creates++;if(change==='pause'){const rule=f.database.values.get(f.ruleRef.path)!;rule.enabled=false;rule.revision++;}if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='other';if(change==='account')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];if(change==='profile'){const ws=f.database.values.get(f.ref.path)!;const value=JSON.parse(ws.snapshotJson);value.brand.businessDescription='Changed';ws.snapshotJson=JSON.stringify(value);}return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{draft:{status:'published'},receipts:[]};})as never});assert.notEqual(result.state,'published');assert.equal(publishes,0);assert.equal(creates,change==='quota'?0:1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);assert.equal(f.database.values.get(f.ruleRef.path)!.processingJob,null);}});
 
+function changeAutonomyProfile(f:Awaited<ReturnType<typeof autonomyFixture>>,description:string){
+ const ws=f.database.values.get(f.ref.path)!;const snapshot=JSON.parse(ws.snapshotJson);
+ snapshot.brand.businessDescription=description;ws.snapshotJson=JSON.stringify(snapshot);return snapshot.brand;
+}
+test('profile following stays opt-in for both missing and explicitly false settings',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ for(const follow of [undefined,false]){
+  const f=await autonomyFixture();if(follow!==undefined)f.rule.config.followProfileUpdates=follow;
+  changeAutonomyProfile(f,'Profil baru yang belum disetujui');let calls=0;
+  await processAutonomyRule(f.ruleRef as never,{database:f.database as never,create:(async()=>{calls++;assert.fail('must not generate');})as never,publish:(async()=>{calls++;assert.fail('must not publish');})as never});
+  assert.equal(calls,0);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);
+ }
+});
+test('following profile updates pins the latest same-business profile on a new autonomous slot',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;
+ const latest=await profileFingerprint(changeAutonomyProfile(f,'Profil terbaru sebelum slot dimulai'));let creates=0,publishes=0;
+ const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,
+  create:(async(request:Request,options:any)=>{creates++;assert.equal((await request.json()).expectedProfileFingerprint,latest);await options.authorize(request,f.ref.id);return{draft:{id:options.scheduledDraft.id,title:'Profil terbaru'}};})as never,
+  publish:(async(request:Request,options:any)=>{publishes++;await options.authorize(request,f.ref.id);return{draft:{status:'published'},receipts:[]};})as never,
+ });
+ assert.equal(result.state,'published');assert.equal(creates,1);assert.equal(publishes,1);
+ const rule=f.database.values.get(f.ruleRef.path)!;assert.equal(rule.enabled,true);assert.equal(rule.profileFingerprint,latest);
+ const job=[...f.database.values.entries()].find(([path])=>path.startsWith(f.ruleRef.path+'/jobs/'))![1];assert.equal(job.profileFingerprint,latest);
+});
+test('following profile updates cancels an in-flight old draft and keeps the next slot active',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;
+ let clock=Date.now(),creates=0,publishes=0;const keys:string[]=[];let latest='';
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(request:Request,options:any)=>{creates++;keys.push(options.scheduledDraft.id);if(creates===1)latest=await profileFingerprint(changeAutonomyProfile(f,'Profil diperbarui ketika AI sedang bekerja'));else assert.equal((await request.json()).expectedProfileFingerprint,latest);return{draft:{id:options.scheduledDraft.id,title:'Naskah'}};})as never,
+  publish:(async()=>{publishes++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ const first=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(first.state,'cancelled');assert.equal(publishes,0);
+ const rule=f.database.values.get(f.ruleRef.path)!;assert.equal(rule.enabled,true);assert.equal(rule.pendingJob,null);assert.equal(rule.processingJob,null);
+ clock=rule.nextSlotMs;assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ assert.equal(creates,2);assert.equal(publishes,1);assert.notEqual(keys[0],keys[1]);
+});
+test('following profile updates cancels a queued old-profile remainder and preserves confirmed receipts',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;
+ let clock=Date.now(),creates=0,publishes=0;const receipt={channel:'instagram',connectionId:'instagram_200',accountId:'200',status:'published',externalPostId:'200_123'};
+ const deps={database:f.database as never,now:()=>clock,create:(async(_request:Request,options:any)=>{creates++;return{draft:{id:options.scheduledDraft.id,title:'Lama'}};})as never,publish:(async()=>{publishes++;return{hasMore:true,draft:{status:'publish_queued'},receipts:[receipt]};})as never};
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'queued');
+ const pending=f.database.values.get(f.ruleRef.path)!.pendingJob;changeAutonomyProfile(f,'Profil berubah sebelum batch berikutnya');clock+=61_000;
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'cancelled');assert.equal(creates,1);assert.equal(publishes,1);
+ const rule=f.database.values.get(f.ruleRef.path)!;assert.equal(rule.enabled,true);assert.equal(rule.pendingJob,null);
+ const job=f.database.values.get(`${f.ruleRef.path}/jobs/${pending}`)!;assert.equal(job.state,'cancelled');assert.deepEqual(job.receipts,[receipt]);
+});
+test('following profile updates handles a definitive blocked send without dropping earlier receipts',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;
+ const published={channel:'facebook',status:'published',externalPostId:'100_123'};let attempted=0;
+ const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,
+  create:(async(_request:Request,options:any)=>({draft:{id:options.scheduledDraft.id,title:'Lama'}}))as never,
+  publish:(async(request:Request,options:any)=>{attempted++;changeAutonomyProfile(f,'Profil berubah di antara pengiriman');await assert.rejects(options.authorize(request,f.ref.id),{code:'autonomy_profile_changed'});return{draft:{status:'publish_failed'},receipts:[published,{channel:'instagram',status:'failed',error:'Profil berubah'}]};})as never,
+ });
+ assert.equal(result.state,'cancelled');assert.equal(attempted,1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,true);
+ const job=[...f.database.values.entries()].find(([path])=>path.startsWith(f.ruleRef.path+'/jobs/'))![1];assert.deepEqual(job.receipts[0],published);
+});
+test('following profile updates still stops changed ownership, accounts, deleted references and selected products',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ for(const change of ['owner','account','reference','offering']as const){
+  const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;
+  if(change==='reference'){await seedPhoto(f);f.rule.config.referenceAssetIds=[photoId];}
+  if(change==='offering'){const ws=f.database.values.get(f.ref.path)!;const snap=JSON.parse(ws.snapshotJson);snap.brand.offerings=[{id:'erp',title:'ERP',highlight:'Laporan',category:'service',priceLabel:''}];ws.snapshotJson=JSON.stringify(snap);f.rule.config.sourceMode='offerings';f.rule.config.offeringIds=['erp'];f.rule.profileFingerprint=await profileFingerprint(snap.brand);}
+  let publishes=0;
+  const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,
+   create:(async(_request:Request,options:any)=>{changeAutonomyProfile(f,'Profil berubah bersama izin atau bahan');if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='other';if(change==='account')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];if(change==='reference')f.database.values.get(`${f.ref.path}/server_assets/${photoId}`)!.trashedAt=Date.now();if(change==='offering'){const ws=f.database.values.get(f.ref.path)!;const snap=JSON.parse(ws.snapshotJson);snap.brand.offerings=[];ws.snapshotJson=JSON.stringify(snap);}return{draft:{id:options.scheduledDraft.id,title:'Uji'}};})as never,
+   publish:(async()=>{publishes++;return{draft:{status:'published'},receipts:[]};})as never,
+  });
+  assert.notEqual(result.state,'published',change);assert.equal(publishes,0,change);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false,change);
+ }
+});
+test('following profile updates never treats unknown delivery as an unsent draft',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;let publishes=0;
+ const deps={database:f.database as never,create:(async(_request:Request,options:any)=>({draft:{id:options.scheduledDraft.id,title:'Uji'}}))as never,
+  publish:(async(request:Request,options:any)=>{publishes++;changeAutonomyProfile(f,'Profil berubah saat hasil kirim belum pasti');await assert.rejects(options.authorize(request,f.ref.id),{code:'autonomy_profile_changed'});return{draft:{status:'needs_attention'},receipts:[{channel:'instagram',status:'unknown'}]};})as never};
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'needs_attention');assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'inactive');assert.equal(publishes,1);
+});
+test('following profile updates preserves an ambiguous final-send fence for reconciliation',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();f.rule.config.followProfileUpdates=true;
+ const guardPath=`${f.ref.path}/server_operation_guards/organic_dispatch`;let clock=Date.now(),creates=0,publishes=0;
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(_request:Request,options:any)=>{creates++;return{draft:{id:options.scheduledDraft.id,title:'Uji'}};})as never,
+  publish:(async(request:Request,options:any)=>{publishes++;changeAutonomyProfile(f,'Profil baru dengan kiriman belum pasti');await assert.rejects(options.authorize(request,f.ref.id),{code:'autonomy_profile_changed'});const rule=f.database.values.get(f.ruleRef.path)!;const {draftId}=await request.json();f.database.values.set(guardPath,{workspaceId:f.ref.id,ruleId:f.ruleRef.id,jobId:rule.processingJob,draftId,revision:rule.revision,run:options.autonomyRun,phase:'final',kind:'instagram_container',leaseId:'ambiguous-send'});return{draft:{status:'needs_attention'},receipts:[{channel:'instagram',status:'unknown'}]};})as never,
+ };
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'needs_attention');
+ const rule=f.database.values.get(f.ruleRef.path)!;assert.equal(rule.enabled,true);assert.ok(rule.pendingReconciliation);assert.equal(f.database.values.get(guardPath)!.leaseId,'ambiguous-send');
+ clock=rule.nextSlotMs;assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');assert.equal(creates,1);assert.equal(publishes,1);assert.equal(f.database.values.get(guardPath)!.leaseId,'ambiguous-send');
+});
+
+test('manual publishing and Otonom share explicit unlimited workspace publication quotas',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();
+ f.database.values.set('private_admin_settings/global',{plans:{free_trial:{dailyDraftLimit:6,dailyPublicationLimit:1,monthlyPublicationLimit:2}}});
+ f.database.values.set(`private_admin_settings/workspace_${f.ref.id}`,{quota:{dailyDraftLimit:null,dailyPublicationLimit:null,monthlyPublicationLimit:null}});
+ f.database.values.set(`${f.ref.path}/publish_usage/${wibMonth()}`,{count:20});f.database.values.set(`${f.ref.path}/publish_daily_usage/${wibDay()}`,{count:5});
+ let sends=0;const publisher=async()=>({externalPostId:`200_${++sends}`});
+ const manual=await f.create({selectedConnectionIds:['instagram_200']});const result=await publishSocialContent(new Request('http://local/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,draftId:manual.draft.id})}),{...f.dependencies,publisher});
+ assert.equal(result.draft.status,'published');assert.equal(result.publicationQuota?.limit,null);assert.equal(result.publicationQuota?.dailyLimit,null);
+ const automatic=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,
+  create:(async(request:Request,options:any)=>createSocialContent(request,{...options,storage:f.dependencies.storage,generate:async(input:ContentAgentParams)=>({draft:shortVisualDraft(input),engineMode:'deterministic_local'}),renderImage:async()=>sharp({create:{width:1080,height:1350,channels:3,background:'#ffffff'}}).jpeg().toBuffer(),verifyArtwork:async()=>{},verifyScript:async()=>{}}))as never,
+  publish:(async(request:Request,options:any)=>publishSocialContent(request,{...f.dependencies,...options,publisher}))as never,
+ });
+ assert.equal(automatic.state,'published');assert.equal(sends,2);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,true);
+ assert.equal(f.database.values.get(`${f.ref.path}/publish_usage/${wibMonth()}`)!.count,22);assert.equal(f.database.values.get(`${f.ref.path}/publish_daily_usage/${wibDay()}`)!.count,7);
+});
+test('unlimited publication quotas do not bypass malformed usage counters in Studio or Otonom',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ for(const usage of ['publish_usage/'+wibMonth(),'publish_daily_usage/'+wibDay()]){
+  const f=await autonomyFixture();const {draft}=await f.create({selectedConnectionIds:['instagram_200']});
+  f.database.values.set(`private_admin_settings/workspace_${f.ref.id}`,{quota:{dailyPublicationLimit:null,monthlyPublicationLimit:null}});
+  f.database.values.set(`${f.ref.path}/${usage}`,{count:'invalid'});let calls=0;
+  await assert.rejects(publishSocialContent(new Request('http://local/api',{method:'POST',body:JSON.stringify({workspaceId:f.ref.id,draftId:draft.id})}),{...f.dependencies,publisher:async()=>{calls++;return{externalPostId:'must-not-send'};}}),{code:'publication_quota_unavailable'});
+  const result=await processAutonomyRule(f.ruleRef as never,{database:f.database as never,create:(async()=>{calls++;assert.fail('must not generate');})as never,publish:(async()=>{calls++;assert.fail('must not send');})as never});
+  assert.notEqual(result.state,'published');assert.equal(calls,0);
+ }
+});
+
 test('autonomy resumes only confirmed queued draft; unknown delivery is paused and never regenerated',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const unknown of[false,true]){const f=await autonomyFixture();let creates=0,publishes=0,clock=Date.now();const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{hasMore:!unknown&&publishes===1,draft:{status:unknown?'needs_attention':publishes===1?'publish_queued':'published'},receipts:[]};})as never};const first=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(first.state,unknown?'needs_attention':'queued');clock+=61000;const last=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(last.state,unknown?'inactive':'published');assert.equal(creates,1);assert.equal(publishes,unknown?1:2);}});
 
 test('autonomy keeps recovering a rejected Reels slot with the same draft key and publishes once', async () => {
@@ -528,7 +643,7 @@ test('an ambiguous stale dispatch lock is not silently expired and never permits
 test('autonomy stale slot is skipped; expired/crashed generation never dispatches or regenerates',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const state of['old','expired','crash']as const){const f=await autonomyFixture();let creates=0,publishes=0;if(state==='old')f.rule.nextSlotMs=Date.now()-31*60000;if(state==='expired'){f.rule.processingJob='slot_previous';f.rule.processingUntil=Date.now()-1;f.database.values.set(`${f.ruleRef.path}/jobs/slot_previous`,{state:'generating',scheduledAt:Date.now()-20*60000});}const deps={database:f.database as never,create:(async()=>{creates++;throw new ApiError(503,'Hasil pembuatan belum pasti.');})as never,publish:(async()=>{publishes++;throw Error('must not publish');})as never};await processAutonomyRule(f.ruleRef as never,deps);await processAutonomyRule(f.ruleRef as never,deps);assert.equal(creates,state==='crash'?1:0);assert.equal(publishes,0);if(state!=='old')assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);}});
 
 const photoId = '123e4567-e89b-42d3-a456-426614174000';
-async function seedPhoto(f: ReturnType<typeof fixture>) {
+async function seedPhoto(f: Pick<ReturnType<typeof fixture>, 'ref'|'database'|'blobs'>) {
  const storagePath=`workspaces/${f.ref.id}/vault/${photoId}.jpg`;
  const asset={id:photoId,workspaceId:f.ref.id,title:'Foto produk',description:'',drawer:'real_asset',mediaType:'photo',previewUrl:'https://example.test/original.jpg',aspectRatio:'4:5',tags:[],uploadedFrom:'web',createdAt:new Date().toISOString(),usedInPostsCount:0};
  f.database.values.set(`${f.ref.path}/server_assets/${photoId}`,{asset,storagePath});

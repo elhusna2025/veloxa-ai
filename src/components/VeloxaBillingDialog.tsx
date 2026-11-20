@@ -87,7 +87,7 @@ export function VeloxaBillingDialog({ workspaceId, open, onClose, onPlan, reques
         <section aria-label="Paket saat ini" className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
           <h3 className="text-base font-semibold">{SUBSCRIPTION_PLANS[data.workspace.planId].name}</h3>
           <p className="mt-1 text-sm text-neutral-600">{billingStates[data.workspace.state]}{data.workspace.paidUntil && ` · Hingga ${formatBillingDate(data.workspace.paidUntil)}`}</p>
-          <p className="mt-2 text-sm">{data.publication.used} dari {data.publication.limit} publikasi bulan ini</p>
+          <p className="mt-2 text-sm">{data.publication.limit === null ? `Publikasi tanpa batas · ${data.publication.used} publikasi bulan ini` : `${data.publication.used} dari ${data.publication.limit} publikasi bulan ini`}</p>
         </section>
         <section aria-labelledby="billing-plans-title">
           <h3 id="billing-plans-title" className="text-lg font-semibold">Pilih paket</h3>
@@ -98,7 +98,7 @@ export function VeloxaBillingDialog({ workspaceId, open, onClose, onPlan, reques
               return <button type="button" key={plan.id} data-testid={`select-plan-btn-${plan.id}`} aria-pressed={selection === plan.id} disabled={!canSelect}
                 onClick={() => setSelected(plan.id)} className={`rounded-lg border p-4 text-left ${selection === plan.id ? 'border-[#bd416e] bg-[#faf2f5]' : 'border-neutral-200 bg-white'}`}>
                 <strong>{plan.name}</strong><p className="mt-1 text-base">{formatBillingIdr(plan.priceMonthlyIdr)}{plan.priceMonthlyIdr > 0 && ` / ${PAID_ACCESS_DAYS} hari`}</p>
-                <p className="mt-1 text-sm text-neutral-600">{item.publicationLimit} publikasi per bulan</p>
+                <p className="mt-1 text-sm text-neutral-600">{item.publicationLimit === null ? 'Publikasi tanpa batas' : `${item.publicationLimit} publikasi per bulan`}</p>
               </button>;
             })}
           </div>

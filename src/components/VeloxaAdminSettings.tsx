@@ -13,6 +13,7 @@ type RequestSettings = <T>(url: string, init?: RequestInit) => Promise<T>;
 type Change = Omit<AdminSettingsUpdate, 'workspaceId' | 'expectedRevision' | 'reason'>;
 type LimitKey = 'dailyDraftLimit' | 'dailyPublicationLimit' | 'monthlyPublicationLimit';
 type LimitFields = Record<LimitKey, string>;
+type UnlimitedFields = Record<LimitKey, boolean>;
 const modelFields = [
   { key: 'scriptModel', label: 'Model naskah & caption' },
   { key: 'imageModel', label: 'Model gambar' },
@@ -31,28 +32,38 @@ const savedLimits = (limits: Partial<Record<LimitKey, number | null>>): LimitFie
   monthlyPublicationLimit: String(limits.monthlyPublicationLimit ?? ''),
 });
 const sameLimits = (a: LimitFields, b: LimitFields) => limitFields.every(({ key }) => a[key] === b[key]);
+const savedUnlimited = (limits: AdminQuotaOverrides): UnlimitedFields => ({
+  dailyDraftLimit: limits.dailyDraftLimit === null,
+  dailyPublicationLimit: limits.dailyPublicationLimit === null,
+  monthlyPublicationLimit: limits.monthlyPublicationLimit === null,
+});
+const unlimitedLabels = {
+  dailyDraftLimit: 'Tanpa batas pembuatan draf',
+  dailyPublicationLimit: 'Tanpa batas publikasi harian',
+  monthlyPublicationLimit: 'Tanpa batas publikasi bulanan',
+};
 const validLimit = (key: LimitKey, value: string) => /^\d+$/.test(value) && Number(value) <= (key === 'monthlyPublicationLimit' ? 1_000_000 : 10_000);
 const displayLimit = (value: number | null) => value === null ? 'Tanpa batas' : number.format(value);
 
-function LimitInputs({ values, workspace, noDraftLimit, setNoDraftLimit, onChange }: {
+function LimitInputs({ values, workspace, unlimitedLimits, onUnlimited, onChange }: {
   values: LimitFields;
   workspace?: boolean;
-  noDraftLimit?: boolean;
-  setNoDraftLimit?: (value: boolean) => void;
+  unlimitedLimits?: UnlimitedFields;
+  onUnlimited?: (key: LimitKey, value: boolean) => void;
   onChange: (key: LimitKey, value: string) => void;
 }) {
   const id = useId();
   return <div className={settings.limitFields}>
     {limitFields.map(({ key, label }) => {
-      const unlimited = workspace && key === 'dailyDraftLimit' && noDraftLimit;
+      const unlimited = workspace && unlimitedLimits?.[key];
       const placeholder = workspace ? 'Ikuti paket' : key === 'dailyPublicationLimit' ? 'Tanpa batas' : 'Isi batas paket';
       return <div key={key} className={settings.field}>
         <label htmlFor={id + key}>{label}</label>
         <input id={id + key} type="text" inputMode="numeric" pattern="[0-9]*" maxLength={12}
           value={unlimited ? '' : values[key]} disabled={unlimited} placeholder={unlimited ? 'Tanpa batas' : placeholder}
           required={!workspace && key !== 'dailyPublicationLimit'} onChange={event => onChange(key, event.target.value)} />
-        {workspace && key === 'dailyDraftLimit' && <label className={settings.checkbox}>
-          <input type="checkbox" checked={!!noDraftLimit} onChange={event => setNoDraftLimit?.(event.target.checked)} /> Tanpa batas pembuatan draf
+        {workspace && <label className={settings.checkbox}>
+          <input type="checkbox" checked={!!unlimitedLimits?.[key]} onChange={event => onUnlimited?.(key, event.target.checked)} /> {unlimitedLabels[key]}
         </label>}
       </div>;
     })}
@@ -130,7 +141,7 @@ export function VeloxaAdminSettings({ data, request, endpoint, onDirty, onSaved,
 }) {
   const [models, setModels] = useState<AdminModelOverrides>(data.models);
   const [workspaceLimits, setWorkspaceLimits] = useState<LimitFields>(() => savedLimits(data.scope === 'workspace' ? data.quota : {}));
-  const [noDraftLimit, setNoDraftLimit] = useState(data.scope === 'workspace' && data.quota.dailyDraftLimit === null);
+  const [unlimitedLimits, setUnlimitedLimits] = useState(() => savedUnlimited(data.scope === 'workspace' ? data.quota : {}));
   const [editedPlans, setEditedPlans] = useState<Record<string, LimitFields>>({});
   const [selectedPlanId, setSelectedPlanId] = useState(data.scope === 'global' ? data.plans[0]?.id ?? '' : '');
   const [confirmation, setConfirmation] = useState<Change | null>(null);
@@ -143,10 +154,11 @@ export function VeloxaAdminSettings({ data, request, endpoint, onDirty, onSaved,
   const modelChanged = changedModelFields.length > 0;
   const unavailableSelection = modelChanged && modelFields.some(({ key }) => models[key] && !data.availableModels[key].includes(models[key]!));
   const originalWorkspaceLimits = savedLimits(global ? {} : data.quota);
-  const workspaceChanged = !global && (!sameLimits(originalWorkspaceLimits, workspaceLimits) || noDraftLimit !== (data.quota.dailyDraftLimit === null));
+  const originalUnlimited = savedUnlimited(global ? {} : data.quota);
+  const workspaceChanged = !global && (!sameLimits(originalWorkspaceLimits, workspaceLimits) || limitFields.some(({key}) => unlimitedLimits[key] !== originalUnlimited[key]));
   const changedPlans = plans.filter(plan => editedPlans[plan.id] && !sameLimits(savedLimits(plan), editedPlans[plan.id]));
   const dirty = modelChanged || workspaceChanged || changedPlans.length > 0;
-  const invalidWorkspace = !global && limitFields.some(({ key }) => !(key === 'dailyDraftLimit' && noDraftLimit) && !!workspaceLimits[key] && !validLimit(key, workspaceLimits[key]));
+  const invalidWorkspace = !global && limitFields.some(({ key }) => !unlimitedLimits[key] && !!workspaceLimits[key] && !validLimit(key, workspaceLimits[key]));
   const invalidPlan = changedPlans.find(plan => limitFields.some(({ key }) => {
     const value = editedPlans[plan.id][key];
     return key === 'dailyPublicationLimit' ? !!value && !validLimit(key, value) : !validLimit(key, value);
@@ -166,7 +178,7 @@ export function VeloxaAdminSettings({ data, request, endpoint, onDirty, onSaved,
   const quotaUpdate = () => {
     const quota: AdminQuotaOverrides = {};
     for (const { key } of limitFields) {
-      if (key === 'dailyDraftLimit' && noDraftLimit) quota.dailyDraftLimit = null;
+      if (unlimitedLimits[key]) quota[key] = null;
       else if (workspaceLimits[key]) quota[key] = Number(workspaceLimits[key]);
     }
     return quota;
@@ -182,8 +194,8 @@ export function VeloxaAdminSettings({ data, request, endpoint, onDirty, onSaved,
   };
   const summary = [
     ...changedModelFields.map(({ key, label }) => `${label} · ${models[key] ?? data.defaultModels[key]}`),
-    ...(workspaceChanged ? limitFields.filter(({ key }) => workspaceLimits[key] !== originalWorkspaceLimits[key] || key === 'dailyDraftLimit' && !global && noDraftLimit !== (data.quota.dailyDraftLimit === null)).map(({ key, label }) =>
-      `${label} · ${key === 'dailyDraftLimit' && noDraftLimit ? 'Tanpa batas' : workspaceLimits[key] || 'Ikuti paket'}`) : []),
+    ...(workspaceChanged ? limitFields.filter(({ key }) => workspaceLimits[key] !== originalWorkspaceLimits[key] || unlimitedLimits[key] !== originalUnlimited[key]).map(({ key, label }) =>
+      `${label} · ${unlimitedLimits[key] ? 'Tanpa batas' : workspaceLimits[key] || 'Ikuti paket'}`) : []),
     ...changedPlans.flatMap(plan => limitFields.filter(({ key }) => editedPlans[plan.id][key] !== savedLimits(plan)[key]).map(({ key, label }) =>
       `${plan.label} · ${label} · ${editedPlans[plan.id][key] || 'Tanpa batas'}`)),
   ];
@@ -248,7 +260,7 @@ export function VeloxaAdminSettings({ data, request, endpoint, onDirty, onSaved,
           <dl className={settings.effective}>{limitFields.map(({ key, label }) => <div key={key}>
             <dt>{label} saat ini</dt><dd>{displayLimit(data.effectiveQuota[key])}</dd>
           </div>)}</dl>
-          <LimitInputs values={workspaceLimits} workspace noDraftLimit={noDraftLimit} setNoDraftLimit={setNoDraftLimit} onChange={(key, value) => setWorkspaceLimits(current => ({ ...current, [key]: value }))} />
+          <LimitInputs values={workspaceLimits} workspace unlimitedLimits={unlimitedLimits} onUnlimited={(key,value) => setUnlimitedLimits(current=>({...current,[key]:value}))} onChange={(key, value) => setWorkspaceLimits(current => ({ ...current, [key]: value }))} />
           {invalidWorkspace && <p role="status" className={styles.error}>Gunakan angka bulat hingga 10.000 per hari dan 1.000.000 per bulan.</p>}
         </>}
       </section>

@@ -20,8 +20,8 @@ const dayLimit = z.number().int().min(0).max(10_000);
 const monthLimit = z.number().int().min(0).max(1_000_000);
 const workspaceQuotaSchema = z.object({
   dailyDraftLimit: dayLimit.nullable().optional(),
-  dailyPublicationLimit: dayLimit.optional(),
-  monthlyPublicationLimit: monthLimit.optional(),
+  dailyPublicationLimit: dayLimit.nullable().optional(),
+  monthlyPublicationLimit: monthLimit.nullable().optional(),
 }).strict();
 const planIdSchema = z.enum(['free_trial', 'starter_500k', 'growth_1000k', 'pro_1500k']);
 const planQuotaSchema = z.object({ dailyDraftLimit: dayLimit, dailyPublicationLimit: dayLimit.nullable(), monthlyPublicationLimit: monthLimit }).strict();
@@ -190,8 +190,8 @@ export async function getAdminSettings(request: Request, deps: Dependencies = {}
     quota: state.quota,
     effectiveQuota: {
       dailyDraftLimit: state.quota.dailyDraftLimit !== undefined ? state.quota.dailyDraftLimit : legacyUnlimited ? null : plan.dailyDraftLimit,
-      monthlyPublicationLimit: state.quota.monthlyPublicationLimit ?? plan.monthlyPublicationLimit,
-      dailyPublicationLimit: state.quota.dailyPublicationLimit ?? plan.dailyPublicationLimit,
+      monthlyPublicationLimit: state.quota.monthlyPublicationLimit !== undefined ? state.quota.monthlyPublicationLimit : plan.monthlyPublicationLimit,
+      dailyPublicationLimit: state.quota.dailyPublicationLimit !== undefined ? state.quota.dailyPublicationLimit : plan.dailyPublicationLimit,
     },
   };
 }

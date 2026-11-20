@@ -10,8 +10,8 @@ export type AdminModelKey = keyof typeof DEFAULT_CONTENT_MODELS;
 export type AdminModelOverrides = Partial<Record<AdminModelKey, string>>;
 export type AdminQuotaOverrides = {
   dailyDraftLimit?: number | null;
-  monthlyPublicationLimit?: number;
-  dailyPublicationLimit?: number;
+  monthlyPublicationLimit?: number | null;
+  dailyPublicationLimit?: number | null;
 };
 
 export type AdminPlanSettings = {
@@ -49,7 +49,7 @@ export type AdminSettingsView = SettingsBase & (
     workspaceId: string;
     workspaceName: string;
     quota: AdminQuotaOverrides;
-    effectiveQuota: Required<Omit<AdminQuotaOverrides, 'dailyPublicationLimit'>> & { dailyPublicationLimit: number | null };
+    effectiveQuota: Required<AdminQuotaOverrides>;
   }
 );
 

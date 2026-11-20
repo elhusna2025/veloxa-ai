@@ -25,7 +25,7 @@ const formats = [
 interface Props {
   brand: BrandProfile;
   postsUsed: number;
-  quota: number;
+  quota: number | null;
   dailyPublicationQuota?: { used: number; limit: number };
   connections: ChannelConnectionState[];
   connectionsVerified: boolean;
@@ -61,7 +61,7 @@ export function VeloxaWorkspaceOverview(props: Props) {
     { icon: Link2, label: 'Akun terhubung', value: props.connectionsVerified || connected.length ? number.format(connected.length) : '—', note: !props.connectionsVerified ? 'Status akun belum diperbarui' : '' },
     { icon: FileText, label: 'Belum terbit', value: number.format(props.drafts.length - published), note: hasFailures ? 'Ada publikasi yang perlu diperiksa' : '' },
     { icon: Send, label: 'Konten terbit', value: number.format(published) },
-    { icon: Ticket, label: 'Kuota publikasi', value: `${number.format(props.postsUsed)} / ${number.format(props.quota)}` },
+    { icon: Ticket, label: 'Kuota publikasi', value: props.quota === null ? t('Tanpa batas') : `${number.format(props.postsUsed)} / ${number.format(props.quota)}` },
   ];
 
   return <div className="ws-overview-overview" data-testid="workspace-clean-overview">

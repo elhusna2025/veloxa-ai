@@ -149,7 +149,7 @@ function WorkspaceDetail({ data, pause, openSettings }: { data: AdminWorkspaceDe
     <Panel title={workspace.name}>
       <p className={styles.description}><bdi>{workspace.id}</bdi> · {workspace.plan} · {workspace.onboarded ? 'Onboarding selesai' : 'Onboarding belum selesai'}</p>
       <dl className={styles.quota}>
-        <div><dt>Kuota publikasi bulanan</dt><dd>{number.format(Math.max(0, publication.limit - publication.used))} tersisa</dd><small>{publication.used} dari {publication.limit} terpakai atau dicadangkan · {publication.month} WIB</small></div>
+        <div><dt>Kuota publikasi bulanan</dt><dd>{publication.limit === null ? 'Tanpa batas' : number.format(Math.max(0, publication.limit - publication.used)) + ' tersisa'}</dd><small>{publication.used}{publication.limit === null ? '' : ' dari ' + publication.limit} terpakai atau dicadangkan · {publication.month} WIB</small></div>
         {publication.dailyUsed !== undefined && publication.dailyLimit !== undefined && <div>
           <dt>Kuota publikasi harian</dt><dd>{publication.dailyLimit === null ? 'Tanpa batas harian' : number.format(Math.max(0, publication.dailyLimit - publication.dailyUsed)) + ' tersisa'}</dd>
           <small>{publication.dailyUsed}{publication.dailyLimit === null ? '' : ' dari ' + publication.dailyLimit} terpakai atau dicadangkan · {publication.day} WIB</small>

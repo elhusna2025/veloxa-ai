@@ -21,7 +21,7 @@ export type WorkspaceTab = typeof WORKSPACE_NAVIGATION[number]['id'];
 
 interface Props {
   children: ReactNode; activeTab: WorkspaceTab; brandName: string; planName: string;
-  email: string; used: number; quota: number; locale: VeloxaLocale;
+  email: string; used: number; quota: number | null; locale: VeloxaLocale;
   onNavigate: (tab: WorkspaceTab) => void; onConnections: () => void; onCreate: () => void;
   onBilling: () => void; onAccount: () => void; onSignOut: () => void; onSync: () => void;
   onLocale: (locale: VeloxaLocale) => void; isSuperAdmin?: boolean; onAdmin: () => void;
@@ -32,7 +32,7 @@ export function VeloxaWorkspaceShell(props: Props) {
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'auto' }); }, [props.activeTab]);
   const { t } = useWorkspaceCopy(workspaceCatalog);
   const selected = WORKSPACE_NAVIGATION.find(item => item.id === props.activeTab)!;
-  const quotaPercent = Math.min(100, Math.max(0, props.used / Math.max(1, props.quota) * 100));
+  const quotaPercent = props.quota === null ? 0 : Math.min(100, Math.max(0, props.used / Math.max(1, props.quota) * 100));
   const number = new Intl.NumberFormat(props.locale);
   return <div className="veloxa-workspace min-h-dvh" data-testid="user-workspace-dashboard">
     <VeloxaWorkspaceSidebar label={t('Sidebar Navigasi Workspace')} testId="user-workspace-sidebar">
@@ -47,8 +47,8 @@ export function VeloxaWorkspaceShell(props: Props) {
       <div className="mt-4 border-t border-[var(--ws-border)] pt-3"><VeloxaSidebarButton data-testid="header-connect-social-btn" onClick={props.onConnections}><Link2 size={19} strokeWidth={1.7} aria-hidden="true"/>{t('Akun sosial')}</VeloxaSidebarButton></div>
       <div className="mt-auto pt-6"><div className={`${styles.plan} rounded-xl border p-4`}>
         <p className="break-words text-sm font-semibold">{t(props.planName)}</p>
-        <p className="mt-1 text-sm text-[var(--ws-muted)]">{t('{used} dari {quota} publikasi', { used: number.format(props.used), quota: number.format(props.quota) })}</p>
-        {props.quota > 0 && <div role="progressbar" aria-label={t('Kuota publikasi terpakai')} aria-valuemin={0} aria-valuemax={props.quota} aria-valuenow={Math.min(props.used, props.quota)} className="mt-2 h-1.5 overflow-hidden rounded bg-[var(--ws-border)]"><div className="h-full rounded bg-[var(--ws-action)]" style={{width: `${quotaPercent}%`}}/></div>}
+        <p className="mt-1 text-sm text-[var(--ws-muted)]">{props.quota === null ? t('Publikasi tanpa batas') : t('{used} dari {quota} publikasi', { used: number.format(props.used), quota: number.format(props.quota) })}</p>
+        {props.quota !== null && props.quota > 0 && <div role="progressbar" aria-label={t('Kuota publikasi terpakai')} aria-valuemin={0} aria-valuemax={props.quota} aria-valuenow={Math.min(props.used, props.quota)} className="mt-2 h-1.5 overflow-hidden rounded bg-[var(--ws-border)]"><div className="h-full rounded bg-[var(--ws-action)]" style={{width: `${quotaPercent}%`}}/></div>}
         <button type="button" onClick={props.onBilling} className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-[var(--ws-action)]">{t('Lihat paket')} <ChevronRight size={15} aria-hidden="true"/></button>
       </div>{props.isSuperAdmin && <button type="button" onClick={props.onAdmin} className="mt-4 w-full text-sm text-[var(--ws-muted)]">{t('Kembali ke Super Admin')}</button>}</div>
     </VeloxaWorkspaceSidebar>

@@ -733,7 +733,7 @@ export default function VeloxaAiPlatformPage() {
             <VeloxaWorkspaceShell
               activeTab={activeTab} brandName={brand.businessName} planName={currentPlan.name}
               email={authUser.email}
-              used={postsUsedThisMonth} quota={publicationQuota?.limit ?? currentPlan.monthlyPostQuota} locale={locale}
+              used={postsUsedThisMonth} quota={publicationQuota ? publicationQuota.limit : currentPlan.monthlyPostQuota} locale={locale}
               onNavigate={navigateWorkspace} onCreate={() => navigateWorkspace('studio')}
               onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
               onBilling={() => setBillingOpen(true)}
@@ -751,7 +751,7 @@ export default function VeloxaAiPlatformPage() {
                 <VeloxaWorkspaceOverview
                   brand={brand}
                   postsUsed={postsUsedThisMonth}
-                  quota={publicationQuota?.limit ?? currentPlan.monthlyPostQuota}
+                  quota={publicationQuota ? publicationQuota.limit : currentPlan.monthlyPostQuota}
                   dailyPublicationQuota={publicationQuota && publicationQuota.dailyLimit !== null ? { used: publicationQuota.dailyUsed, limit: publicationQuota.dailyLimit } : undefined}
                   connections={activeConnections}
                   connectionsVerified={connectionsVerified && businessesReady}

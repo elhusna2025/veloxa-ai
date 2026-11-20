@@ -14,3 +14,14 @@ test('an unverified connection check is distinct from a verified empty or connec
  const stale=render(false,[known]);assert.match(stale,/@lastknown/);assert.match(stale,/Status tersimpan, belum diperbarui/);assert.doesNotMatch(stale,connectedLabel);
  assert.match(render(true,[known]),connectedLabel);
 });
+
+test('workspace overview shows unlimited publishing without a fictitious remaining quota', () => {
+ const render = (quota: number | null) => renderToStaticMarkup(createElement(VeloxaWorkspaceOverview, {
+  brand: BRAND_PRESETS.cafe_fnb, quota, postsUsed: 25, drafts: [], connections: [], connectionsVerified: true,
+  onCreateContent:()=>{}, onEditProfile:()=>{}, onConnections:()=>{}, onStudio:()=>{},
+ }));
+ const unlimited = render(null);
+ assert.match(unlimited, /Tanpa batas/);
+ assert.doesNotMatch(unlimited, /25 \/ 20|25 \/ 0|null|NaN/);
+ assert.match(render(30), /25 \/ 30/);
+});

@@ -49,7 +49,7 @@ export interface AdminWorkspacePage { items: AdminWorkspace[]; cursor: string | 
 export interface AdminPauseAudit { id: string; actor: string; reason: string; at: number; businessName: string; processing: boolean }
 export interface AdminWorkspaceDetail {
   workspace: AdminWorkspace;
-  publication: { used: number; limit: number; month: string; day?: string; dailyUsed?: number; dailyLimit?: number | null };
+  publication: { used: number; limit: number | null; month: string; day?: string; dailyUsed?: number; dailyLimit?: number | null };
   generation: GenerationQuota;
   businesses: { id: string; name: string; accounts: { id: string; label: string; channel: string; ready: boolean }[]; rule: AdminRule | null }[];
   unassigned: AdminWorkspaceDetail['businesses'][number]['accounts'];

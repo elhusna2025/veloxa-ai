@@ -77,7 +77,7 @@ export function VeloxaAdminBilling({ request = veloxaApi }: { request?: typeof v
         <h2>{SUBSCRIPTION_PLANS[detail.workspace.planId].name}</h2>
         <p className={styles.meta}>{billingStates[detail.workspace.state]}{detail.workspace.paidUntil && ` · Hingga ${formatBillingDate(detail.workspace.paidUntil)}`}</p>
         <dl className={styles.quota}>
-          <div><dt>Publikasi bulan ini</dt><dd>{detail.publication.used} / {detail.publication.limit}</dd></div>
+          <div><dt>Publikasi bulan ini</dt><dd>{detail.publication.limit === null ? `Tanpa batas · ${detail.publication.used} terpakai` : `${detail.publication.used} / ${detail.publication.limit}`}</dd></div>
           <div><dt>Pembuatan draf hari ini</dt><dd>{detail.generation.used} / {detail.generation.dailyLimit ?? 'Tanpa batas'}</dd></div>
         </dl>
       </div>

@@ -87,9 +87,10 @@ async function workspaceBilling(ref: DocumentReference, workspace: Record<string
       const invoice = invoiceSchema.safeParse(doc.data());
       return invoice.success && invoice.data.workspaceId === ref.id ? [projectInvoice(doc.id, invoice.data, canPay || !actorUid ? config : null, now, canPay)] : [];
     }),
-    plans: (Object.keys(SUBSCRIPTION_PLANS) as SubscriptionPlanId[]).map(id => ({
-      id, publicationLimit: resolveAdminQuota(id, globalPolicy.data(), workspacePolicy.data()).monthlyPublicationLimit ?? SUBSCRIPTION_PLANS[id].monthlyPostQuota,
-    })),
+    plans: (Object.keys(SUBSCRIPTION_PLANS) as SubscriptionPlanId[]).map(id => {
+      const override = resolveAdminQuota(id, globalPolicy.data(), workspacePolicy.data()).monthlyPublicationLimit;
+      return { id, publicationLimit: override !== undefined ? override : SUBSCRIPTION_PLANS[id].monthlyPostQuota };
+    }),
   };
 }
 

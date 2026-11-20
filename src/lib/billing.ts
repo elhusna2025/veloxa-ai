@@ -35,7 +35,7 @@ export interface WorkspaceBilling {
   canPay: boolean;
   invoices: BillingInvoice[];
   checkoutPending: boolean;
-  plans: Array<{ id: SubscriptionPlanId; publicationLimit: number }>;
+  plans: Array<{ id: SubscriptionPlanId; publicationLimit: number | null }>;
   publication: PublicationQuota;
   generation: GenerationQuota;
 }

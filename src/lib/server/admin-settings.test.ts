@@ -20,6 +20,13 @@ test('settings authentication runs before any storage access and rejects mixed r
   await assert.rejects(updateAdminSettings(patch({ expectedRevision: 0, models: {} }), { authorize: member }), status(403));
   await assert.rejects(updateAdminSettings(patch({ expectedRevision: 1, restoreRevision: 0, models: {} }), { authorize }), { name: 'ZodError' });
   await assert.rejects(updateAdminSettings(patch({ expectedRevision: 0, workspaceId: 'ws', quota: { dailyDraftLimit: -1 } }), { authorize }), { name: 'ZodError' });
+  await assert.rejects(updateAdminSettings(patch({ expectedRevision: 0, plans: [{ id: 'free_trial', dailyDraftLimit: 6, monthlyPublicationLimit: null, dailyPublicationLimit: null }] }), { authorize }), { name: 'ZodError' });
+  for (const key of ['monthlyPublicationLimit', 'dailyPublicationLimit']) {
+    for (const invalid of ['unlimited', -1, 1.5, 1_000_001]) {
+      await assert.rejects(updateAdminSettings(patch({ expectedRevision: 0, workspaceId: 'ws', quota: { [key]: invalid } }), { authorize }), { name: 'ZodError' });
+    }
+  }
+  await assert.rejects(updateAdminSettings(patch({ expectedRevision: 0, quota: { monthlyPublicationLimit: null } }), { authorize }), { name: 'ZodError' });
 });
 
 test('quota overrides honor scope, explicit zero, and an unlimited draft workspace', () => {
@@ -29,6 +36,60 @@ test('quota overrides honor scope, explicit zero, and an unlimited draft workspa
   });
   assert.deepEqual(resolveAdminQuota('starter_500k', plan), {});
   assert.deepEqual(resolveAdminQuota('free_trial', undefined, { quota: { dailyDraftLimit: 'unlimited' } }), {});
+  assert.deepEqual(resolveAdminQuota('free_trial', plan, { quota: { monthlyPublicationLimit: null, dailyPublicationLimit: null } }), {
+    dailyDraftLimit: 8, monthlyPublicationLimit: null, dailyPublicationLimit: null,
+  });
+  assert.deepEqual(resolveAdminQuota('free_trial', plan, { quota: { monthlyPublicationLimit: 0, dailyPublicationLimit: 0 } }), {
+    dailyDraftLimit: 8, monthlyPublicationLimit: 0, dailyPublicationLimit: 0,
+  });
+  assert.deepEqual(resolveAdminQuota('free_trial', { plans: { free_trial: { dailyDraftLimit: 8, monthlyPublicationLimit: null, dailyPublicationLimit: null } } }), {}, 'global monthly publication limits must stay finite');
+});
+
+test('workspace publication null is returned as unlimited, scoped and audited without resetting usage', async () => {
+  const values = new Map<string, Record<string, any>>([
+    ['private_admin_settings/global', { plans: { free_trial: { dailyDraftLimit: 8, monthlyPublicationLimit: 30, dailyPublicationLimit: 4 } } }],
+    ['workspaces/ws', { name: 'Target', subscriptionPlanId: 'free_trial' }],
+    ['workspaces/other', { name: 'Other', subscriptionPlanId: 'free_trial' }],
+    ['workspaces/ws/publish_usage/2026-11', { count: 50 }],
+    ['workspaces/ws/publish_daily_usage/2026-11-20', { count: 10 }],
+  ]);
+  const snapshot = (path: string) => ({ id: path.split('/').at(-1), exists: values.has(path), data: () => values.get(path), get: (key: string) => values.get(path)?.[key] });
+  const collection = (path: string): any => ({
+    doc: (id: string) => document(`${path}/${id}`),
+    orderBy: () => ({ startAt: () => ({ limit: () => ({ get: async () => ({ docs: [...values.keys()]
+      .filter(key => key.startsWith(path + '/') && !key.slice(path.length + 1).includes('/')).map(snapshot) }) }) }) }),
+  });
+  const document = (path: string): any => ({ path, get: async () => snapshot(path), collection: (name: string) => collection(`${path}/${name}`) });
+  const database = {
+    collection,
+    runTransaction: async (action: (tx: any) => Promise<unknown>) => action({
+      get: (ref: any) => ref.get(), set: (ref: any, data: any) => values.set(ref.path, structuredClone(data)),
+      create: (ref: any, data: any) => { assert.equal(values.has(ref.path), false); values.set(ref.path, structuredClone(data)); },
+    }),
+  };
+  const deps = { authorize, database: database as never };
+  const globalBefore = structuredClone(values.get('private_admin_settings/global'));
+  assert.deepEqual(await updateAdminSettings(patch({ workspaceId: 'ws', expectedRevision: 0,
+    quota: { monthlyPublicationLimit: null, dailyPublicationLimit: null } }), deps), { revision: 1 });
+  const unlimited = await getAdminSettings(new Request(url + '?workspaceId=ws'), deps);
+  assert.equal(unlimited.scope, 'workspace');
+  assert.deepEqual(unlimited.quota, { monthlyPublicationLimit: null, dailyPublicationLimit: null });
+  assert.deepEqual(unlimited.effectiveQuota, { dailyDraftLimit: 8, monthlyPublicationLimit: null, dailyPublicationLimit: null });
+  assert.ok(unlimited.audit[0]?.changes?.includes('Publikasi bulanan · Ikuti paket → Tanpa batas'));
+  const other = await getAdminSettings(new Request(url + '?workspaceId=other'), deps);
+  assert.equal(other.scope, 'workspace');
+  assert.deepEqual(other.effectiveQuota, { dailyDraftLimit: 8, monthlyPublicationLimit: 30, dailyPublicationLimit: 4 });
+  await updateAdminSettings(patch({ workspaceId: 'ws', expectedRevision: 1, quota: {} }), deps);
+  const inherited = await getAdminSettings(new Request(url + '?workspaceId=ws'), deps);
+  assert.equal(inherited.scope, 'workspace');
+  assert.deepEqual(inherited.effectiveQuota, other.effectiveQuota);
+  await updateAdminSettings(patch({ workspaceId: 'ws', expectedRevision: 2, restoreRevision: 1 }), deps);
+  const restored = await getAdminSettings(new Request(url + '?workspaceId=ws'), deps);
+  assert.equal(restored.scope, 'workspace');
+  assert.deepEqual(restored.effectiveQuota, unlimited.effectiveQuota);
+  assert.equal(values.get('workspaces/ws/publish_usage/2026-11')?.count, 50);
+  assert.equal(values.get('workspaces/ws/publish_daily_usage/2026-11-20')?.count, 10);
+  assert.deepEqual(values.get('private_admin_settings/global'), globalBefore);
 });
 
 test('settings revisions are scoped, audited, concurrency-safe and restorable without changing usage', {

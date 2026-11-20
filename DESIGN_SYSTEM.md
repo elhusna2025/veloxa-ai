@@ -122,6 +122,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Di Studio, pemulihan otomatis melanjutkan sesi naskah dan memakai kembali gambar yang berhasil pada operasi yang sama. Kuota draf dihitung sekali untuk operasi tersebut. Bila pemulihan masih berjalan, pertahankan status proses dan tombol sibuk; tampilkan draf selesai setelah seluruh media tersimpan.
 - Untuk publikasi otomatis, tampilkan akun, bahan, format, hari/jam WIB, dan ringkasan sebelum aktivasi. Simpan aturan tidak mengaktifkannya. Status Sedang menjeda berbeda dari sudah dijeda.
 - Jadwal otomatis mendukung hingga lima slot per hari dalam WIB, berjarak minimal 15 menit. Format berputar sesuai urutan pilihan dan berlanjut ke hari berikutnya.
+- Pengguna dapat memilih agar aturan mengikuti pembaruan profil untuk slot berikutnya. Konten yang masih memakai profil lama tidak dikirim; perubahan akun, pemilik, dan aset tetap diperiksa.
 - Aktivitas otomatis membedakan konten yang akan diperbaiki, pengiriman yang akan dicoba lagi, dan hasil yang perlu diperiksa. Tampilkan waktu percobaan berikutnya dalam WIB saat sudah dijadwalkan. Tandai terbit hanya setelah kanal mengonfirmasi.
 
 ## Aksesibilitas dan responsivitas
@@ -146,4 +147,5 @@ Layar harus berfungsi pada lebar 390 px dan desktop tanpa overflow halaman. Kart
 - Gunakan kartu ringkas dan daftar yang dapat dibuka untuk hasil per akun; susun satu kolom di ponsel. Status selalu memiliki label teks. Kuota publikasi bulanan dipisahkan dari percobaan pembuatan draf harian.
 - Menjeda satu aturan meminta alasan, membedakan proses yang masih berjalan, dan tidak menjadi tindakan untuk mengirim ulang konten. Simpan jejak tindakan di server.
 - Pengaturan model dan kuota selalu menampilkan cakupannya, seluruh platform atau workspace tertentu. Tampilkan nilai yang diwariskan, kuota efektif, serta perubahan yang belum disimpan.
+- Kuota khusus workspace dapat memakai Tanpa batas untuk publikasi harian dan bulanan. Tampilkan status tersebut di workspace tanpa angka sisa atau progress bar kuota; riwayat pemakaian tetap tercatat.
 - Tinjau perubahan beserta cakupan dan alasan sebelum menyimpan. Pemulihan memakai revisi baru dan dicatat bersama waktu, pelaku, dan revisi sumber.

@@ -7,7 +7,7 @@ import { ApiError } from './http';
 export interface PublicationQuota {
   month: string;
   used: number;
-  limit: number;
+  limit: number | null;
   day: string;
   dailyUsed: number;
   dailyLimit: number | null;
@@ -36,13 +36,13 @@ export async function readPublicationQuota(ref: Ref, planId: SubscriptionPlanId,
     : await Promise.all(refs.map(document => document.get()));
   const settings = resolveAdminQuota(planId, plan.data(), workspace.data());
   return {
-    month, used: count(monthly.data()?.count), limit: settings.monthlyPublicationLimit ?? SUBSCRIPTION_PLANS[planId].monthlyPostQuota,
+    month, used: count(monthly.data()?.count), limit: settings.monthlyPublicationLimit !== undefined ? settings.monthlyPublicationLimit : SUBSCRIPTION_PLANS[planId].monthlyPostQuota,
     day, dailyUsed: count(daily.data()?.count), dailyLimit: settings.dailyPublicationLimit ?? null,
   };
 }
 
 export function assertPublicationCapacity(quota: PublicationQuota) {
-  if (quota.used >= quota.limit) throw new ApiError(429, 'Kuota publikasi bulan ini habis.', 'quota_exhausted');
+  if (quota.limit !== null && quota.used >= quota.limit) throw new ApiError(429, 'Kuota publikasi bulan ini habis.', 'quota_exhausted');
   if (quota.dailyLimit !== null && quota.dailyUsed >= quota.dailyLimit) {
     throw new ApiError(429, 'Kuota publikasi hari ini habis. Coba lagi besok.', 'daily_publication_quota_exhausted');
   }
