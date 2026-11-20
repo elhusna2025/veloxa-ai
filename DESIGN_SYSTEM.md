@@ -121,6 +121,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Hasil jaringan yang belum pasti tidak boleh memicu generasi atau kiriman ganda. Tawarkan pemeriksaan hasil proses yang sama.
 - Di Studio, pemulihan otomatis melanjutkan sesi naskah dan memakai kembali gambar yang berhasil pada operasi yang sama. Kuota draf dihitung sekali untuk operasi tersebut. Bila pemulihan masih berjalan, pertahankan status proses dan tombol sibuk; tampilkan draf selesai setelah seluruh media tersimpan.
 - Untuk publikasi otomatis, tampilkan akun, bahan, format, hari/jam WIB, dan ringkasan sebelum aktivasi. Simpan aturan tidak mengaktifkannya. Status Sedang menjeda berbeda dari sudah dijeda.
+- Jadwal otomatis mendukung hingga lima slot per hari dalam WIB, berjarak minimal 15 menit. Format berputar sesuai urutan pilihan dan berlanjut ke hari berikutnya.
 - Aktivitas otomatis membedakan konten yang akan diperbaiki, pengiriman yang akan dicoba lagi, dan hasil yang perlu diperiksa. Tampilkan waktu percobaan berikutnya dalam WIB saat sudah dijadwalkan. Tandai terbit hanya setelah kanal mengonfirmasi.
 
 ## Aksesibilitas dan responsivitas
