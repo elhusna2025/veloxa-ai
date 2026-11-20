@@ -42,11 +42,12 @@ export function studioGenerationCheckpoint(
         throw new ApiError(503, 'Identitas proses naskah perlu diperiksa sebelum dilanjutkan.', 'content_agent_creation_uncertain');
       }
       await assertLease();
-      await updateJob({ scriptKey: key, scriptCreationStarted: true });
+      await updateJob({ scriptKey: key });
       const result = await (providers.generate ?? generateContentWithSavedAgent)(params, {
         ...options,
         checkpoint: {
           load: async () => (await job.get()).data()?.agentSession ?? null,
+          beginCreation: async () => { await assertLease(); await updateJob({ scriptCreationStarted: true }); },
           save: async value => { await updateJob({ agentSession: value }); },
         },
       });

@@ -40,10 +40,6 @@ function frozenTargets(stored:Data|undefined,workspaceId:string,draftId:string,b
  try{return{draft,targets:storedAccountTargets(stored,draft)};}catch{return null;}
 }
 
-function canResumeSlot(job:Data,rule:Data,now:number){
- return Number.isFinite(job.scheduledAt)&&now<job.scheduledAt+30*60_000&&(rule.nextSlotMs===null||now<rule.nextSlotMs);
-}
-
 /** A stopped worker can continue only if every final send has a durable receipt or evidence fence. */
 export async function recoverInterruptedPublication(tx:Tx,workspace:Ref,ruleRef:Ref,slotRef:Ref,rule:Data,slot:Data,now:number){
  const context:AutonomyDispatchContext={workspaceId:workspace.id,ruleId:ruleRef.id,jobId:slotRef.id,draftId:slot.draftId,revision:slot.ruleRevision,run:rule.processingRun};
@@ -67,9 +63,9 @@ export async function recoverInterruptedPublication(tx:Tx,workspace:Ref,ruleRef:
  const frozen=frozenTargets(draftSnapshot.data(),workspace.id,context.draftId,rule.businessId);
  if(!frozen)return false;
  // No ledger means publication had not yet reserved quota or reached a provider.
- if(!ledger&&canResumeSlot(slot,rule,now)){
+ if(!ledger){
   tx.update(slotRef,{state:'queued',error:'',retryAt:null,finishedAt:null});
-  tx.update(ruleRef,{...processingReset,pendingJob:slotRef.id,nextDueMs:now,lastError:''});
+  tx.update(ruleRef,{...processingReset,pendingJob:slotRef.id,nextDueMs:now,lastError:'',deferredByRecovery:rule.deferredByRecovery===true||typeof rule.nextSlotMs==='number'&&rule.nextSlotMs<=now});
   return true;
  }
  if(!ledger?.quotaReserved||ledger.autonomyRun!==context.run||!['processing','queued'].includes(ledger.state))return false;
@@ -78,15 +74,6 @@ export async function recoverInterruptedPublication(tx:Tx,workspace:Ref,ruleRef:
  if(!Array.isArray(ledger.remainingTargets)||ledger.remainingTargets.some((id:unknown)=>!frozen.targets.some(target=>target.connectionId===id)))return false;
  const remaining=frozen.targets.filter(target=>!receipts.some(receipt=>receipt.connectionId===target.connectionId&&receipt.status==='published')&&
   (ledger.remainingTargets.includes(target.connectionId)||!receipts.some(receipt=>receipt.connectionId===target.connectionId)));
- if(remaining.length&&!canResumeSlot(slot,rule,now)){
-  if(ownsGuard)tx.delete(guardRef);
-  // Safe to resume from Studio, but the autonomous authorization for this slot has expired.
-  tx.update(ledgerRef,{state:'queued',remainingTargets:remaining.map(target=>target.connectionId),completedAt:null});
-  tx.update(draftRef,{draft:draftPublicationResult(frozen.draft,frozen.targets,receipts,'publish_queued',new Date(now))});
-  tx.update(slotRef,{state:'failed',receipts,error:'Waktu untuk melanjutkan slot sudah habis.',retryAt:null,finishedAt:now});
-  tx.update(ruleRef,{...processingReset,pendingJob:null,nextDueMs:rule.nextSlotMs,...(rule.nextSlotMs===null?{enabled:false,revision:rule.revision+1}:{})});
-  return true;
- }
  const state=remaining.length?'publish_queued':publicationState(receipts);
  if(state==='publish_failed'){
   await releasePublicationUsage(tx,workspace,ledger,new Date(now));
@@ -103,6 +90,7 @@ export async function recoverInterruptedPublication(tx:Tx,workspace:Ref,ruleRef:
  tx.update(slotRef,{state:remaining.length?'queued':state==='published'?'published':'failed',receipts,error:'',retryAt:null,finishedAt:remaining.length?null:now});
  tx.update(ruleRef,{
   ...processingReset,pendingJob:remaining.length?slotRef.id:null,nextDueMs:remaining.length?now:rule.nextSlotMs,lastError:'',
+  ...(remaining.length&&(rule.deferredByRecovery===true||typeof rule.nextSlotMs==='number'&&rule.nextSlotMs<=now)?{deferredByRecovery:true}:{}),
   ...(!remaining.length&&rule.nextSlotMs===null?{enabled:false,revision:rule.revision+1}:{}),
  });
  return true;
@@ -236,7 +224,7 @@ export async function reconcileAutonomyPublication(ref:Ref,now:number,deps:Looku
   };
   const receipts=[...existing.filter(receipt=>receipt.connectionId!==targetId),confirmedReceipt];
   const remaining=frozen.targets.filter(item=>!receipts.some(receipt=>receipt.connectionId===item.connectionId));
-  const resumeBatch=remaining.length>0&&mayContinue&&canResumeSlot(slotData,ruleData,now);
+  const resumeBatch=remaining.length>0&&mayContinue;
   const state=remaining.length?'publish_queued':publicationState(receipts);
   const slotState=resumeBatch?'queued':remaining.length?'cancelled':state==='published'?'published':'failed';
   tx.update(ledger,{
@@ -256,6 +244,7 @@ export async function reconcileAutonomyPublication(ref:Ref,now:number,deps:Looku
     ...(mayContinue?{
      pendingJob:resumeBatch?slot.id:null,lastError:'',enabled:resumeBatch||hasFuture,
      nextDueMs:resumeBatch?now:ruleData.nextSlotMs,
+     ...(resumeBatch&&(ruleData.deferredByRecovery===true||typeof ruleData.nextSlotMs==='number'&&ruleData.nextSlotMs<=now)?{deferredByRecovery:true}:{}),
      ...(!resumeBatch&&!hasFuture?{revision:ruleData.revision+1}:{}),
     }:{}),
    });

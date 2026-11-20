@@ -4,7 +4,7 @@ import {adminDb} from './firebase';
 import type {requireWorkspace} from './auth';
 import {ApiError} from './http';
 import {isWorkspacePhoto} from './brand-assets';
-import {assetBusiness} from '../business-context';
+import {assetBusiness,draftBusiness} from '../business-context';
 import {resolveBusinessContext} from './business-contexts';
 import {profileFingerprint} from '../profile-fingerprint';
 import {autonomyConfigSchema,autonomyContentInput,nextConfiguredAutonomySlot,validateAutonomySource,type AutoContentConfig} from '../autonomy-rules';
@@ -21,11 +21,13 @@ import {effectiveWorkspacePlan} from '../subscription';
 import {assertPublicationCapacity,readPublicationQuota} from './publication-quota';
 import {runAutonomySchedulerTick} from './autonomy-scheduler';
 import {sweepExpiredReelsCheckpoints} from './scheduled-reels-checkpoint';
+import {sweepExpiredScheduledCheckpoints} from './scheduled-generation-checkpoint';
 import {assertNoAutonomyDispatch,createAutonomyDispatch,dispatchGuard,isDispatchFor,persistAutonomyReceipt,type AutonomyDispatchContext} from './autonomy-dispatch';
 import {reconcileDueAutonomyPublications,recoverInterruptedPublication} from './autonomy-publication-reconcile';
 type Database=ReturnType<typeof adminDb>;
 type RuleRef=FirebaseFirestore.DocumentReference;
 interface Dependencies{database?:Database;create?:typeof createSocialContent;publish?:typeof publishSocialContent;now?:()=>number}
+const crossedNextSlot=(rule:FirebaseFirestore.DocumentData,at:number)=>typeof rule.nextSlotMs==='number'&&rule.nextSlotMs<=at;
 async function currentRuleProfile(tx:FirebaseFirestore.Transaction,ref:RuleRef,rule:FirebaseFirestore.DocumentData,config:AutoContentConfig,at:number){
  const ws=(await tx.get(ref)).data();
  if(!ws||ws.ownerUid!==rule.ownerUid)throw new ApiError(409,'Pemilik workspace berubah. Tinjau ulang aturan otomatis.');
@@ -64,6 +66,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
  const newDraftKey=`draft_${randomUUID()}`;
  const reset={processingJob:null,processingRun:null,processingUntil:0};
  let jobRef:RuleRef|undefined;let revision=initial.revision;let claimed=false;let generating=false;
+ let progressWrites=Promise.resolve();
  let dispatchContext:AutonomyDispatchContext|undefined;let profileChangedDuringRun=false;
  try{
   const claim=await db.runTransaction(async tx=>{
@@ -78,13 +81,12 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     }
     // Only jobs with a fenced, atomic draft save are safe to recover after a worker crash.
     if(raw.processingRun&&job&&job.ruleRevision===raw.revision&&job.draftKey&&(job.state==='generating'||job.state==='prepared'&&job.draftId===job.draftKey)){
-     const deadline=Math.min(job.scheduledAt+30*60_000,raw.nextSlotMs??Infinity);
      const prepared=job.state==='prepared';
      const recoveryKind=job.reelsArtworkRecovery?'reels_artwork':'generation';
-     const retryAt=prepared?(now()<deadline?now():null):recoveryTime(recoveryKind,job.generationAttempts,job.scheduledAt,now(),raw.nextSlotMs);
+     const retryAt=prepared?now():recoveryTime(recoveryKind,job.generationAttempts,job.scheduledAt,now(),raw.nextSlotMs);
      if(retryAt!==null){
       tx.update(interrupted,{state:prepared?'queued':'retry_generation',error:prepared?'':'Pembuatan konten terputus. Veloxa akan mencoba slot ini lagi.',retryAt:prepared?null:retryAt});
-      tx.update(ruleRef,{...reset,pendingJob:interrupted.id,nextDueMs:retryAt});
+      tx.update(ruleRef,{...reset,pendingJob:interrupted.id,nextDueMs:retryAt,deferredByRecovery:raw.deferredByRecovery===true||crossedNextSlot(raw,now())});
      }else{
       tx.update(interrupted,{state:'failed',retryAt:null,finishedAt:now(),error:'Waktu pemulihan slot ini sudah habis. Periksa aktivitas untuk melihat hasilnya.'});
       tx.update(ruleRef,{...reset,pendingJob:null,nextDueMs:raw.nextSlotMs,...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1,lastError:'Waktu pemulihan slot terakhir sudah habis.'}:{})});
@@ -107,7 +109,10 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const id=pending||'slot_'+slot;
    const job=ruleRef.collection('jobs').doc(id);
    const previous=(await tx.get(job)).data();
-   const future=nextConfiguredAutonomySlot(config,now());
+   // Only slots blocked by an earlier repair may catch up, one claim per tick.
+   const deferredSlot=!pending&&raw.deferredByRecovery===true;
+   const future=nextConfiguredAutonomySlot(config,deferredSlot?slot:now());
+   const deferredByRecovery=deferredSlot&&future!==null&&future<=now();
    if(profileChanged&&pending){
     if(!previous||previous.ruleRevision!==raw.revision||!['retry_generation','queued','retry_publication'].includes(previous.state))throw new ApiError(409,'Antrean publikasi perlu diperiksa; tidak dikirim ulang otomatis.');
     const ledger=typeof previous.draftId==='string'?(await tx.get(ref.collection('publish_jobs').doc(previous.draftId))).data():undefined;
@@ -123,7 +128,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     catch(error) {
      if(!(error instanceof ApiError)||error.code!=='daily_publication_quota_exhausted')throw error;
      tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:error.message});
-     tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});
+     tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,deferredByRecovery,...(future===null?{enabled:false,revision:raw.revision+1}:{})});
      return 'skipped' as const;
     }
     if(config.connectionIds.some(id=>!SUBSCRIPTION_PLANS[planId].allowedChannels.includes(accounts.find(account=>account.connectionId===id)!.channel)))throw new ApiError(403,'Kanal tujuan tidak tersedia dalam paket workspace.');
@@ -133,35 +138,36 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    if(pending){
     const validJob=!!previous&&previous.ruleRevision===raw.revision&&(retryGeneration?!previous.draftId&&Number.isSafeInteger(previous.contentSequence):(retryPublication||previous.state==='queued')&&!!previous.draftId);
     if(!validJob)throw new ApiError(409,'Antrean publikasi perlu diperiksa; tidak dikirim ulang otomatis.');
-    if((retryGeneration||retryPublication)&&(now()>=previous!.scheduledAt+30*60_000||raw.nextSlotMs!==null&&now()>=raw.nextSlotMs)){
-     tx.update(job,{state:'failed',retryAt:null,finishedAt:now(),error:'Waktu pemulihan slot ini sudah habis. Periksa aktivitas untuk melihat hasilnya.'});
-     tx.update(ruleRef,{pendingJob:null,nextDueMs:raw.nextSlotMs,...(raw.nextSlotMs===null?{enabled:false,revision:raw.revision+1,lastError:'Waktu pemulihan slot terakhir sudah habis.'}:{})});
-     return null;
+    if(retryGeneration){
+     const ledger=typeof previous!.draftKey==='string'?(await tx.get(ref.collection('publish_jobs').doc(previous!.draftKey))).data():undefined;
+     if(ledger||previous!.receipts?.some((receipt:{status:string})=>['published','unknown'].includes(receipt.status)))throw new ApiError(409,'Hasil pengiriman perlu diperiksa sebelum melanjutkan.','delivery_unknown');
     }
    }
    else if(previous)throw new ApiError(409,'Slot ini sudah pernah diproses. Periksa aktivitas sebelum mengulang.');
    const sequence=raw.sequence||0;
    const contentSequence=retryGeneration?previous!.contentSequence:sequence;
-   const input=autonomyContentInput(config,context.brand,contentSequence,raw.recentTitles||[]);
+   const input=(retryGeneration&&previous!.generationInput?previous!.generationInput:autonomyContentInput(config,context.brand,contentSequence,raw.recentTitles||[])) as ReturnType<typeof autonomyContentInput>;
+   if(input.workspaceId!==ref.id||input.businessId!==raw.businessId)throw new ApiError(409,'Identitas pembuatan konten berubah. Tinjau ulang aturan otomatis.');
    const explicitTopic=config.sourceMode==='topics'?config.topics[contentSequence%config.topics.length]:undefined;
-   if(!pending&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});return null;}
+   if(!pending&&!deferredSlot&&now()-slot>30*60000){tx.create(job,{state:'skipped',scheduledAt:slot,createdAt:now(),error:'Slot terlewat lebih dari 30 menit; tidak menerbitkan konten susulan.'});tx.update(ruleRef,{nextSlotMs:future,nextDueMs:future,...(future===null?{enabled:false,revision:raw.revision+1}:{})});return null;}
    const generationAttempts=retryGeneration?(previous!.generationAttempts||1)+1:previous?.generationAttempts||1;
    const publicationAttempts=retryPublication?(previous!.publicationAttempts||1)+1:previous?.publicationAttempts||1;
    const scheduledAt=(previous?.scheduledAt??slot) as number;
    const draftKey=previous?.draftKey as string|undefined||newDraftKey;
-   if(!pending)tx.create(job,{state:'generating',scheduledAt,createdAt:now(),ruleRevision:raw.revision,contentSequence:sequence,draftKey,generationAttempts,publicationAttempts,topic:input.topic,format:input.format,profileFingerprint:fingerprint});
-   else tx.update(job,{state:retryGeneration?'generating':'publishing',retryAt:null,error:'',generationAttempts,publicationAttempts});
+   if(!pending)tx.create(job,{state:'generating',stage:'validation',scheduledAt,createdAt:now(),updatedAt:now(),ruleRevision:raw.revision,contentSequence:sequence,draftKey,generationInput:input,generationAttempts,publicationAttempts,topic:input.topic,format:input.format,profileFingerprint:fingerprint});
+   else tx.update(job,{state:retryGeneration?'generating':'publishing',retryAt:null,error:'',generationAttempts,publicationAttempts,updatedAt:now(),...(retryGeneration&&!previous!.generationInput?{generationInput:input}:{})});
    const processingUntil=now()+6*60_000;
-   tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,profileFingerprint:fingerprint,...(!pending?{nextSlotMs:future,sequence:sequence+1}:{})});
+   tx.update(ruleRef,{processingJob:id,processingRun:executionId,processingUntil,pendingJob:null,nextDueMs:processingUntil,profileFingerprint:fingerprint,...(!pending?{nextSlotMs:future,sequence:sequence+1,deferredByRecovery}:retryGeneration||retryPublication?{deferredByRecovery:raw.deferredByRecovery===true||crossedNextSlot(raw,now())}:{})});
    const recoverScheduledReelsArtwork=retryGeneration&&input.format==='short_video'&&previous?.reelsArtworkRecovery
     ? (generationAttempts===2?'photo':'simplified') as 'photo'|'simplified' : undefined;
-   return{raw:{...raw,profileFingerprint:fingerprint} as FirebaseFirestore.DocumentData,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork,explicitTopic};
+   return{raw:{...raw,profileFingerprint:fingerprint} as FirebaseFirestore.DocumentData,config,ref,job,input,draftKey,pendingDraft:previous?.draftId as string|undefined,retryPublication,publicationAttempts,scheduledAt,recoverScheduledReelsArtwork,explicitTopic,repairingSlot:generationAttempts>1||publicationAttempts>1};
   });
   if(claim==='skipped')return{state:'skipped'};
   if(claim==='profile_updated')return{state:'cancelled'};
   if(!claim)return{state:'idle'};jobRef=claim.job;claimed=true;revision=claim.raw.revision;
   const checkActive=async(tx:FirebaseFirestore.Transaction)=>{const current=(await tx.get(ruleRef)).data();if(!current?.enabled||current.revision!==revision||current.processingJob!==claim.job.id||current.processingRun!==executionId||current.processingUntil<=now())throw new ApiError(409,'Aturan dijeda atau diubah. Publikasi otomatis dihentikan.');const fresh=await currentRuleProfile(tx,claim.ref,claim.raw,claim.config,now());if(fresh.fingerprint!==claim.raw.profileFingerprint){profileChangedDuringRun=true;throw new ApiError(409,'Profil berubah saat proses berjalan. Konten lama belum dikirim.','autonomy_profile_changed');}return fresh.ws;};
   const assertActive=async()=>db.runTransaction(checkActive);
+  const updateJob=async(values:Record<string,unknown>)=>db.runTransaction(async tx=>{await checkActive(tx);tx.update(claim.job,values);});
   const authorize:typeof requireWorkspace=async(_request,workspaceId)=>{if(workspaceId!==claim.ref.id)throw new ApiError(403,'Workspace tidak sesuai.');const workspace=await assertActive();return{workspace,ref:claim.ref,workspaceId:claim.ref.id,user:{uid:claim.raw.ownerUid} as DecodedIdToken};};
   let draftId=claim.pendingDraft;let title='';
   if(!draftId){
@@ -169,12 +175,17 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
    const result=await(deps.create||createSocialContent)(new Request('https://veloxa.internal/api',{method:'POST',body:JSON.stringify({...claim.input,expectedProfileFingerprint:claim.raw.profileFingerprint})}),{
     authorize,source:'autonomous_agent',scheduledRepairBudget:()=>started+235_000-now(),recoverScheduledReelsArtwork:claim.recoverScheduledReelsArtwork,
     scheduledExplicitTopic:claim.explicitTopic,
-    scheduledDraft:{id:claim.draftKey,...(claim.input.format==='short_video'?{quotaJob:claim.job,scheduledAt:claim.scheduledAt}:{}),persist:async(draftRef,record)=>db.runTransaction(async tx=>{
+    onProgress:event=>{
+     progressWrites=progressWrites.then(()=>updateJob({stage:event.stage,updatedAt:now()}));
+     void progressWrites.catch(()=>{});
+    },
+    scheduledDraft:{id:claim.draftKey,quotaJob:claim.job,scheduledAt:claim.scheduledAt,assertActive:async()=>{await assertActive();},updateJob,persist:async(draftRef,record)=>db.runTransaction(async tx=>{
      await checkActive(tx);
      tx.create(draftRef,record);
      tx.update(claim.job,{draftId:claim.draftKey,topic:record.draft.title,state:'prepared'});
     })},
    });
+   await progressWrites;
    generating=false;
    draftId=result.draft.id;title=result.draft.title;
    // Give a slow generation its own invocation rather than starting a send near the request deadline.
@@ -184,7 +195,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
      if(current?.processingJob!==claim.job.id||current.processingRun!==executionId)return false;
      const active=current.enabled&&current.revision===revision;
      tx.update(claim.job,{draftId,topic:title,...(active?{state:'queued'}:{state:'cancelled',finishedAt:now()})});
-     tx.update(ruleRef,{...reset,...(active?{pendingJob:claim.job.id,nextDueMs:now()}:{})});
+     tx.update(ruleRef,{...reset,...(active?{pendingJob:claim.job.id,nextDueMs:now(),...(claim.repairingSlot&&crossedNextSlot(current,now())?{deferredByRecovery:true}:{})}:{})});
      return active;
     });
     return{state:queued?'queued':'cancelled',draftId};
@@ -226,6 +237,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
     pendingJob:queued?jobRef!.id:null,
     pendingReconciliation:checking?jobRef!.id:null,
     nextDueMs:retryAt??(queued?now()+60000:current.nextSlotMs),
+    ...((claim.repairingSlot||transient)&&crossedNextSlot(current,now())?{deferredByRecovery:true}:{}),
     ...(!checking&&!queued&&(hold||current.nextSlotMs===null)?{enabled:false,revision:revision+1}:{}),
     lastError:!queued&&(hold||current.nextSlotMs===null)?error:'',
     ...(title?{recentTitles:[title,...(current.recentTitles||[])].slice(0,10)}:{}),
@@ -234,6 +246,7 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
   });
   return{state,draftId};
  }catch(error){
+  await progressWrites.catch(()=>{});
   if(!claimed&&error instanceof ApiError&&error.code==='autonomy_dispatch_in_progress')return{state:'idle'};
   const message=error instanceof ApiError?error.message:'Proses otomatis belum selesai. Periksa draf dan akun sosial sebelum mengaktifkan kembali.';
   const recoverable=claimed&&generating&&canRetryGeneration(error);
@@ -263,18 +276,38 @@ export async function processAutonomyRule(ruleRef:RuleRef,deps:Dependencies={}){
      if(await recoverInterruptedPublication(tx,workspace,ruleRef,jobRef!,current,slot,now()))return state;
     }
    }
+   if(ownsJob&&current.enabled&&generating&&error instanceof GenerationStageError&&error.stage==='saving'){
+    const slot=(await tx.get(jobRef!)).data();
+    if(slot?.state==='prepared'&&typeof slot.draftKey==='string'&&slot.draftId===slot.draftKey){
+     const workspace=db.collection('workspaces').doc(current.workspaceId);
+     const stored=(await tx.get(workspace.collection('social_drafts').doc(slot.draftKey))).data();
+     const fresh=await currentRuleProfile(tx,workspace,current,autonomyConfigSchema.parse(current.config),now());
+     // An atomic save can succeed even when its acknowledgement is lost.
+     // Only the exact canonical, scoped draft may continue without generating.
+     if(stored?.draft?.id===slot.draftKey&&stored.draft.workspaceId===workspace.id&&draftBusiness(stored.draft)===current.businessId&&stored.createdBy===current.ownerUid&&stored.profileFingerprint===slot.profileFingerprint&&fresh.fingerprint===slot.profileFingerprint){
+      tx.update(jobRef!,{state:'queued',retryAt:null,error:'',finishedAt:null,updatedAt:now()});
+      tx.update(ruleRef,{...reset,pendingJob:jobRef!.id,nextDueMs:now(),lastError:'',deferredByRecovery:current.deferredByRecovery===true||crossedNextSlot(current,now())});
+      return 'queued';
+     }
+    }
+   }
    if(recoverable&&ownsJob){
     const job=(await tx.get(jobRef!)).data()!;
     const reelsArtworkRecovery=job.format==='short_video'&&(job.reelsArtworkRecovery===true||failure.generationFailure?.code==='scheduled_artwork_rejected');
     const retryAt=recoveryTime(reelsArtworkRecovery?'reels_artwork':'generation',job.generationAttempts,job.scheduledAt,now(),current.nextSlotMs);
     const hasNextSlot=typeof current.nextSlotMs==='number';
     const nextState=retryAt?'retry_generation':'failed';
-    const retryMessage='Veloxa sedang memulihkan visual Reels dan akan mencoba slot ini lagi.';
-    tx.update(jobRef!,{state:nextState,error:reelsArtworkRecovery&&retryAt?retryMessage:message,retryAt,finishedAt:retryAt?null:now(),...failure,...(reelsArtworkRecovery?{reelsArtworkRecovery:true}:{})});
+    const code=failure.generationFailure?.code;
+    const retryMessage=code&&['scheduled_artwork_review_unavailable','reels_photo_review_unavailable'].includes(code)
+     ?'Pemeriksaan visual akan dilanjutkan otomatis. Bagian yang sudah selesai tetap tersimpan.'
+     :reelsArtworkRecovery?'Veloxa sedang memulihkan visual Reels dan akan mencoba slot ini lagi.'
+     :code==='scheduled_artwork_rejected'?'Visual sedang diperbaiki otomatis. Bagian yang sudah selesai tetap tersimpan.':message;
+    tx.update(jobRef!,{state:nextState,error:retryAt?retryMessage:message,retryAt,updatedAt:now(),finishedAt:retryAt?null:now(),...failure,...(reelsArtworkRecovery?{reelsArtworkRecovery:true}:{})});
     tx.update(ruleRef,{
      ...reset,
      pendingJob:retryAt?jobRef!.id:null,
      nextDueMs:retryAt??(hasNextSlot?current.nextSlotMs:null),
+     deferredByRecovery:current.deferredByRecovery===true||crossedNextSlot(current,now()),
      lastError:hasNextSlot||retryAt?'':message,
      ...(hasNextSlot||retryAt?{}:{enabled:false,revision:revision+1}),
     });
@@ -302,7 +335,7 @@ export async function tickAutonomy() {
   db,
   process: ref => processAutonomyRule(ref, { database: db }),
   reconcile: async (database, now) => {
-   const [resolved] = await Promise.all([reconcileDueAutonomyPublications(database, now), sweepExpiredReelsCheckpoints(now)]);
+   const [resolved] = await Promise.all([reconcileDueAutonomyPublications(database, now), sweepExpiredReelsCheckpoints(now), sweepExpiredScheduledCheckpoints(now)]);
    return resolved;
   },
  });

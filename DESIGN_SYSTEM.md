@@ -124,6 +124,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Jadwal otomatis mendukung hingga lima slot per hari dalam WIB, berjarak minimal 15 menit. Format berputar sesuai urutan pilihan dan berlanjut ke hari berikutnya.
 - Pengguna dapat memilih agar aturan mengikuti pembaruan profil untuk slot berikutnya. Konten yang masih memakai profil lama tidak dikirim; perubahan akun, pemilik, dan aset tetap diperiksa.
 - Aktivitas otomatis membedakan konten yang akan diperbaiki, pengiriman yang akan dicoba lagi, dan hasil yang perlu diperiksa. Tampilkan waktu percobaan berikutnya dalam WIB saat sudah dijadwalkan. Tandai terbit hanya setelah kanal mengonfirmasi.
+- Pemulihan Otonom melanjutkan proses yang sama dan menyimpan bagian yang sudah berhasil. Gangguan sementara tetap berstatus pemulihan dengan jeda percobaan hingga 15 menit, tanpa meminta pengguna membuat ulang. Slot berikutnya yang tertahan oleh pemulihan dilanjutkan berurutan. Izin berubah dan hasil pengiriman yang belum pasti tetap memiliki penanganan terpisah; jangan menyamarkannya sebagai publikasi berhasil.
 
 ## Aksesibilitas dan responsivitas
 

@@ -83,7 +83,7 @@ function fixture() {
     snapshotJson: JSON.stringify({ brand: { ...BRAND_PRESETS.cafe_fnb, workspaceId: ref.id } }) });
   for (const channel of ['facebook', 'instagram']) database.values.set(`${ref.path}/private_meta_connections/${channel}`, { channel, accountId: channel === 'facebook' ? '100' : '200', pageId: '100', accountName: 'Test account', handle: '@test', encryptedToken: 'test-ciphertext', expiresAt: Date.now() + 60_000 });
   const blobs = new Map<string, Buffer>();
-  const storage = { name: 'test-bucket', file: (key: string) => ({ save: async (bytes: Buffer) => { blobs.set(key, bytes); }, download: async () => { const value = blobs.get(key); if (!value) throw new Error('missing media'); return [value]; } }) };
+  const storage = { name: 'test-bucket', file: (key: string) => ({ save: async (bytes: Buffer) => { blobs.set(key, bytes); }, download: async () => { const value = blobs.get(key); if (!value) throw Object.assign(new Error('missing media'),{code:404}); return [value]; },delete:async()=>{blobs.delete(key);} }) };
   const authorize = async (_request: Request, workspaceId: unknown) => {
     if (workspaceId !== ref.id) throw new ApiError(403, 'Forbidden workspace');
     return { ref, user: { uid: 'customer-a' }, workspaceId: ref.id, workspace: (await ref.get()).data()! };
@@ -272,6 +272,16 @@ async function autonomyFixture(){
 
 test('autonomy owner API validates configuration/health/revision and saving never activates',async()=>{const f=await autonomyFixture();await assert.rejects(f.updateAutonomy(f.request('save',2,{config:{...f.config,connectionIds:['facebook_100']}}),f.autoDeps),/bukan milik/);await assert.rejects(f.updateAutonomy(f.request('activate',2),{...f.autoDeps,health:async()=>({schedulerReady:false,lastTickAt:null})}),/belum terhubung/);await assert.rejects(f.updateAutonomy(f.request('pause',1),f.autoDeps),/tab lain/);f.database.values.get(f.ref.path)!.ownerUid='other';await assert.rejects(f.updateAutonomy(f.request('pause',2),f.autoDeps),/pemilik/);});
 
+test('saving and activating a fresh rule clear permission to replay slots deferred by earlier recovery',async()=>{
+ const f=await autonomyFixture();
+ f.rule.deferredByRecovery=true;
+ await f.updateAutonomy(f.request('save',2,{config:f.config}),f.autoDeps);
+ assert.equal(f.database.values.get(f.ruleRef.path)!.deferredByRecovery,false);
+ f.database.values.get(f.ruleRef.path)!.deferredByRecovery=true;
+ await f.updateAutonomy(f.request('activate',3),f.autoDeps);
+ assert.equal(f.database.values.get(f.ruleRef.path)!.deferredByRecovery,false);
+});
+
 test('autonomy concurrent ticks claim once and use server generation/publisher with owner authorization',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');const f=await autonomyFixture();let creates=0,publishes=0,release!:()=>void;const gate=new Promise<void>(resolve=>release=resolve);const deps={database:f.database as never,create:(async(request:Request,options:any)=>{creates++;const input=await request.json();assert.equal(input.workspaceId,f.ref.id);assert.equal(input.businessId,'primary');assert.equal(options.source,'autonomous_agent');await options.authorize(request,f.ref.id);await gate;return{draft:{id:'draft_auto',title:'Arus kas usaha'}};})as never,publish:(async(request:Request,options:any)=>{publishes++;await options.authorize(request,f.ref.id);return{draft:{status:'published'},receipts:[{channel:'instagram',status:'published'}],quotaUsed:1};})as never};
  const first=processAutonomyRule(f.ruleRef as never,deps);while(!creates)await new Promise(resolve=>setImmediate(resolve));assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');release();assert.equal((await first).state,'published');assert.equal(creates,1);assert.equal(publishes,1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,true);assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');assert.equal(creates,1);
 });
@@ -395,62 +405,130 @@ test('unlimited publication quotas do not bypass malformed usage counters in Stu
 
 test('autonomy resumes only confirmed queued draft; unknown delivery is paused and never regenerated',async()=>{const{processAutonomyRule}=await import('./autonomy-worker');for(const unknown of[false,true]){const f=await autonomyFixture();let creates=0,publishes=0,clock=Date.now();const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;return{draft:{id:'draft_auto',title:'Uji'}};})as never,publish:(async()=>{publishes++;return{hasMore:!unknown&&publishes===1,draft:{status:unknown?'needs_attention':publishes===1?'publish_queued':'published'},receipts:[]};})as never};const first=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(first.state,unknown?'needs_attention':'queued');clock+=61000;const last=await processAutonomyRule(f.ruleRef as never,deps);assert.equal(last.state,unknown?'inactive':'published');assert.equal(creates,1);assert.equal(publishes,unknown?1:2);}});
 
-test('autonomy keeps recovering a rejected Reels slot with the same draft key and publishes once', async () => {
+test('autonomy repairs every format across invocations past 30 minutes using one slot, draft key and quota charge', async () => {
  const {processAutonomyRule}=await import('./autonomy-worker');
  const {GenerationStageError}=await import('./content-generation-stream');
+ const {reserveGenerationAttempt}=await import('./generation-policy');
  const firstSlot=Date.parse('2026-11-12T05:00:00Z');
- const secondSlot=Date.parse('2026-11-12T06:00:00Z');
- for(const rejectLast of [false,true]){
+ const secondSlot=Date.parse('2026-11-12T05:15:00Z');
+ for(const format of ['single_post','carousel','short_video'] as const){
   const f=await autonomyFixture();
-  let clock=firstSlot+1000;
-  const created:string[]=[];
-  const reelsRecovery:(string|undefined)[]=[];
-  const reelDraftKeys:string[]=[];
-  let published=0;
-  Object.assign(f.rule,{config:{...f.config,days:['Kam'],timesWib:['12:00','13:00'],formats:['carousel','short_video'],endsOnWib:'2026-11-12'},nextSlotMs:firstSlot,nextDueMs:firstSlot});
+  let clock=firstSlot+1000, creates=0, published=0;
+  const keys:string[]=[];
+  const recovery:(string|undefined)[]=[];
+  Object.assign(f.rule,{config:{...f.config,days:['Kam'],timesWib:['12:00','12:15'],formats:[format],endsOnWib:'2026-11-12'},nextSlotMs:firstSlot,nextDueMs:firstSlot});
   const deps={
-   database:f.database as never,
-   now:()=>clock,
-   create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>{
-    const {format}=await request.json();
-    created.push(format);
-    if(format==='short_video') {
-      reelsRecovery.push(options?.recoverScheduledReelsArtwork);
-      reelDraftKeys.push(options!.scheduledDraft!.id);
-    }
-    if(format==='carousel'||reelsRecovery.length<3||rejectLast)throw new GenerationStageError(new ApiError(422,'Visual otomatis perlu diperiksa.','scheduled_artwork_rejected'),'compositing');
-    return{draft:{id:options!.scheduledDraft!.id,title:'Arus kas'}};
+   database:f.database as never,now:()=>clock,
+   create:(async(_request:Request,options:Parameters<typeof createSocialContent>[1])=>{
+    const scheduled=options!.scheduledDraft!;
+    creates++;keys.push(scheduled.id);recovery.push(options?.recoverScheduledReelsArtwork);
+    assert.equal(scheduled.quotaJob!.path,`${f.ruleRef.path}/jobs/slot_${firstSlot}`);
+    assert.equal(scheduled.scheduledAt,firstSlot);
+    await scheduled.assertActive!();
+    await reserveGenerationAttempt(f.ref as never,f.ref.id,'free_trial',scheduled.quotaJob);
+    await scheduled.updateJob!({testCheckpoint:{completedParts:['script','image-1']}});
+    options!.onProgress!({stage:'compositing'});
+    if(creates<7)throw new GenerationStageError(new ApiError(creates%2?503:422,'Pemeriksaan visual belum selesai.',creates%2?'visual_review_incomplete':'scheduled_artwork_rejected'),'compositing');
+    return{draft:{id:scheduled.id,title:'Arus kas'}};
    })as never,
    publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
   };
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');
-  clock+=120_000;
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');
-  const firstJob=f.database.values.get(`${f.ruleRef.path}/jobs/slot_${firstSlot}`)!;
-  assert.equal(firstJob.state,'failed');
-  assert.deepEqual(firstJob.generationFailure,{stage:'compositing',code:'scheduled_artwork_rejected'});
-  assert.equal(firstJob.draftId,undefined);
-  const afterFirst=f.database.values.get(f.ruleRef.path)!;
-  assert.equal(afterFirst.enabled,true);
-  assert.equal(afterFirst.nextDueMs,secondSlot);
-  assert.equal(afterFirst.processingJob,null);
-  assert.equal(published,0);
-  clock=secondSlot+1000;
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');
-  clock+=120_000;
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
-  assert.equal(published,0);
-  clock+=180_000;
-  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,rejectLast?'retry_generation':'published');
-  if(rejectLast){clock+=300_000;assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'failed');}
-  assert.deepEqual(created,['carousel','carousel',...Array(rejectLast?4:3).fill('short_video')]);
-  assert.deepEqual(reelsRecovery,rejectLast?[undefined,'photo','simplified','simplified']:[undefined,'photo','simplified']);
-  assert.equal(new Set(reelDraftKeys).size,1);
-  assert.equal(published,rejectLast?0:1);
-  assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);
+  for(let attempt=1;attempt<7;attempt++){
+   assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+   const rule=f.database.values.get(f.ruleRef.path)!;
+   const job=f.database.values.get(`${f.ruleRef.path}/jobs/slot_${firstSlot}`)!;
+   assert.equal(rule.enabled,true);assert.equal(rule.sequence,1);
+   assert.equal(rule.pendingJob,`slot_${firstSlot}`);assert.equal(rule.nextSlotMs,secondSlot);
+   assert.equal(job.generationAttempts,attempt);assert.equal(job.stage,'compositing');
+   assert.deepEqual(job.testCheckpoint,{completedParts:['script','image-1']});
+   assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'idle');
+   clock=rule.nextDueMs;
+  }
+  assert.ok(clock-firstSlot>30*60_000);assert.ok(clock>secondSlot);
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+  assert.equal(new Set(keys).size,1);assert.equal(creates,7);assert.equal(published,1);
+  assert.equal(f.generationCount(),1);
+  assert.deepEqual(recovery,format==='short_video'?[undefined,undefined,'simplified','simplified','simplified','simplified','simplified']:Array(7).fill(undefined));
+  const rule=f.database.values.get(f.ruleRef.path)!;
+  assert.equal(rule.sequence,1);assert.equal(rule.pendingJob,null);assert.equal(rule.nextSlotMs,secondSlot);
  }
+});
+
+test('real autonomous carousel resumes a transient review with one script, five images and one saved draft',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ let clock=Date.now(),scripts=0,scriptReviews=0,reviews=0,published=0,rejected=false;
+ const renders=new Map<string,number>();
+ f.rule.config.formats=['carousel'];
+ const storage={name:'checkpoint-test',file:(path:string)=>({
+  save:async(bytes:Buffer)=>{f.blobs.set(path,bytes);},
+  download:async()=>{const bytes=f.blobs.get(path);if(!bytes)throw Object.assign(new Error('missing checkpoint'),{code:404});return[bytes];},
+  delete:async()=>{f.blobs.delete(path);},
+ }),getFiles:async({prefix}:{prefix:string})=>[[...f.blobs.keys()].filter(path=>path.startsWith(prefix)).map(path=>({delete:async()=>{f.blobs.delete(path);}}))]};
+ const photo=await sharp({create:{width:1080,height:1350,channels:3,background:'#E5E7EB'}}).jpeg().toBuffer();
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>createSocialContent(request,{
+   ...options,storage:storage as never,
+   generate:async input=>{scripts++;const draft=shortVisualDraft(input);draft.slides=Array.from({length:5},(_,index)=>({slideNumber:index+1,headline:`Headline ${index+1}`,body:`Body ${index+1}`,visualDirection:`Visual direction ${index+1}`,badgeText:`${index+1}/5`}));return{draft,engineMode:'deterministic_local'};},
+   renderImage:async params=>{renders.set(params.title,(renders.get(params.title)||0)+1);return photo;},
+   verifyScript:async()=>{scriptReviews++;},
+   verifyArtwork:async(_bytes,params)=>{reviews++;if(params.title==='Headline 3'&&!rejected){rejected=true;throw new ApiError(503,'Pemeriksaan visual belum lengkap.','scheduled_artwork_review_unavailable');}},
+  }))as never,
+  publish:(async(request:Request)=>{const{draftId}=await request.json();const saved=f.database.values.get(`${f.ref.path}/social_drafts/${draftId}`)!;assert.equal(saved.draft.renderedSlides.length,5);published++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+ assert.equal(f.generationCount(),1);assert.equal(scripts,1);assert.equal(scriptReviews,1);assert.equal(reviews,5);
+ assert.equal([...f.database.values.keys()].filter(path=>path.includes('/social_drafts/')).length,0);
+ const rule=f.database.values.get(f.ruleRef.path)!;
+ assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/${rule.pendingJob}`)!.error,'Pemeriksaan visual akan dilanjutkan otomatis. Bagian yang sudah selesai tetap tersimpan.');
+ const key=f.database.values.get(`${f.ruleRef.path}/jobs/${rule.pendingJob}`)!.draftKey;
+ rule.recentTitles=['New title should not alter the in-progress generation input'];
+ clock=rule.nextDueMs+31*60_000;
+ const result=await processAutonomyRule(f.ruleRef as never,deps);
+ assert.equal(result.state,'published');assert.equal('draftId' in result&&result.draftId,key);
+ assert.equal(scripts,1);assert.equal(scriptReviews,1);assert.equal(reviews,6);assert.equal(published,1);
+ assert.equal(f.generationCount(),1);assert.equal(renders.size,5);assert.ok([...renders.values()].every(count=>count===1));
+ assert.equal([...f.database.values.keys()].filter(path=>path.includes('/social_drafts/')).length,1);
+});
+
+test('real autonomous Reels defer encoding and resume saved images, reviews and voice in a fresh invocation',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ let clock=Date.now(),budget=195_000,scripts=0,scriptReviews=0,images=0,reviews=0,voices=0,videos=0,published=0;
+ f.rule.config.formats=['short_video'];
+ const photo=await sharp({create:{width:720,height:1280,channels:3,background:'#D9E4EA'}}).jpeg().toBuffer();
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>createSocialContent(request,{
+   ...options,storage:f.dependencies.storage,scheduledRepairBudget:()=>budget,
+   generate:async input=>{
+    scripts++;const draft=shortVisualDraft(input);draft.title='Kelola bisnis dengan rapi';
+    draft.videoScenes=Array.from({length:4},(_,index)=>({sceneNumber:index+1,timeRange:`${index*5}:00`,visualDirection:`Pemilik usaha mengelola bisnis, adegan ${index+1}`,voiceover:'Mulai dari satu kebutuhan, periksa data bisnis, lalu susun langkah kerja yang mudah dipahami.',textOverlay:`Langkah ${index+1}`}));
+    return{draft,engineMode:'deterministic_local'};
+   },
+   renderImage:async()=>{images++;return photo;},
+   verifyScript:async()=>{scriptReviews++;},
+   verifyArtwork:async()=>{reviews++;},
+   generateVoice:async transcript=>{voices++;budget=80_000;return{pcm:Buffer.alloc(960_000),sampleRate:24000,transcript,model:'gpt-realtime-2.1-mini',sceneDurations:[5,5,5,5]};},
+   renderVideo:async params=>{
+    videos++;assert.equal(params.images.length,4);assert.equal(params.motionLayers?.length,4);assert.equal(params.pcm.length,960_000);assert.deepEqual(params.sceneWeights,[5,5,5,5]);
+    return{mp4:Buffer.from('mock-mp4-output'),poster:params.images[0],width:720,height:1280,durationSeconds:20,mimeType:'video/mp4'};
+   },
+  }))as never,
+  publish:(async(request:Request)=>{const{draftId}=await request.json();const saved=f.database.values.get(`${f.ref.path}/social_drafts/${draftId}`)!;assert.equal(saved.draft.renderedVideo.mimeType,'video/mp4');published++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+ assert.deepEqual({scripts,scriptReviews,images,reviews,voices,videos,published},{scripts:1,scriptReviews:1,images:4,reviews:4,voices:1,videos:0,published:0});
+ const rule=f.database.values.get(f.ruleRef.path)!;
+ const job=f.database.values.get(`${f.ruleRef.path}/jobs/${rule.pendingJob}`)!;
+ assert.deepEqual(job.generationFailure,{stage:'rendering',code:'scheduled_video_render_pending'});
+ assert.equal(job.stage,'rendering');assert.equal(job.draftId,undefined);assert.equal(f.generationCount(),1);
+ assert.equal([...f.database.values.keys()].filter(path=>path.includes('/social_drafts/')).length,0);
+ assert.ok([...f.blobs.keys()].every(path=>path.startsWith('private_autonomy_checkpoints/')));
+ clock=rule.nextDueMs+31*60_000;budget=235_000;
+ const result=await processAutonomyRule(f.ruleRef as never,deps);
+ assert.equal(result.state,'published');assert.equal('draftId' in result&&result.draftId,job.draftKey);
+ assert.deepEqual({scripts,scriptReviews,images,reviews,voices,videos,published},{scripts:1,scriptReviews:1,images:4,reviews:4,voices:1,videos:1,published:1});
+ assert.equal(f.generationCount(),1);assert.equal([...f.database.values.keys()].filter(path=>path.includes('/social_drafts/')).length,1);
 });
 
 test('an interrupted generation can resume the same slot, while the old invocation cannot save its draft',async()=>{
@@ -459,12 +537,13 @@ test('an interrupted generation can resume the same slot, while the old invocati
  let clock=Date.now(),release!:()=>void,calls=0,publishes=0;
  const gate=new Promise<void>(resolve=>release=resolve);
  const keys:string[]=[];
+ let firstRun:NonNullable<Parameters<typeof createSocialContent>[1]>['scheduledDraft'];
  const deps={
   database:f.database as never,now:()=>clock,
   create:(async(_request:Request,options:Parameters<typeof createSocialContent>[1])=>{
    const draft=options!.scheduledDraft!;
    keys.push(draft.id);
-   if(++calls===1)await gate;
+   if(++calls===1){firstRun=draft;await gate;}
    const result={id:draft.id,title:'Arus kas'};
    await draft.persist(f.ref.collection('social_drafts').doc(draft.id) as never,{draft:result});
    return{draft:result};
@@ -474,12 +553,15 @@ test('an interrupted generation can resume the same slot, while the old invocati
  const abandoned=processAutonomyRule(f.ruleRef as never,deps);
  while(!calls)await new Promise(resolve=>setImmediate(resolve));
  clock+=6*60_000+1;
+ await assert.rejects(firstRun!.assertActive!());
+ await assert.rejects(firstRun!.updateJob!({testCheckpoint:'expired run must not write'}));
  await processAutonomyRule(f.ruleRef as never,deps);
  const rule=()=>f.database.values.get(f.ruleRef.path)!;
  const jobId=rule().pendingJob;
  assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/${jobId}`)?.state,'retry_generation');
  clock+=120_000;
  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ await assert.rejects(firstRun!.updateJob!({testCheckpoint:'replaced run must not write'}));
  release();
  await abandoned;
  assert.equal(keys.length,2);
@@ -489,6 +571,7 @@ test('an interrupted generation can resume the same slot, while the old invocati
  assert.equal(rule().enabled,true);
  assert.equal([...f.database.values.keys()].filter(key=>key.includes('/social_drafts/')).length,1);
  assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/${jobId}`)?.state,'published');
+ assert.equal(f.database.values.get(`${f.ruleRef.path}/jobs/${jobId}`)?.testCheckpoint,undefined);
 });
 
 test('a draft saved before the worker was interrupted is sent after recovery without generating again',async()=>{
@@ -515,6 +598,129 @@ test('a draft saved before the worker was interrupted is sent after recovery wit
  assert.equal(publishes,1);
 });
 
+test('a lost atomic draft-save acknowledgement queues only the exact saved draft without regenerating',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const {GenerationStageError}=await import('./content-generation-stream');
+ for(const outcome of ['committed','missing','wrong_business']as const){
+  const f=await autonomyFixture();
+  let clock=Date.now(),creates=0,published=0;
+  const photo=await sharp({create:{width:1080,height:1350,channels:3,background:'white'}}).jpeg().toBuffer();
+  const deps={database:f.database as never,now:()=>clock,
+   create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>{
+    creates++;
+    const scheduled=options!.scheduledDraft!;
+    return createSocialContent(request,{...options,storage:f.dependencies.storage,generate:async input=>({draft:shortVisualDraft(input),engineMode:'deterministic_local'}),renderImage:async()=>photo,verifyArtwork:async()=>{},verifyScript:async()=>{},
+     scheduledDraft:{...scheduled,persist:async(ref,record)=>{
+      if(outcome!=='missing'){
+       await scheduled.persist(ref,record);
+       if(outcome==='wrong_business')f.database.values.get(ref.path)!.draft.businessId='foreign-business';
+      }
+      throw new GenerationStageError(new ApiError(503,'Save acknowledgement lost.','generation_stage_failed'),'saving');
+     }},
+    });
+   })as never,
+   publish:(async(request:Request,options:NonNullable<Parameters<typeof publishSocialContent>[1]>)=>{await options.authorize!(request,f.ref.id);const{draftId}=await request.json();assert.ok(f.database.values.has(`${f.ref.path}/social_drafts/${draftId}`));published++;return{draft:{status:'published'},receipts:[]};})as never,
+  };
+  const first=await processAutonomyRule(f.ruleRef as never,deps);
+  assert.equal(first.state,outcome==='committed'?'queued':'needs_attention');
+  clock+=60_000;
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,outcome==='committed'?'published':'inactive');
+  assert.equal(creates,1);assert.equal(published,outcome==='committed'?1:0);assert.equal(f.generationCount(),1);
+  assert.equal([...f.database.values.keys()].filter(path=>path.includes('/social_drafts/')).length,outcome==='missing'?0:1);
+ }
+});
+
+test('known-unsent saved draft recovers before dispatch past 30 minutes and its next slot',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ const {draft}=await f.create({selectedConnectionIds:['instagram_200']});
+ const clock=Date.now();
+ const job=f.ruleRef.collection('jobs').doc('slot_prepared_before_send');
+ Object.assign(f.rule,{processingJob:job.id,processingRun:'interrupted-before-send',processingUntil:clock-1,nextSlotMs:clock-60_000});
+ f.database.values.set(job.path,{state:'publishing',scheduledAt:clock-2*60*60_000,ruleRevision:2,draftKey:draft.id,draftId:draft.id});
+ let publishes=0;
+ const deps={database:f.database as never,now:()=>clock,create:(async()=>assert.fail('must reuse saved draft'))as never,publish:(async(request:Request)=>{assert.equal((await request.json()).draftId,draft.id);publishes++;return{draft:{status:'published'},receipts:[]};})as never};
+ await processAutonomyRule(f.ruleRef as never,deps);
+ assert.equal(f.database.values.get(job.path)!.state,'queued');
+ assert.equal(f.database.values.get(f.ruleRef.path)!.deferredByRecovery,true);
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ assert.equal(publishes,1);
+});
+
+test('repairs preserve each crossed scheduled slot and format while concurrent ticks claim one at a time',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const {GenerationStageError}=await import('./content-generation-stream');
+ const f=await autonomyFixture();
+ const slots=['2026-11-12T05:00:00Z','2026-11-12T06:00:00Z','2026-11-12T07:00:00Z'].map(Date.parse);
+ let clock=slots[0]+1000,attempts=0,published=0;
+ const formats:string[]=[],times:number[]=[],keys:string[]=[];
+ Object.assign(f.rule,{config:{...f.config,days:['Kam'],timesWib:['12:00','13:00','14:00'],formats:['single_post','carousel','short_video'],endsOnWib:'2026-11-12'},nextSlotMs:slots[0],nextDueMs:slots[0]});
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>{
+   const input=await request.json();
+   formats.push(input.format);times.push(options!.scheduledDraft!.scheduledAt!);keys.push(options!.scheduledDraft!.id);
+   if(++attempts===1)throw new GenerationStageError(new ApiError(503,'Review belum selesai.','visual_review_incomplete'),'compositing');
+   return{draft:{id:options!.scheduledDraft!.id,title:'Draf tersimpan'}};
+  })as never,
+  publish:(async()=>{published++;return{draft:{status:'published'},receipts:[]};})as never,
+ };
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+ const originalInput=f.database.values.get(`${f.ruleRef.path}/jobs/slot_${slots[0]}`)!.generationInput;
+ f.database.values.get(f.ruleRef.path)!.recentTitles=['Judul disimpan setelah proses dimulai'];
+ clock=slots[2]+2*60*60_000;
+ for(let expected=1;expected<=3;expected++){
+  const results=await Promise.all([processAutonomyRule(f.ruleRef as never,deps),processAutonomyRule(f.ruleRef as never,deps)]);
+  assert.equal(results.filter(result=>result.state==='published').length,1);
+  assert.equal(published,expected);
+  assert.equal(attempts,expected+1);
+ }
+ assert.deepEqual(formats,['single_post','single_post','carousel','short_video']);
+ assert.deepEqual(times,[slots[0],...slots]);assert.equal(keys[0],keys[1]);assert.equal(new Set(keys).size,3);
+ assert.deepEqual(f.database.values.get(`${f.ruleRef.path}/jobs/slot_${slots[0]}`)!.generationInput,originalInput);
+ const rule=f.database.values.get(f.ruleRef.path)!;
+ assert.equal(rule.sequence,3);assert.equal(rule.nextSlotMs,null);assert.equal(rule.enabled,false);
+ assert.equal([...f.database.values].filter(([path,job])=>path.startsWith(`${f.ruleRef.path}/jobs/`)&&job.state==='skipped').length,0);
+});
+
+test('a pending repair rechecks owner, account, profile and pause before resuming',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const {GenerationStageError}=await import('./content-generation-stream');
+ for(const change of ['owner','account','profile','pause']as const){
+  const f=await autonomyFixture();let clock=Date.now(),creates=0;
+  const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;throw new GenerationStageError(new ApiError(503,'Review belum selesai.','visual_review_incomplete'),'compositing');})as never,publish:(async()=>assert.fail('must not publish'))as never};
+  assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'retry_generation');
+  clock=f.database.values.get(f.ruleRef.path)!.nextDueMs;
+  if(change==='owner')f.database.values.get(f.ref.path)!.ownerUid='new-owner';
+  if(change==='account')f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=[];
+  if(change==='profile')changeAutonomyProfile(f,'Profil baru yang belum diizinkan');
+  if(change==='pause')await f.updateAutonomy(f.request('pause',2),f.autoDeps);
+  await processAutonomyRule(f.ruleRef as never,deps);
+  assert.equal(creates,1);assert.equal(f.database.values.get(f.ruleRef.path)!.enabled,false);
+ }
+});
+
+test('a repair never regenerates a draft with prior or ambiguous delivery evidence',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const {GenerationStageError}=await import('./content-generation-stream');
+ for(const evidence of ['ledger','unknown_receipt','dispatch']as const){
+  const f=await autonomyFixture();let clock=Date.now(),creates=0;
+  const deps={database:f.database as never,now:()=>clock,create:(async()=>{creates++;throw new GenerationStageError(new ApiError(503,'Review belum selesai.','visual_review_incomplete'),'compositing');})as never,publish:(async()=>assert.fail('must not resend'))as never};
+  await processAutonomyRule(f.ruleRef as never,deps);
+  const rule=f.database.values.get(f.ruleRef.path)!;
+  const job=f.database.values.get(`${f.ruleRef.path}/jobs/${rule.pendingJob}`)!;
+  clock=rule.nextDueMs;
+  if(evidence==='ledger')f.database.values.set(`${f.ref.path}/publish_jobs/${job.draftKey}`,{state:'needs_attention',receipts:[{status:'unknown'}]});
+  if(evidence==='unknown_receipt')job.receipts=[{status:'unknown'}];
+  if(evidence==='dispatch'){
+   const {dispatchGuard}=await import('./autonomy-dispatch');
+   f.database.values.set(dispatchGuard(f.ref as never).path,{leaseId:'ambiguous-provider-send'});
+  }
+  await processAutonomyRule(f.ruleRef as never,deps);
+  await processAutonomyRule(f.ruleRef as never,deps);
+  assert.equal(creates,1);
+ }
+});
+
 test('a definite transient send is retried on the same draft; pause cancels the persisted retry',async()=>{
  const {processAutonomyRule}=await import('./autonomy-worker');
  for(const pause of [false,true]){
@@ -539,6 +745,43 @@ test('a definite transient send is retried on the same draft; pause cancels the 
   assert.deepEqual(sends,pause?[false]:[false,true]);
   assert.equal(creates,1);
  }
+});
+
+test('definite publication failures keep the same draft and retry only the unsent account past 30 minutes',async()=>{
+ const {processAutonomyRule}=await import('./autonomy-worker');
+ const f=await autonomyFixture();
+ const firstSlot=Date.parse('2026-11-12T05:00:00Z'),nextSlot=firstSlot+15*60_000;
+ let clock=firstSlot+1000,creates=0;
+ const targets=['instagram_200','facebook_100'];
+ const sends:string[]=[];
+ f.database.values.get(`${f.ref.path}/business_contexts/primary`)!.connectionIds=targets;
+ Object.assign(f.rule,{config:{...f.config,connectionIds:targets,days:['Kam'],timesWib:['12:00','12:15'],endsOnWib:'2026-11-12'},nextSlotMs:firstSlot,nextDueMs:firstSlot});
+ const photo=await sharp({create:{width:1080,height:1350,channels:3,background:'white'}}).jpeg().toBuffer();
+ const deps={database:f.database as never,now:()=>clock,
+  create:(async(request:Request,options:Parameters<typeof createSocialContent>[1])=>{creates++;return createSocialContent(request,{...options,storage:f.dependencies.storage,generate:async input=>({draft:shortVisualDraft(input),engineMode:'deterministic_local'}),renderImage:async()=>photo,verifyArtwork:async()=>{},verifyScript:async()=>{}});})as never,
+  publish:(async(request:Request,options:NonNullable<Parameters<typeof publishSocialContent>[1]>)=>publishSocialContent(request,{...f.dependencies,...options,publisher:async params=>{
+   sends.push(params.accountId);
+   if(params.accountId==='100'&&sends.filter(id=>id==='100').length<6)throw new MetaRequestError('Temporary provider rejection',false,4,true);
+   return{externalPostId:`remote-${params.accountId}`};
+  }}))as never,
+ };
+ let key='';
+ for(let attempt=1;attempt<=5;attempt++){
+  const result=await processAutonomyRule(f.ruleRef as never,deps);
+  assert.equal(result.state,'retry_publication');
+  const rule=f.database.values.get(f.ruleRef.path)!;
+  const job=f.database.values.get(`${f.ruleRef.path}/jobs/${rule.pendingJob}`)!;
+  if(!key)key=job.draftId;
+  assert.equal(job.draftId,key);assert.equal(job.publicationAttempts,attempt);
+  assert.deepEqual(job.receipts.filter((receipt:any)=>receipt.status==='published').map((receipt:any)=>receipt.accountId),['200']);
+  clock=rule.nextDueMs;
+ }
+ assert.ok(clock-firstSlot>30*60_000);assert.ok(clock>nextSlot);
+ assert.equal((await processAutonomyRule(f.ruleRef as never,deps)).state,'published');
+ assert.equal(creates,1);assert.equal(sends.filter(id=>id==='200').length,1);assert.equal(sends.filter(id=>id==='100').length,6);
+ assert.equal(f.count(),1);assert.equal(f.generationCount(),1);
+ assert.equal(f.database.values.get(f.ruleRef.path)!.deferredByRecovery,true);
+ assert.equal([...f.database.values.keys()].filter(path=>path.includes('/social_drafts/')).length,1);
 });
 
 test('an interrupted send is marked published only if the same draft already has confirmed receipts',async()=>{

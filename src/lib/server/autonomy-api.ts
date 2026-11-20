@@ -10,10 +10,25 @@ import {profileFingerprint} from '../profile-fingerprint';
 import {readSocialAccounts} from './social-accounts';
 import {isWorkspacePhoto} from './brand-assets';
 import {assetBusiness} from '../business-context';
-import {autonomyConfigSchema,nextConfiguredAutonomySlot,validateAutonomySource,type AutoContentRule,type AutoContentStatus} from '../autonomy-rules';
+import {autonomyConfigSchema,nextConfiguredAutonomySlot,validateAutonomySource,type AutoContentRule,type AutoContentStatus,type AutoContentActivity} from '../autonomy-rules';
 export const ruleKey=(workspaceId:string,id:string)=>createHash('sha256').update(JSON.stringify([workspaceId,id])).digest('hex');
 export function ruleCollection(){return adminDb().collection('auto_content_rules');}
 export function publicRule(raw:FirebaseFirestore.DocumentData|undefined):AutoContentRule|null{if(!raw)return null;return{revision:raw.revision,enabled:raw.enabled,config:raw.config,nextSlotMs:raw.nextSlotMs,lastError:raw.lastError||'',processingJob:raw.processingJob||null,processingUntil:raw.processingUntil||0,pausePending:!raw.enabled&&!!raw.processingJob,sequence:raw.sequence||0};}
+/** Provider sessions, checkpoint copy and repair observations stay server-private. */
+export function publicAutonomyActivity(id:string,raw:FirebaseFirestore.DocumentData):AutoContentActivity{
+ return{id,state:raw.state,scheduledAt:raw.scheduledAt,
+  ...(typeof raw.topic==='string'?{topic:raw.topic}:{}),
+  ...(typeof raw.format==='string'?{format:raw.format as AutoContentActivity['format']}:{}),
+  ...(typeof raw.draftId==='string'?{draftId:raw.draftId}:{}),
+  ...(typeof raw.error==='string'?{error:raw.error}:{}),
+  ...(typeof raw.retryAt==='number'||raw.retryAt===null?{retryAt:raw.retryAt}:{}),
+  ...(Array.isArray(raw.receipts)?{receipts:raw.receipts.map(receipt=>({status:receipt.status,
+   ...(typeof receipt.handle==='string'?{handle:receipt.handle}:{}),
+   ...(typeof receipt.accountName==='string'?{accountName:receipt.accountName}:{}),
+   ...(typeof receipt.permalink==='string'?{permalink:receipt.permalink}:{}),
+  }))}:{}),
+ };
+}
 const target=z.object({workspaceId:workspaceIdSchema,businessId:z.string()});
 const actionInput=target.extend({expectedRevision:z.number().int().nonnegative(),action:z.enum(['save','activate','pause']),config:autonomyConfigSchema.optional()}).strict();
 export function schedulerHeartbeat(heartbeat: FirebaseFirestore.DocumentData | undefined, now = Date.now(), configured = !!process.env.VELOXA_SCHEDULER_EMAIL && !!process.env.VELOXA_SCHEDULER_AUDIENCE) {
@@ -27,7 +42,7 @@ export async function schedulerHealth() {
  const { schedulerReady, lastTickAt } = schedulerHeartbeat((await adminDb().collection('system_operations').doc('organic_scheduler').get()).data());
  return { schedulerReady, lastTickAt };
 }
-export async function listAutonomy(request:Request,workspaceId:unknown,rawId:unknown):Promise<AutoContentStatus>{const body=target.parse({workspaceId,businessId:rawId});const id=businessId(body.businessId);const{ref,workspace,user}=await requireWorkspace(request,body.workspaceId);await resolveBusinessContext(ref,workspace,id);const ruleRef=ruleCollection().doc(ruleKey(ref.id,id));const [rule,activity,health]=await Promise.all([ruleRef.get(),ruleRef.collection('jobs').orderBy('createdAt','desc').limit(20).get(),schedulerHealth()]);return{rule:publicRule(rule.data()),jobs:activity.docs.map(doc=>({id:doc.id,...doc.data()})) as AutoContentStatus['jobs'],canManage:workspace.ownerUid===user.uid,...health};}
+export async function listAutonomy(request:Request,workspaceId:unknown,rawId:unknown):Promise<AutoContentStatus>{const body=target.parse({workspaceId,businessId:rawId});const id=businessId(body.businessId);const{ref,workspace,user}=await requireWorkspace(request,body.workspaceId);await resolveBusinessContext(ref,workspace,id);const ruleRef=ruleCollection().doc(ruleKey(ref.id,id));const [rule,activity,health]=await Promise.all([ruleRef.get(),ruleRef.collection('jobs').orderBy('createdAt','desc').limit(20).get(),schedulerHealth()]);return{rule:publicRule(rule.data()),jobs:activity.docs.map(doc=>publicAutonomyActivity(doc.id,doc.data())),canManage:workspace.ownerUid===user.uid,...health};}
 export async function updateAutonomy(request:Request,deps:{authorize?:typeof requireWorkspace;health?:typeof schedulerHealth;database?:ReturnType<typeof adminDb>}={}){
  const input=actionInput.parse(await readJson(request));const id=businessId(input.businessId);const{ref,user}=await(deps.authorize||requireWorkspace)(request,input.workspaceId,true);const db=deps.database||adminDb();const ruleRef=db.collection('auto_content_rules').doc(ruleKey(ref.id,id));
  if(input.action==='activate'&&!(await(deps.health||schedulerHealth)()).schedulerReady)throw new ApiError(503,'Mesin jadwal belum terhubung. Simpan aturan dahulu; aktivasi tersedia setelah penjadwal siap.');
@@ -42,6 +57,6 @@ export async function updateAutonomy(request:Request,deps:{authorize?:typeof req
   if(stored?.processingJob)throw new ApiError(409,'Proses sebelumnya masih berjalan. Jeda dan tunggu hasilnya sebelum mengubah atau mengaktifkan aturan.');
   const now=Date.now();const nextSlotMs=nextConfiguredAutonomySlot(config,now);
   if(nextSlotMs===null)throw new ApiError(400,'Tidak ada slot tersisa hingga tanggal terakhir.');
-  const next={...(stored||{}),workspaceId:ref.id,businessId:id,ownerUid:user.uid,config,revision:(stored?.revision||0)+1,enabled:input.action==='activate',profileFingerprint:await profileFingerprint(context.brand),nextSlotMs,nextDueMs:nextSlotMs,sequence:stored?.sequence||0,updatedAt:now,lastError:'',pendingJob:null,processingJob:null,processingUntil:0};tx.set(ruleRef,next);return next;
+  const next={...(stored||{}),workspaceId:ref.id,businessId:id,ownerUid:user.uid,config,revision:(stored?.revision||0)+1,enabled:input.action==='activate',profileFingerprint:await profileFingerprint(context.brand),nextSlotMs,nextDueMs:nextSlotMs,sequence:stored?.sequence||0,updatedAt:now,lastError:'',pendingJob:null,processingJob:null,processingUntil:0,deferredByRecovery:false};tx.set(ruleRef,next);return next;
  });return{rule:publicRule(result)};
 }

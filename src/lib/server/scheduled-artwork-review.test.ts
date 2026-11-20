@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import OpenAI from 'openai';
 import sharp from 'sharp';
-import { passesScheduledArtworkReview, scheduledArtworkRepairFeedback, verifyScheduledArtwork } from './scheduled-artwork-review';
+import { passesScheduledArtworkReview, SCHEDULED_ARTWORK_REVIEW_BUDGET_MS, scheduledArtworkRepairFeedback, verifyScheduledArtwork } from './scheduled-artwork-review';
 import { ApiError, errorResponse } from './http';
 
 const params = {
@@ -117,6 +117,180 @@ test('Studio Reels retries a transient review failure on the same photos', async
   assert.equal(requests.length, 3);
 });
 
+test('scheduled post, carousel and Reels retry a timeout on the exact same artwork within one budget', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
+  const cases = [
+    { name: 'post', params, visibleCopy: copy },
+    { name: 'carousel', params: { ...params, carouselSlide: true }, visibleCopy: copy },
+    { name: 'Reels', params: { ...params, aspectRatio: '9:16' as const, scheduledReelsPhotoOnly: true }, visibleCopy: '' },
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async () => {
+    const calls: { request: OpenAI.Responses.ResponseCreateParamsNonStreaming; options: { timeout: number; maxRetries: number; signal: AbortSignal } }[] = [];
+    const client = { responses: { create: async (request: typeof calls[number]['request'], options: typeof calls[number]['options']) => {
+      calls.push({ request, options });
+      if (calls.length === 1) throw new OpenAI.APIConnectionTimeoutError();
+      return { status: 'completed', output_text: JSON.stringify({ visibleCopy: scenario.visibleCopy, layoutPasses: true, layoutReason: '' }) };
+    } } } as never;
+    await verifyScheduledArtwork(photo, scenario.params, scenario.name === 'Reels' ? photo : undefined, client);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0].request, calls[1].request);
+    assert.equal(calls[0].request.model, 'gpt-6-luna');
+    assert.deepEqual(calls[0].request.reasoning, { effort: 'low' });
+    assert.equal(calls[0].request.max_output_tokens, 4_000);
+    assert.equal(calls[0].options.signal, calls[1].options.signal);
+    assert.ok(calls.every(({ options }) => options.timeout > 0 && options.timeout <= 30_000 && options.maxRetries === 0));
+  });
+});
+
+test('scheduled carousel retries a transient provider HTTP failure without SDK retries', async t => {
+  const warning = t.mock.method(console, 'warn', () => {});
+  const requests: unknown[] = [];
+  const client = new OpenAI({ apiKey: 'not-a-real-key', maxRetries: 5, fetch: async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    if (requests.length === 1) return Response.json({ error: { message: 'private-provider-error' } }, { status: 503 });
+    return Response.json({ object: 'response', status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{
+      type: 'output_text', text: JSON.stringify({ visibleCopy: copy, layoutPasses: true, layoutReason: '' }),
+    }] }] });
+  } });
+  await verifyScheduledArtwork(Buffer.from('same-finished-bytes'), { ...params, carouselSlide: true }, undefined, client);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0], requests[1]);
+  const log = JSON.parse(String(warning.mock.calls[0].arguments[0]));
+  assert.equal(log.reason, 'provider_http');
+  assert.equal(log.providerStatus, 503);
+  assert.equal(log.scope, 'scheduled');
+  assert.equal(log.format, 'carousel');
+  assert.doesNotMatch(JSON.stringify(log), /private-provider-error|same-finished-bytes/);
+});
+
+test('token truncation retries the same image with more output room and safe token diagnostics', async t => {
+  const warning = t.mock.method(console, 'warn', () => {});
+  const requests: OpenAI.Responses.ResponseCreateParamsNonStreaming[] = [];
+  const sensitiveBody = 'private-incomplete-OCR';
+  const client = { responses: { create: async (request: typeof requests[number]) => {
+    requests.push(request);
+    return requests.length === 1
+      ? { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output_text: sensitiveBody,
+        usage: { output_tokens: 4_000, output_tokens_details: { reasoning_tokens: 3_990 } } }
+      : { status: 'completed', output_text: JSON.stringify({ visibleCopy: copy, layoutPasses: true, layoutReason: '' }) };
+  } } } as never;
+  await verifyScheduledArtwork(Buffer.from('same-finished-bytes'), params, undefined, client);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].input, requests[1].input);
+  assert.deepEqual(requests.map(request => request.max_output_tokens), [4_000, 6_000]);
+  const log = JSON.parse(String(warning.mock.calls[0].arguments[0]));
+  assert.equal(log.reason, 'response_token_limit');
+  assert.equal(log.incompleteReason, 'max_output_tokens');
+  assert.equal(log.outputTokens, 4_000);
+  assert.equal(log.reasoningTokens, 3_990);
+  assert.doesNotMatch(JSON.stringify(log), /private-incomplete-OCR|same-finished-bytes/);
+});
+
+test('repeated incomplete results exhaust two attempts and never become an artwork rejection or pass', async t => {
+  const warning = t.mock.method(console, 'warn', () => {});
+  for (const reason of ['max_output_tokens', 'other-private-incomplete-reason']) await t.test(reason, async () => {
+    let attempts = 0;
+    const client = { responses: { create: async () => {
+      attempts++;
+      return { status: 'incomplete', incomplete_details: { reason },
+        output_text: JSON.stringify({ visibleCopy: copy, layoutPasses: true, layoutReason: '' }),
+        usage: { output_tokens: 4_000, output_tokens_details: { reasoning_tokens: 3_990 } } };
+    } } } as never;
+    const error: unknown = await verifyScheduledArtwork(Buffer.from('exact-image'), params, undefined, client).catch(error => error);
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 503);
+    assert.equal(error.code, 'scheduled_artwork_review_unavailable');
+    assert.equal(scheduledArtworkRepairFeedback(error), undefined);
+    assert.equal(attempts, 2);
+  });
+  const logs = warning.mock.calls.map(call => String(call.arguments[0]));
+  assert.equal(logs.length, 4);
+  assert.equal(JSON.parse(logs[1]).reason, 'response_token_limit');
+  assert.equal(JSON.parse(logs[3]).incompleteReason, 'other');
+  assert.ok(logs.every(log => !log.includes('other-private-incomplete-reason') && !log.includes(copy)));
+});
+
+test('a transient invalid structured result can recover only from a valid completed second review', async t => {
+  const warning = t.mock.method(console, 'warn', () => {});
+  let attempts = 0;
+  const client = { responses: { create: async () => ({ status: 'completed', output_text: JSON.stringify(++attempts === 1
+    ? { visibleCopy: copy, layoutPasses: 'true', layoutReason: '' }
+    : { visibleCopy: copy, layoutPasses: true, layoutReason: '' }) }) } } as never;
+  await verifyScheduledArtwork(Buffer.from('same-finished-bytes'), params, undefined, client);
+  assert.equal(attempts, 2);
+  assert.equal(JSON.parse(String(warning.mock.calls[0].arguments[0])).reason, 'invalid_response');
+});
+
+test('HTTP configuration errors and content filtering are terminal without transport retries', async t => {
+  t.mock.method(console, 'warn', () => {});
+  for (const scenario of ['configuration', 'filter']) await t.test(scenario, async () => {
+    let attempts = 0;
+    const client = { responses: { create: async () => {
+      attempts++;
+      if (scenario === 'configuration') throw new OpenAI.BadRequestError(400, { message: 'private-provider-error' }, undefined, new Headers());
+      return { status: 'incomplete', incomplete_details: { reason: 'content_filter' }, output_text: '' };
+    } } } as never;
+    await assert.rejects(verifyScheduledArtwork(Buffer.from('same-finished-bytes'), params, undefined, client), {
+      status: 503, code: 'scheduled_artwork_review_unavailable',
+    });
+    assert.equal(attempts, 1);
+  });
+});
+
+test('a second review request receives only the remaining overall time', async t => {
+  t.mock.method(console, 'warn', () => {});
+  let now = 1_000;
+  t.mock.method(Date, 'now', () => now);
+  const timeouts: number[] = [];
+  const client = { responses: { create: async (_request: unknown, options: { timeout: number }) => {
+    timeouts.push(options.timeout);
+    if (timeouts.length === 1) {
+      now += 30_000;
+      throw new OpenAI.APIConnectionTimeoutError();
+    }
+    return { status: 'completed', output_text: JSON.stringify({ visibleCopy: copy, layoutPasses: true, layoutReason: '' }) };
+  } } } as never;
+  await verifyScheduledArtwork(Buffer.from('same-finished-bytes'), params, undefined, client);
+  assert.deepEqual(timeouts, [30_000, SCHEDULED_ARTWORK_REVIEW_BUDGET_MS - 30_000]);
+});
+
+test('the shared deadline blocks a late completed review and does not start a second request', async t => {
+  const warning = t.mock.method(console, 'warn', () => {});
+  let now = 1_000;
+  t.mock.method(Date, 'now', () => now);
+  let attempts = 0;
+  const client = { responses: { create: async () => {
+    attempts++;
+    now += SCHEDULED_ARTWORK_REVIEW_BUDGET_MS;
+    return { status: 'completed', output_text: JSON.stringify({ visibleCopy: copy, layoutPasses: true, layoutReason: '' }) };
+  } } } as never;
+  await assert.rejects(verifyScheduledArtwork(Buffer.from('same-finished-bytes'), params, undefined, client), {
+    status: 503, code: 'scheduled_artwork_review_unavailable',
+  });
+  assert.equal(attempts, 1);
+  assert.equal(JSON.parse(String(warning.mock.calls[0].arguments[0])).reason, 'provider_deadline');
+});
+
+test('completed layout and exact-copy rejections never trigger a transport retry', async t => {
+  const warning = t.mock.method(console, 'warn', () => {});
+  for (const result of [
+    { visibleCopy: copy, layoutPasses: false, layoutReason: 'Title covers a face.' },
+    { visibleCopy: copy + ' DISKON', layoutPasses: true, layoutReason: '' },
+  ]) {
+    let attempts = 0;
+    const client = { responses: { create: async () => {
+      attempts++;
+      return { status: 'completed', output_text: JSON.stringify(result) };
+    } } } as never;
+    await assert.rejects(verifyScheduledArtwork(Buffer.from('exact-image'), params, undefined, client), {
+      status: 422, code: 'scheduled_artwork_rejected',
+    });
+    assert.equal(attempts, 1);
+  }
+  assert.equal(warning.mock.callCount(), 0);
+});
+
 test('rejected Reels retain bounded literal repair observations without exposing them publicly', async () => {
   const photo = await sharp({ create: { width: 9, height: 16, channels: 3, background: '#202090' } }).jpeg().toBuffer();
   const reels = { ...params, aspectRatio: '9:16' as const, scheduledReelsPhotoOnly: true, scheduledEditorial: false };
@@ -193,10 +367,10 @@ test('Studio Reels blocks a malformed review result without logging its contents
   await assert.rejects(verifyScheduledArtwork(photo, studioReels, photo, client), {
     status: 503, code: 'reels_photo_review_unavailable',
   });
-  assert.equal(warning.mock.callCount(), 1);
-  const log = String(warning.mock.calls[0].arguments[0]);
-  assert.equal(JSON.parse(log).reason, 'invalid_response');
-  assert.ok(!log.includes(sensitiveBody));
+  assert.equal(warning.mock.callCount(), 2);
+  const logs = warning.mock.calls.map(call => String(call.arguments[0]));
+  assert.deepEqual(logs.map(log => JSON.parse(log).event), ['artwork_visual_review_retry', 'studio_reels_visual_review_unavailable']);
+  assert.ok(logs.every(log => JSON.parse(log).reason === 'invalid_response' && !log.includes(sensitiveBody)));
 });
 
 test('feed review uses exact final bytes, a same-sized comparison and selected reference thumbnails', async () => {

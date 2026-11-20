@@ -12,6 +12,27 @@ const providerReview = z.object({
   layoutPasses: z.boolean(),
 }).strict();
 
+// Retries inspect the same finished bytes; only a completed, valid review can pass.
+export const SCHEDULED_ARTWORK_REVIEW_BUDGET_MS = 45_000;
+const reviewRequestTimeoutMs = 30_000;
+const reviewMaxAttempts = 2;
+const reviewMaxOutputTokens = 4_000;
+const reviewRetryOutputTokens = 6_000;
+
+type ReviewFailure = {
+  reason: 'image_preprocessing' | 'provider_timeout' | 'provider_deadline' | 'provider_connection' | 'provider_http'
+    | 'provider_request' | 'response_token_limit' | 'response_content_filter' | 'incomplete_response' | 'invalid_response';
+  retryable: boolean;
+  providerStatus?: number;
+  responseStatus?: string;
+  incompleteReason?: 'max_output_tokens' | 'content_filter' | 'other';
+  outputTokens?: number;
+  reasoningTokens?: number;
+  maxOutputTokens?: number;
+};
+
+const tokenCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
 export type ScheduledArtworkRepairFeedback = Readonly<{
   kind: 'layout' | 'unexpected_copy' | 'copy_mismatch';
   description: string;
@@ -78,10 +99,17 @@ export async function verifyScheduledArtwork(
   const typesetReels = isTypesetReels(params);
   const studioReels = typesetReels && params.scheduledEditorial === false;
   const startedAt = Date.now();
-  const unavailable = (reason: string, providerStatus?: number) => {
-    if (!studioReels) return new ApiError(503, 'Pemeriksaan visual otomatis belum selesai. Slot ini tidak dikirim.', 'scheduled_artwork_review_unavailable');
-    console.warn(JSON.stringify({ event: 'studio_reels_visual_review_unavailable', reason, providerStatus, elapsedMs: Date.now() - startedAt }));
-    return new ApiError(503, 'Pemeriksaan visual Reels belum selesai. Silakan coba lagi.', 'reels_photo_review_unavailable');
+  const diagnostic = (event: string, reason: string, details: Partial<Omit<ReviewFailure, 'reason' | 'retryable'>> & { attempt?: number } = {}) => {
+    // Never log provider bodies, OCR, prompts, image bytes, or error messages.
+    console.warn(JSON.stringify({ event, scope: studioReels ? 'studio' : 'scheduled',
+      format: params.aspectRatio === '9:16' ? 'reels' : params.carouselSlide ? 'carousel' : 'single_post',
+      reason, ...details, maxAttempts: reviewMaxAttempts, elapsedMs: Date.now() - startedAt }));
+  };
+  const unavailable = (reason: string, details?: Partial<Omit<ReviewFailure, 'reason' | 'retryable'>> & { attempt?: number }) => {
+    diagnostic(studioReels ? 'studio_reels_visual_review_unavailable' : 'scheduled_artwork_review_unavailable', reason, details);
+    return studioReels
+      ? new ApiError(503, 'Pemeriksaan visual Reels belum selesai. Silakan coba lagi.', 'reels_photo_review_unavailable')
+      : new ApiError(503, 'Pemeriksaan visual otomatis belum selesai. Slot ini tidak dikirim.', 'scheduled_artwork_review_unavailable');
   };
   const reelsRejectionCode = studioReels ? 'reels_photo_layout_unreadable' : 'scheduled_artwork_rejected';
   if (!reviewClient && !process.env.OPENAI_API_KEY) throw unavailable('missing_provider_configuration');
@@ -95,10 +123,8 @@ export async function verifyScheduledArtwork(
       width: layout.screenshot.width + 48, height: layout.screenshot.height + 42,
     } },
   ].filter(Boolean);
-  const client = reviewClient ?? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: 'https://api.openai.com/v1', timeout: 22_000, maxRetries: 0 });
-  let failureReason = 'image_preprocessing';
-  let reviewDeadline: AbortSignal | undefined;
-  let result: z.infer<typeof providerReview>;
+  const client = reviewClient ?? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: 'https://api.openai.com/v1', timeout: reviewRequestTimeoutMs, maxRetries: 0 });
+  let request: OpenAI.Responses.ResponseCreateParamsNonStreaming;
   try {
     const reviewImages: { type: 'input_image'; detail: 'high' | 'low'; image_url: string }[] = [{
       type: 'input_image', detail: 'high', image_url: `data:image/jpeg;base64,${artwork.toString('base64')}`,
@@ -115,13 +141,11 @@ export async function verifyScheduledArtwork(
         .rotate().resize(512, 512, { fit: 'inside', withoutEnlargement: true }).jpeg().toBuffer();
       reviewImages.push({ type: 'input_image', detail: 'low', image_url: `data:image/jpeg;base64,${thumbnail.toString('base64')}` });
     }
-    failureReason = 'provider_request';
-    // Studio's 300s route leaves time for one retry, video encoding and saving after the photo budget.
-    reviewDeadline = studioReels ? AbortSignal.timeout(45_000) : undefined;
-    const response = await client.responses.create({
+    request = {
       model: 'gpt-6-luna',
       store: false,
-      max_output_tokens: 1500,
+      reasoning: { effort: 'low' },
+      max_output_tokens: reviewMaxOutputTokens,
       instructions: typesetReels ? typesetReelsInstructions : editorialInstructions,
       input: [{ role: 'user', content: [
         { type: 'input_text', text: JSON.stringify({
@@ -145,20 +169,64 @@ export async function verifyScheduledArtwork(
         ...reviewImages,
       ] }],
       text: { format: { type: 'json_schema', name: 'veloxa_scheduled_artwork', strict: true, schema: z.toJSONSchema(providerReview) } },
-    }, reviewDeadline ? { timeout: 30_000, maxRetries: 1, signal: reviewDeadline } : undefined);
-    if (response.status !== 'completed' || !response.output_text) {
-      failureReason = response.incomplete_details?.reason === 'max_output_tokens'
-        ? 'response_token_limit' : 'incomplete_response';
-      throw new Error('Artwork review did not produce a result');
-    }
-    failureReason = 'invalid_response';
-    result = providerReview.parse(JSON.parse(response.output_text));
-  } catch (error) {
-    if (reviewDeadline?.aborted || error instanceof OpenAI.APIConnectionTimeoutError) throw unavailable('provider_timeout');
-    if (error instanceof OpenAI.APIConnectionError) throw unavailable('provider_connection');
-    if (error instanceof OpenAI.APIError && typeof error.status === 'number') throw unavailable('provider_http', error.status);
-    throw unavailable(failureReason);
+    };
+  } catch {
+    throw unavailable('image_preprocessing', { attempt: 0 });
   }
+  // The shared deadline also bounds retry backoff. SDK retries stay disabled so
+  // its retries cannot multiply the number of requests or the route's budget.
+  const deadlineAt = startedAt + SCHEDULED_ARTWORK_REVIEW_BUDGET_MS;
+  const reviewDeadline = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
+  let result: z.infer<typeof providerReview> | undefined;
+  let maxOutputTokens = reviewMaxOutputTokens;
+  for (let attempt = 1; attempt <= reviewMaxAttempts; attempt++) {
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0 || reviewDeadline.aborted) throw unavailable('provider_deadline', { attempt: attempt - 1 });
+    let failure: ReviewFailure = { reason: 'provider_request', retryable: false, maxOutputTokens };
+    try {
+      const response = await client.responses.create({ ...request, max_output_tokens: maxOutputTokens }, {
+        timeout: Math.min(reviewRequestTimeoutMs, remainingMs), maxRetries: 0, signal: reviewDeadline,
+      });
+      if (reviewDeadline.aborted || Date.now() >= deadlineAt) throw new OpenAI.APIConnectionTimeoutError();
+      const reason = response.incomplete_details?.reason;
+      const details = {
+        responseStatus: response.status && ['completed', 'failed', 'in_progress', 'cancelled', 'queued', 'incomplete'].includes(response.status) ? response.status : 'other',
+        ...(reason ? { incompleteReason: reason === 'max_output_tokens' || reason === 'content_filter' ? reason : 'other' as const } : {}),
+        outputTokens: tokenCount(response.usage?.output_tokens),
+        reasoningTokens: tokenCount(response.usage?.output_tokens_details?.reasoning_tokens),
+        maxOutputTokens,
+      };
+      if (response.status !== 'completed' || !response.output_text) {
+        failure = { ...details, reason: reason === 'max_output_tokens' ? 'response_token_limit'
+          : reason === 'content_filter' ? 'response_content_filter' : 'incomplete_response', retryable: reason !== 'content_filter' };
+      } else {
+        try {
+          result = providerReview.parse(JSON.parse(response.output_text));
+          break;
+        } catch {
+          failure = { ...details, reason: 'invalid_response', retryable: true };
+        }
+      }
+    } catch (error) {
+      if (reviewDeadline.aborted || Date.now() >= deadlineAt) failure = { ...failure, reason: 'provider_deadline', retryable: false };
+      else if (error instanceof OpenAI.APIConnectionTimeoutError) failure = { ...failure, reason: 'provider_timeout', retryable: true };
+      else if (error instanceof OpenAI.APIConnectionError) failure = { ...failure, reason: 'provider_connection', retryable: true };
+      else if (error instanceof OpenAI.APIError && typeof error.status === 'number') {
+        const providerStatus = error.status;
+        failure = { ...failure, reason: 'provider_http', providerStatus,
+          retryable: [408, 409, 429].includes(providerStatus) || providerStatus >= 500 };
+      }
+    }
+    const { reason, retryable, ...details } = failure;
+    if (!retryable || attempt === reviewMaxAttempts || reviewDeadline.aborted || Date.now() >= deadlineAt) {
+      throw unavailable(reason, { ...details, attempt });
+    }
+    diagnostic('artwork_visual_review_retry', reason, { ...details, attempt });
+    if (reason === 'response_token_limit') maxOutputTokens = reviewRetryOutputTokens;
+    // A short bounded pause avoids immediately repeating a transient outage.
+    await new Promise(resolve => setTimeout(resolve, Math.min(250, Math.max(0, deadlineAt - Date.now()))));
+  }
+  if (!result) throw unavailable('incomplete_response', { attempt: reviewMaxAttempts });
   const { visibleCopy, layoutPasses, layoutReason } = result;
   if (typesetReels && visibleCopy.trim()) {
     throw rejection('Foto Reels memuat tulisan promosi tambahan yang perlu diganti.', reelsRejectionCode,

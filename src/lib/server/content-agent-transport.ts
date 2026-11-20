@@ -5,6 +5,8 @@ export interface ContentAgentCheckpointState { sessionId: string; turnId?: strin
 export interface ContentAgentCheckpoint {
  load(): Promise<ContentAgentCheckpointState | null>;
  save(value: ContentAgentCheckpointState): Promise<void>;
+ // Persist intent only at the paid-create boundary, after read-only preflight.
+ beginCreation?(): Promise<void>;
 }
 interface Options {checkpoint?:ContentAgentCheckpoint;timeoutMs?:number;pollMs?:number;now?:()=>number;wait?:(ms:number,signal:AbortSignal)=>Promise<void>;log?:(event:Record<string,unknown>)=>void}
 function pause(ms:number,signal:AbortSignal){return new Promise<void>((resolve,reject)=>{if(signal.aborted){reject(new Error('aborted'));return;}const timer=setTimeout(done,ms);function done(){signal.removeEventListener('abort',abort);resolve();}function abort(){clearTimeout(timer);signal.removeEventListener('abort',abort);reject(new Error('aborted'));}signal.addEventListener('abort',abort,{once:true});});}
@@ -30,6 +32,8 @@ export function createManagedAgentTransport(client:OpenAI,options:Options={}){
      sessionId=checkpoint.sessionId;turnId=checkpoint.turnId;
     }else{
      // Do not retry creation: an ambiguous write may already have started a paid turn.
+     remaining();
+     await options.checkpoint?.beginCreation?.();
      const session=await client.beta.agents.sessions.create({...input,stream:false},requestOptions());
      if(!session.id||!/^sess_[a-zA-Z0-9_-]+$/.test(session.id))throw fault('invalid_content_agent_session','Agen belum memberikan identitas proses yang valid.',502);
      sessionId=session.id;

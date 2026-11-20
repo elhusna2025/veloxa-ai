@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import{createManagedAgentTransport}from'./content-agent-transport';import{createContentAgentGenerator}from'./content-agent';import{BRAND_PRESETS}from'../veloxa-engine';
 import type { ContentAgentCheckpointState } from './content-agent-transport';
+import { studioGenerationCheckpoint } from './studio-generation-checkpoint';
 const input={agent_id:'agent_test',environment:{type:'none' as const},input:'PRIVATE_PROMPT_SENTINEL',stream:true as const};
 const final={type:'message',role:'assistant',phase:'final_answer',status:'completed',turn_id:'turn_test',content:[{type:'output_text',text:JSON.stringify({title:'Kenali bisnis',hook:'Layanan untuk Anda',caption:'Caption lengkap untuk diperiksa.',hashtags:['#Bisnis']})}]};
 function fixture(config:{states?:string[];root?:Record<string,unknown>;items?:any[];more?:boolean;readFailures?:number;createError?:boolean;timeoutMs?:number}={}){let now=0,index=0,creates=0,lists=0,retrieves=0,reads=0,failures=config.readFailures||0;const logs:Record<string,unknown>[]=[];const root=()=>({id:'turn_test',session_id:'sess_test',agent_id:'agent_test',subagent_id:null,status:(config.states||['completed'])[Math.min(index++,((config.states||['completed']).length-1))],...config.root});const read=()=>{if(failures-->0)throw Object.assign(new Error('secret-provider-body'),{status:503});return root();};const client={beta:{agents:{retrieve:async()=>({model:'gpt-6-luna',tools:[]}),sessions:{create:async(body:any)=>{creates++;assert.equal(body.stream,false);assert.equal(body.input,input.input);if(config.createError)throw Object.assign(new Error('secret-provider-body'),{name:'APIConnectionTimeoutError'});return{id:'sess_test'};},turns:{list:async(session:string)=>{lists++;assert.equal(session,'sess_test');return{data:[read()]};},retrieve:async(turn:string,params:any)=>{retrieves++;assert.equal(turn,'turn_test');assert.equal(params.session_id,'sess_test');return read();},items:{list:async(turn:string,params:any)=>{reads++;assert.equal(turn,'turn_test');assert.equal(params.session_id,'sess_test');return{data:config.items||[{...final,role:'assistant',phase:'commentary'},final],hasNextPage:()=>!!config.more};}}}}}}};const adapter=createManagedAgentTransport(client as never,{now:()=>now,wait:async(ms)=>{now+=ms;},pollMs:1000,timeoutMs:config.timeoutMs??10000,log:event=>logs.push(event)});return{adapter,logs,counters:()=>({creates,lists,retrieves,reads})};}
@@ -75,4 +76,118 @@ test('checkpointed scripts reject caller cancellation before returning any outpu
  stream = await adapter.beta.agents.sessions.create(input);
  await assert.rejects(stream.finalResult(), { code: 'content_agent_timeout' });
  assert.equal(saved?.completed, undefined);
+});
+
+function studioCreationFixture(options: { retrieveFailsOnce?: boolean; creationReplyLost?: boolean; legacyIntent?: boolean } = {}) {
+ const record: Record<string, unknown> = options.legacyIntent ? { scriptCreationStarted: true } : {};
+ const writes: Record<string, unknown>[] = [];
+ let preflightReads = 0;
+ let paidCreates = 0;
+ const rawClient = { beta: { agents: {
+  retrieve: async () => {
+   preflightReads++;
+   if (options.retrieveFailsOnce && preflightReads === 1) throw Object.assign(new Error('private-preflight-body'), { status: 503 });
+   return { model: 'gpt-6-luna', tools: [] };
+  },
+  sessions: {
+   create: async () => {
+    paidCreates++;
+    assert.equal(record.scriptCreationStarted, true, 'the durable intent must precede a paid request');
+    if (options.creationReplyLost) throw Object.assign(new Error('private-create-body'), { name: 'APIConnectionTimeoutError' });
+    return { id: 'sess_test' };
+   },
+   turns: {
+    list: async () => ({ data: [{ id: 'turn_test', session_id: 'sess_test', agent_id: 'agent_test', subagent_id: null, status: 'completed' }] }),
+    items: { list: async () => ({ data: [final], hasNextPage: () => false }) },
+   },
+  },
+ } } };
+ const job = { get: async () => ({ data: () => ({ ...record }) }) };
+ const checkpoint = studioGenerationCheckpoint(job as never, async () => {}, async values => {
+  writes.push(values);
+  Object.assign(record, values);
+ }, undefined, {
+  generate: async (params, generationOptions) => createContentAgentGenerator(createManagedAgentTransport(rawClient as never, {
+   checkpoint: generationOptions?.checkpoint, log: () => {},
+  }), 'agent_test')(params),
+ });
+ return { checkpoint, record, writes, counts: () => ({ preflightReads, paidCreates }) };
+}
+
+const studioParams = {
+ brand: BRAND_PRESETS.cafe_fnb, format: 'single_post' as const, source: 'manual_studio' as const,
+ vaultAssets: [], connections: [], planId: 'free_trial' as const,
+};
+
+test('read-only agent preflight failure leaves no creation intent and safely retries with one paid session', async () => {
+ const fixture = studioCreationFixture({ retrieveFailsOnce: true });
+ await assert.rejects(fixture.checkpoint.generate(studioParams), { status: 503, code: 'content_agent_unavailable' });
+ assert.equal(fixture.record.scriptCreationStarted, undefined);
+ assert.equal(fixture.record.agentSession, undefined);
+ assert.deepEqual(fixture.counts(), { preflightReads: 1, paidCreates: 0 });
+ const result = await fixture.checkpoint.generate(studioParams);
+ assert.equal(result.draft.title, 'Kenali bisnis');
+ assert.equal(fixture.record.scriptCreationStarted, true);
+ assert.deepEqual(fixture.counts(), { preflightReads: 2, paidCreates: 1 });
+ assert.equal(fixture.writes.filter(value => value.scriptCreationStarted === true).length, 1);
+ const cached = await fixture.checkpoint.generate(studioParams);
+ assert.equal(cached.draft.title, result.draft.title);
+ assert.deepEqual(fixture.counts(), { preflightReads: 2, paidCreates: 1 });
+});
+
+test('lost paid session creation reply retains intent and never starts a replacement session', async () => {
+ const fixture = studioCreationFixture({ creationReplyLost: true });
+ const failed: unknown = await fixture.checkpoint.generate(studioParams).catch(error => error);
+ assert.equal((failed as { code: string }).code, 'content_agent_unavailable');
+ assert.doesNotMatch(JSON.stringify(failed), /private-create-body/);
+ assert.equal(fixture.record.scriptCreationStarted, true);
+ assert.equal(fixture.record.agentSession, undefined);
+ await assert.rejects(fixture.checkpoint.generate(studioParams), { status: 503, code: 'content_agent_creation_uncertain' });
+ assert.deepEqual(fixture.counts(), { preflightReads: 1, paidCreates: 1 });
+ assert.equal(fixture.writes.filter(value => value.scriptCreationStarted === true).length, 1);
+});
+
+test('legacy creation intent without session remains conservatively blocked', async () => {
+ const fixture = studioCreationFixture({ legacyIntent: true });
+ await assert.rejects(fixture.checkpoint.generate(studioParams), { code: 'content_agent_creation_uncertain' });
+ assert.deepEqual(fixture.counts(), { preflightReads: 0, paidCreates: 0 });
+});
+
+test('a checkpoint-load deadline prevents marking creation intent or making a paid request', async () => {
+ let now = 0;
+ let intents = 0;
+ let creates = 0;
+ const adapter = createManagedAgentTransport({ beta: { agents: { sessions: {
+  create: async () => { creates++; return { id: 'sess_test' }; },
+ } } } } as never, {
+  checkpoint: {
+   load: async () => { now = 1_000; return null; },
+   beginCreation: async () => { intents++; },
+   save: async () => {},
+  },
+  timeoutMs: 1_000, now: () => now, log: () => {},
+ });
+ const stream = await adapter.beta.agents.sessions.create(input);
+ await assert.rejects(stream.finalResult(), { code: 'content_agent_timeout' });
+ assert.equal(intents, 0);
+ assert.equal(creates, 0);
+});
+
+test('resuming a checkpointed session never marks a new creation intent', async () => {
+ let intents = 0;
+ const adapter = createManagedAgentTransport({ beta: { agents: { sessions: {
+  create: async () => { throw new Error('An existing paid session must never be replaced'); },
+  turns: {
+   retrieve: async () => ({ id: 'turn_test', session_id: 'sess_test', agent_id: input.agent_id, subagent_id: null, status: 'completed' }),
+   items: { list: async () => ({ data: [final], hasNextPage: () => false }) },
+  },
+ } } } } as never, {
+  checkpoint: {
+   load: async () => ({ sessionId: 'sess_test', turnId: 'turn_test' }),
+   beginCreation: async () => { intents++; }, save: async () => {},
+  }, log: () => {},
+ });
+ const stream = await adapter.beta.agents.sessions.create(input);
+ assert.equal(JSON.parse((await stream.finalResult()).output_text).title, 'Kenali bisnis');
+ assert.equal(intents, 0);
 });

@@ -123,6 +123,23 @@ test('one-time Instagram confirmation updates the draft and never resumes a rule
  }
 });
 
+test('exact positive proof permits only remaining unsent destinations after the original slot expires',async()=>{
+ const f=fixture(['200','201']);
+ f.db.records.get(f.slot.path)!.scheduledAt=f.now-2*60*60_000;
+ f.db.records.get(f.rule.path)!.nextSlotMs=f.now-60_000;
+ let sends=0;
+ const dispatch=createAutonomyDispatch(f.workspace as never,async()=>{},async()=>{sends++;throw new Error('lost acknowledgement');},undefined,f.context);
+ await assert.rejects(dispatch(url,sendBody));
+ f.pauseForResult();
+ const evidence=f.evidence();
+ const nextCheck=f.db.records.get(evidence.path)!.nextCheckAt;
+ assert.equal(await reconcileAutonomyPublication(evidence as never,nextCheck,{decrypt:()=> 'token',fetcher:async()=>Response.json({id:'777',status_code:'PUBLISHED'})}),true);
+ assert.equal(sends,1);
+ assert.equal(f.db.records.get(f.slot.path)!.state,'queued');
+ assert.deepEqual(f.db.records.get(f.ledger.path)!.remainingTargets,['instagram_201']);
+ assert.equal(f.db.records.get(f.rule.path)!.deferredByRecovery,true);
+});
+
 test('a remote ID recorded before a worker crash repairs the ledger without querying or publishing again',async()=>{
  const f=fixture();
  const dispatch=createAutonomyDispatch(f.workspace as never,async()=>{},async()=>Response.json({id:'888'}),undefined,f.context);
@@ -180,6 +197,23 @@ test('an abandoned preparation creates no durable fence and can safely resume th
  assert.equal(f.db.records.get(f.ledger.path)?.state,'queued');
  assert.equal(f.db.records.get(f.usage.path)?.count,1);
  assert.equal(f.db.records.get(f.rule.path)?.pendingJob,f.slot.id);
+});
+
+test('an interrupted batch continues only known-unsent targets beyond 30 minutes without dropping confirmed receipts',async()=>{
+ for(const unknown of [false,true]){
+  const f=fixture(['200','201']);
+  const receipt={...f.targets[0],status:unknown?'unknown':'published',...(unknown?{}:{externalPostId:'confirmed-200'})};
+  Object.assign(f.db.records.get(f.ledger.path)!,{receipts:[receipt],remainingTargets:['instagram_201']});
+  f.db.records.get(f.rule.path)!.nextSlotMs=f.now+60_000;
+  const rule=f.db.records.get(f.rule.path)!;
+  const slot=f.db.records.get(f.slot.path)!;
+  assert.equal(await f.db.runTransaction(tx=>recoverInterruptedPublication(tx,f.workspace as never,f.rule as never,f.slot as never,rule,slot,f.now+2*60*60_000)),!unknown);
+  const ledger=f.db.records.get(f.ledger.path)!;
+  assert.deepEqual(ledger.receipts,[receipt]);assert.deepEqual(ledger.remainingTargets,['instagram_201']);
+  assert.equal(f.db.records.get(f.slot.path)!.state,unknown?'publishing':'queued');
+  assert.equal(f.db.records.get(f.usage.path)!.count,1);
+  if(!unknown)assert.equal(f.db.records.get(f.rule.path)!.deferredByRecovery,true);
+ }
 });
 
 test('a crashed batch with only definitive failures refunds its quota atomically',async()=>{
