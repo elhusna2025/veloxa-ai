@@ -39,13 +39,29 @@ export async function createVeloxaContent<T>(body:{workspaceId:string;businessId
  if(feedback.resumePrevious&&!previous)throw new ContentGenerationError('Tidak ada proses sebelumnya yang menunggu. Anda dapat membuat draf baru.');
  const operationId=previous?.id||crypto.randomUUID();const expected=previous?.fingerprint||fingerprint;
  const read=async()=>{const response=await signedVeloxaFetch(`/api/veloxa/generation?workspaceId=${encodeURIComponent(body.workspaceId)}&businessId=${encodeURIComponent(body.businessId)}&operationId=${operationId}&inputFingerprint=${expected}`,{signal:AbortSignal.timeout(15000)});const value=await response.json().catch(()=>({}));if([400,401,403,409].includes(response.status))throw new ContentGenerationError(value.error||'Akses proses ditolak.',undefined,operationId,false);if(!response.ok)throw new ContentGenerationError('Status proses belum tersedia. Pemeriksaan akan dicoba kembali untuk percobaan yang sama.',undefined,operationId,true);return value as OperationState<T>;};
+ const readAndContinue = async () => {
+  const value = await read();
+  if (value.state !== 'running' || !(value as { resume?: boolean }).resume) return value;
+  const response = await signedVeloxaFetch('/api/veloxa/generation', {
+   method: 'POST', headers: { Accept: 'application/x-ndjson' },
+   body: JSON.stringify({ workspaceId: body.workspaceId, businessId: body.businessId, operationId, inputFingerprint: expected }),
+  });
+  if (response.ok && response.headers.get('Content-Type')?.includes('application/x-ndjson')) {
+   try { return { state: 'complete' as const, result: await readGenerationStream<T>(response, feedback.onProgress) }; }
+   catch (error) { if (error instanceof ContentGenerationError && !error.uncertain) throw error; }
+  } else if ([400, 401, 403, 409].includes(response.status)) {
+   const data = await response.json().catch(() => ({}));
+   throw new ContentGenerationError(data.error || 'Akses pemulihan proses ditolak.', undefined, operationId, false);
+  }
+  return { state: 'running' as const, stage: value.stage };
+ };
  const clear=()=>{try{const stored=JSON.parse(sessionStorage.getItem(key)||'null');if(stored?.id===operationId)sessionStorage.removeItem(key);}catch{/* Optional storage. */}};
  try{
   if(!previous){try{sessionStorage.setItem(key,JSON.stringify({id:operationId,fingerprint}));}catch{/* Optional storage. */}let response:Response|undefined;try{response=await signedVeloxaFetch('/api/veloxa/content',{method:'POST',body:JSON.stringify({...body,operationId})},feedback);}catch{/* Inspect the same operation; never send a replacement POST. */}
    if(response?.ok&&response.headers.get('Content-Type')?.includes('application/x-ndjson')){try{const result=await readGenerationStream<T>(response,feedback.onProgress);clear();return result;}catch(error){if(!(error instanceof ContentGenerationError)||!error.uncertain)throw error;}}
    else if(response){const data=await response.json().catch(()=>({}));if(!response.ok)throw new ContentGenerationError(data.error||'Konten belum dapat dibuat.',undefined,operationId,false);}
   }
-  feedback.onRecover();const result=await recoverGeneration(operationId,read,feedback.onProgress);clear();return result;
+  feedback.onRecover();const result=await recoverGeneration(operationId,readAndContinue,feedback.onProgress,{timeout:30*60000});clear();return result;
  }catch(error){if(error instanceof ContentGenerationError){if(!error.uncertain)clear();throw error;}throw new ContentGenerationError('Pemeriksaan hasil terputus. Identitas percobaan tetap disimpan; gunakan Periksa proses sebelumnya.',undefined,operationId,true);}
 }
 

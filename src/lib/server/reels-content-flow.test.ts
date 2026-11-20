@@ -41,6 +41,7 @@ class Database {
 }
 class Collection {
   constructor(public database: Database, public path: string) {}
+  get id() { return this.path.split('/').at(-1)!; }
   doc(id: string) { return new Doc(this.database, `${this.path}/${id}`); }
   async get() {
     const docs = [...this.database.values.keys()].filter(key => key.startsWith(this.path + '/') && !key.slice(this.path.length + 1).includes('/')).map(key => new Doc(this.database, key));
@@ -50,6 +51,7 @@ class Collection {
 class Doc {
   constructor(public firestore: Database, public path: string) {}
   get id() { return this.path.split('/').at(-1)!; }
+  get parent() { return new Collection(this.firestore, this.path.split('/').slice(0, -1).join('/')); }
   collection(name: string) { return new Collection(this.firestore, `${this.path}/${name}`); }
   async get() { const data = this.firestore.values.get(this.path); return { id: this.id, ref: this, exists: !!data, data: () => data ? structuredClone(data) : undefined }; }
   async create(data: any) { assert.equal(this.firestore.values.has(this.path), false); this.firestore.write(this, data, false); }
@@ -78,6 +80,8 @@ function fixture() {
     verifyArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyArtwork'];
     verifyScript?: NonNullable<Parameters<typeof createSocialContent>[1]>['verifyScript'];
     scheduledDraft?: NonNullable<Parameters<typeof createSocialContent>[1]>['scheduledDraft'];
+    studioJob?: NonNullable<Parameters<typeof createSocialContent>[1]>['studioJob'];
+    operationId?: string;
     recoverScheduledReelsArtwork?: NonNullable<Parameters<typeof createSocialContent>[1]>['recoverScheduledReelsArtwork'];
     generateVoice?: NonNullable<Parameters<typeof createSocialContent>[1]>['generateVoice'];
     renderVideo?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderVideo'];
@@ -89,12 +93,13 @@ function fixture() {
     onProgress?: (event: { stage: string }) => void;
     generate?: NonNullable<Parameters<typeof createSocialContent>[1]>['generate'];
     renderImage?: NonNullable<Parameters<typeof createSocialContent>[1]>['renderImage'];
-  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
+  } = {}) => createSocialContent(new Request('http://localhost/api', { method: 'POST', body: JSON.stringify({ workspaceId: ref.id, operationId: options.operationId, referenceRoles:options.referenceRoles, expectedProfileFingerprint: await profileFingerprint(JSON.parse(database.values.get(ref.path)!.snapshotJson).brand), topic: options.topic || 'Promo akhir pekan', format: options.format || 'short_video', ...(options.sourceAssetId ? { sourceAssetId: options.sourceAssetId } : {}), ...(options.referenceAssetIds ? { referenceAssetIds: options.referenceAssetIds, referenceInstruction: options.referenceInstruction } : {}) }) }), {
     authorize: authorize as never, storage: storage as never, onProgress: options.onProgress, source: options.source,
     verifyArtwork: options.verifyArtwork ?? (async () => {}),
     recoverScheduledReelsArtwork: options.recoverScheduledReelsArtwork,
     verifyScript: options.verifyScript ?? (async () => {}),
     scheduledDraft: options.scheduledDraft,
+    studioJob: options.studioJob,
     generate: async (input, optionsForModel) => {
       generateCalls++;
       if (options.generate) return options.generate(input, optionsForModel);
@@ -676,6 +681,54 @@ test('a scheduled Reels retry reuses its approved script, good scenes and voiceo
   assert.deepEqual(imageCalls, [1, 1, 3, 1]);
   assert.equal(voiceCalls, 1);
   assert.equal(scriptChecks, 1);
+  assert.equal(f.generateCalls(), 1);
+  assert.equal(f.generationCount(), 1);
+  assert.ok([...f.blobs.keys()].every(path => path.includes('/renders/')));
+});
+
+test('a Studio Reels retry keeps reviewed frames and voice while rebuilding only the rejected scene', async () => {
+  const f = fixture();
+  const operationId = 'b9c1bfd1-5cd4-4ca4-b61a-4d7214f7b610';
+  const job = f.ref.collection('generation_jobs').doc(operationId);
+  await job.create({ state: 'running', startedAt: Date.now() });
+  const photo = await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#daebe5' } }).jpeg().toBuffer();
+  const titles = ['Promo akhir pekan', 'Langkah 2', 'Langkah 3', 'Langkah 4'];
+  const imageCalls = [0, 0, 0, 0];
+  let voiceCalls = 0;
+  let firstAttempt = true;
+  const options: NonNullable<Parameters<typeof f.create>[0]> = {
+    operationId, studioJob: job as never, topic: titles[0],
+    generate: async input => {
+      const draft = generateBrandContentDraft(input);
+      draft.qualityReview.passed = false;
+      draft.videoScenes = titles.map((textOverlay, index) => ({
+        sceneNumber: index + 1, timeRange: `${index * 5}:00`, visualDirection: 'Seorang pelanggan membaca menu kafe.',
+        voiceover: 'Mulai dari satu pilihan, pahami kelebihannya, lalu pilih menu yang paling cocok untukmu.', textOverlay,
+      }));
+      return { draft, engineMode: 'deterministic_local' };
+    },
+    renderImage: async ({ title }) => {
+      imageCalls[titles.indexOf(title)]++;
+      return photo;
+    },
+    verifyArtwork: async (_image, { title }) => {
+      if (firstAttempt && title === 'Langkah 3') throw new ApiError(422, 'Visual ditolak', 'reels_photo_layout_unreadable');
+    },
+    generateVoice: async script => {
+      voiceCalls++;
+      return { pcm: Buffer.alloc(960_000), sampleRate: 24000, transcript: script, model: 'gpt-realtime-2.1-mini', sceneDurations: [4, 6, 7, 3] };
+    },
+  };
+
+  await assert.rejects(f.create(options), { code: 'reels_photo_layout_unreadable' });
+  assert.deepEqual(imageCalls, [1, 1, 2, 1]);
+  assert.equal(f.blobs.size, 5);
+  firstAttempt = false;
+  const result = await f.create(options);
+  assert.equal(result.draft.id, `draft_${operationId}`);
+  assert.equal(result.draft.status, 'draft');
+  assert.deepEqual(imageCalls, [1, 1, 3, 1]);
+  assert.equal(voiceCalls, 1);
   assert.equal(f.generateCalls(), 1);
   assert.equal(f.generationCount(), 1);
   assert.ok([...f.blobs.keys()].every(path => path.includes('/renders/')));

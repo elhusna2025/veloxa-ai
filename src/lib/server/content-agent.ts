@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import {REELS_SPEC,reelsWordCount,estimateReelsDuration} from '../reels-spec';
-import {createManagedAgentTransport} from './content-agent-transport';
+import {createManagedAgentTransport,type ContentAgentCheckpoint} from './content-agent-transport';
 import type { CarouselPlan } from '../carousel-plan';
 import { CONTENT_COPY_INSTRUCTION } from '../content-typography';
 import { forbiddenContentMatches } from '../content-policy';
@@ -246,7 +246,7 @@ export function createContentAgentGenerator(client: AgentsClient, agentId: strin
 
 export async function generateContentWithSavedAgent(
   params: ContentAgentParams,
-  options: { model?: string } = {},
+  options: { model?: string; checkpoint?: ContentAgentCheckpoint; timeoutMs?: number } = {},
 ): Promise<ContentAgentResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = options.model ?? CONTENT_SCRIPT_MODEL;
@@ -261,5 +261,8 @@ export async function generateContentWithSavedAgent(
     maxRetries: 0,
     timeout: 85_000,
   });
-  return createContentAgentGenerator(createManagedAgentTransport(client), agentId, model)(params);
+  return createContentAgentGenerator(createManagedAgentTransport(client, {
+    checkpoint: options.checkpoint,
+    timeoutMs: options.timeoutMs,
+  }), agentId, model)(params);
 }

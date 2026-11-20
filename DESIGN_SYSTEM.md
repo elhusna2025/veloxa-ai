@@ -119,6 +119,7 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Operasi jaringan memiliki indikator tahap dan tombol sibuk/disabled. Kegagalan menyebut tahap, status hasil yang diketahui, dan langkah berikutnya.
 - Jangan menampilkan persen atau waktu selesai palsu. Jangan mengklaim berhasil ketika hanya permintaan yang terkirim.
 - Hasil jaringan yang belum pasti tidak boleh memicu generasi atau kiriman ganda. Tawarkan pemeriksaan hasil proses yang sama.
+- Di Studio, pemulihan otomatis melanjutkan sesi naskah dan memakai kembali gambar yang berhasil pada operasi yang sama. Kuota draf dihitung sekali untuk operasi tersebut. Bila pemulihan masih berjalan, pertahankan status proses dan tombol sibuk; tampilkan draf selesai setelah seluruh media tersimpan.
 - Untuk publikasi otomatis, tampilkan akun, bahan, format, hari/jam WIB, dan ringkasan sebelum aktivasi. Simpan aturan tidak mengaktifkannya. Status Sedang menjeda berbeda dari sudah dijeda.
 - Aktivitas otomatis membedakan konten yang akan diperbaiki, pengiriman yang akan dicoba lagi, dan hasil yang perlu diperiksa. Tampilkan waktu percobaan berikutnya dalam WIB saat sudah dijadwalkan. Tandai terbit hanya setelah kanal mengonfirmasi.
 

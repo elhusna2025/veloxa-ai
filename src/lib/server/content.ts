@@ -123,6 +123,8 @@ export async function createSocialContent(request: Request, dependencies: {
   renderVideo?: typeof renderReelsVideo;
   onProgress?: (progress: GenerationProgress) => void;
   source?:'autonomous_agent';
+  studioJob?: FirebaseFirestore.DocumentReference;
+  persistStudioDraft?: (ref: FirebaseFirestore.DocumentReference, record: FirebaseFirestore.DocumentData) => Promise<void>;
 } = {}) {
   const startedAt = Date.now();
   let stage: GenerationStage = 'validation';
@@ -192,15 +194,20 @@ export async function createSocialContent(request: Request, dependencies: {
     ...(imageModel && imageModel !== DEFAULT_CONTENT_MODELS.imageModel ? { imageModel } : {}),
     ...(voiceModel && voiceModel !== DEFAULT_CONTENT_MODELS.voiceModel ? { voiceModel } : {}),
   };
-  const reelsCheckpoint = input.format === 'short_video' && scheduledDraft?.quotaJob && scheduledDraft.scheduledAt !== undefined
-    ? scheduledReelsCheckpoint(() => dependencies.storage || adminBucket(), workspaceId, scheduledDraft.id, scheduledDraft.scheduledAt, {
+  const studioReelsStartedAt = input.format === 'short_video' && dependencies.studioJob
+    ? (await dependencies.studioJob.get()).data()?.startedAt : undefined;
+  const reelsCheckpointId = scheduledDraft?.quotaJob ? scheduledDraft.id
+    : dependencies.studioJob ? `draft_${dependencies.studioJob.id}` : undefined;
+  const reelsCheckpointAt = scheduledDraft?.scheduledAt ?? studioReelsStartedAt;
+  const reelsCheckpoint = input.format === 'short_video' && reelsCheckpointId && typeof reelsCheckpointAt === 'number' && Number.isFinite(reelsCheckpointAt)
+    ? scheduledReelsCheckpoint(() => dependencies.storage || adminBucket(), workspaceId, reelsCheckpointId, reelsCheckpointAt, {
       input: { ...input, explicitTopic: dependencies.scheduledExplicitTopic, references: references.map(({ id, title, category }) => ({ id, title, category })) },
       fingerprint,
       images: [...visualReferences, ...originalAssets].map(item => item.bytes),
       ...(Object.keys(reelModels).length ? { models: reelModels } : {}),
     })
     : null;
-  const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId, scheduledDraft?.quotaJob);
+  const generationQuota = await reserveGenerationAttempt(ref, workspaceId, planId, scheduledDraft?.quotaJob ?? dependencies.studioJob);
   progress('script');
   const cachedReelsScript = await reelsCheckpoint?.loadScript();
   const generated = cachedReelsScript ?? await (dependencies.generate || generateContentWithSavedAgent)({
@@ -213,7 +220,7 @@ export async function createSocialContent(request: Request, dependencies: {
     } : {}),
   }, { model: scriptModel });
   if(scheduledEditorial&&!generated.draft.qualityReview.passed)throw new ApiError(422,'Naskah belum lolos pemeriksaan. Veloxa perlu menyusunnya ulang.','scheduled_script_rejected');
-  const draft: ContentDraft = { ...generated.draft, id: scheduledDraft?.id??`draft_${randomUUID()}`, status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
+  const draft: ContentDraft = { ...generated.draft, id: scheduledDraft?.id ?? (dependencies.studioJob ? `draft_${input.operationId}` : `draft_${randomUUID()}`), status: generated.draft.qualityReview.passed ? 'approved' : 'draft' };
   if (input.format === 'short_video' && draft.videoScenes?.length) {
     draft.videoScenes = draft.videoScenes.map((scene, index) =>
       index === 0 ? { ...scene, textOverlay: draft.title } : scene,
@@ -552,6 +559,7 @@ export async function createSocialContent(request: Request, dependencies: {
   const draftRef=ref.collection('social_drafts').doc(draft.id);
   const record=JSON.parse(JSON.stringify({ draft, targetBindings, targetAccounts, targetProviders, storagePath: media.storagePath, ...(storagePaths ? { storagePaths } : {}), ...(videoStoragePath ? { videoStoragePath } : {}), createdBy: user.uid, createdAt: Date.now(),...(input.operationId?{operationId:input.operationId}:{}), engineMode: generated.engineMode, profileFingerprint:fingerprint, snapshotRevision:draft.profileContext.snapshotRevision, forbiddenWordsAtGeneration:brand.forbiddenWords }));
   if(scheduledDraft)await scheduledDraft.persist(draftRef,record);
+  else if (dependencies.persistStudioDraft) await dependencies.persistStudioDraft(draftRef, record);
   else await draftRef.create(record);
   if (reuseReelsMedia) await reelsCheckpoint?.remove();
   return { draft, engineMode: generated.engineMode, generationQuota };

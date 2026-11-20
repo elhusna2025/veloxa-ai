@@ -27,7 +27,7 @@ const savedScript = z.object({
     draft: z.object({
       id: z.string(),
       workspaceId: z.string(),
-      source: z.literal('autonomous_agent'),
+      source: z.enum(['autonomous_agent', 'manual_studio']),
       format: z.literal('short_video'),
       status: z.enum(['draft', 'approved', 'scheduled']),
       title: z.string().min(1),
@@ -38,7 +38,7 @@ const savedScript = z.object({
       channelStatuses: z.array(z.object({ channel: socialChannel, status: z.enum(['pending', 'scheduled']) })),
       usedRealAssetIds: z.array(z.string()),
       qualityReview: z.object({
-        passed: z.literal(true), score: z.number(), repairAttempts: z.number(), summary: z.string(), issues: z.array(z.string()),
+        passed: z.boolean(), score: z.number(), repairAttempts: z.number(), summary: z.string(), issues: z.array(z.string()),
         checkedAspects: z.object({
           brandAlignment: z.boolean(), typographyContrast: z.boolean(), copyAccuracy: z.boolean(), styleReferenceMatch: z.boolean(),
         }),
@@ -52,7 +52,7 @@ const savedScript = z.object({
       }).passthrough()).length(REELS_SPEC.sceneCount),
     }).passthrough(),
   }),
-});
+}).refine(saved => saved.result.draft.source !== 'autonomous_agent' || saved.result.draft.qualityReview.passed);
 
 function digest(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');

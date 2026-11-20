@@ -25,6 +25,7 @@ export async function readGenerationStream<T>(response: Response, onProgress: (p
     if (typeof event.requestId === 'string' && /^[a-f0-9-]{36}$/.test(event.requestId)) requestId = event.requestId;
     if (event.type === 'progress' && isGenerationStage(event.stage)) { stage = event.stage; onProgress({ stage: event.stage }); }
     if (event.type === 'error') throw new ContentGenerationError(typeof event.error === 'string' ? event.error : 'Konten belum dapat dibuat.', isGenerationStage(event.stage) ? event.stage : stage, requestId, event.uncertain === true);
+    if (event.type === 'pending') throw new ContentGenerationError('Progres tersimpan. Veloxa sedang melanjutkan percobaan yang sama.', isGenerationStage(event.stage) ? event.stage : stage, requestId, true);
     if (event.type === 'complete' && event.data?.draft?.id && event.data?.draft?.renderedMedia?.url) return { value: event.data as T };
   }
   try {

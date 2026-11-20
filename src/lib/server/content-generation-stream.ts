@@ -17,6 +17,10 @@ export function streamContentGeneration<T>(generate: (progress: (event: Generati
         catch (error) {
           const stage = error instanceof GenerationStageError ? error.stage : 'validation';
           const response = errorResponse(error); const safe = await response.json();
+          if (safe.code === 'content_operation_pending' || safe.code === 'content_agent_pending') {
+            send({ type: 'pending', stage });
+            return;
+          }
           // Whitelisted diagnostics only: no provider output, prompts, credentials, or URLs.
           console.error(JSON.stringify({ event: 'content_generation_failed', requestId, stage, code: safe.code, status: response.status }));
           send({ type: 'error', stage, error: safe.error, code: safe.code, uncertain: stage === 'saving' });

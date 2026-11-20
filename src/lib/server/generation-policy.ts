@@ -44,7 +44,8 @@ export async function reserveGenerationAttempt(
     const currentPlan = workspace.subscriptionPlanId === undefined ? planId : effectiveWorkspacePlan(workspace);
     const policy = await generationPolicy(ref, workspaceId, currentPlan, tx);
     const job = scheduledJob ? (await tx.get(scheduledJob)).data() : undefined;
-    if (scheduledJob && job?.state !== 'generating') {
+    const studioJob = scheduledJob?.parent?.id === 'generation_jobs';
+    if (scheduledJob && job?.state !== (studioJob ? 'running' : 'generating')) {
       throw new ApiError(409, 'Slot Otonom sudah berubah. Periksa jadwal sebelum melanjutkan.');
     }
     // Recovery belongs to the same slot and its original WIB reservation, including after midnight.
