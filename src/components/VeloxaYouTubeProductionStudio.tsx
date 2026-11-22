@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VeloxaSelect } from './VeloxaSelect';
 import { VeloxaYouTubePublish } from './VeloxaYouTubePublish';
+import { VeloxaYouTubeProgress } from './VeloxaYouTubeProgress';
 import { veloxaApi } from '@/lib/veloxa-api-client';
 import { productionResources, productionStageLabel, youtubeProductionSettings, youtubeVoices, type YouTubeProduction, type YouTubeProductionSettings, type YouTubeScriptBlock } from '@/lib/youtube-production';
 
@@ -44,18 +45,21 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
   }, [endpoint, props.ready]);
   useEffect(() => {
     if (!currentId || !currentState || !['planning', 'scripting', 'characters', 'producing'].includes(currentState)) return;
-    const controller = new AbortController(); let running = false;
+    const controller = new AbortController(); let reading = false, processing = false;
     const poll = async () => {
-      if (running || controller.signal.aborted) return; running = true;
+      if (reading || controller.signal.aborted) return; reading = true;
       try {
         const latest = await veloxaApi<{ production: YouTubeProduction }>(endpoint(currentId), { signal: controller.signal, redirect: 'error' });
         if (!controller.signal.aborted) apply(latest.production);
-        if (active(latest.production) && (!latest.production.retryAt || latest.production.retryAt <= Date.now())) {
-          const result = await veloxaApi<{ production: YouTubeProduction }>(endpoint(currentId), { method: 'POST', body: JSON.stringify({ action: 'process' }), signal: controller.signal, redirect: 'error' });
-          if (!controller.signal.aborted) { apply(result.production); setError(''); }
+        if (!processing && !latest.production.progress?.working && active(latest.production) && (!latest.production.retryAt || latest.production.retryAt <= Date.now())) {
+          processing = true;
+          void veloxaApi<{ production: YouTubeProduction }>(endpoint(currentId), { method: 'POST', body: JSON.stringify({ action: 'process' }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(250_000)]), redirect: 'error' })
+            .then(result => { if (!controller.signal.aborted) { apply(result.production); setError(''); } })
+            .catch(() => { /* The independent status poll reconciles this same saved operation. */ })
+            .finally(() => { processing = false; });
         }
       } catch { if (!controller.signal.aborted) setError('Pemeriksaan koneksi terputus. Produksi yang sama tetap tersimpan dan akan diperiksa kembali.'); }
-      finally { running = false; }
+      finally { reading = false; }
     };
     void poll(); const timer = setInterval(() => { void poll(); }, 4000);
     return () => { controller.abort(); clearInterval(timer); };
@@ -74,7 +78,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
     const result = await veloxaApi<{ production: YouTubeProduction }>(endpoint(), { method: 'POST', body: JSON.stringify({ id: pending.current.id, settings: parsed }), redirect: 'error' });
     apply(result.production); setSelected(result.production.id); setSettings(defaults); pending.current = null;
   }); }
-  function action(value: 'approve_script' | 'approve_characters' | 'stop' | 'resume') { if (!current) return; void run('Menyimpan pilihan…', async () => {
+  function action(value: 'approve_script' | 'approve_characters' | 'stop' | 'resume' | 'retry_now') { if (!current) return; void run('Menyimpan pilihan…', async () => {
     const result = await veloxaApi<{ production: YouTubeProduction }>(endpoint(current.id), { method: 'POST', body: JSON.stringify({ action: value, revision: current.revision, confirmed: true }), redirect: 'error' }); apply(result.production);
   }); }
   function character(id: string, patch: Partial<YouTubeProductionSettings['characters'][number]>) { setSettings(value => ({ ...value, characters: value.characters.map(actor => actor.id === id ? { ...actor, ...patch } : actor) })); }
@@ -101,8 +105,8 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
       <p className="rounded-lg bg-[#faf2f5] p-4 text-base text-[#682943]">Target {resources.minutes} menit · {resources.scenes} adegan · sekitar {resources.minWords.toLocaleString('id-ID')}–{resources.maxWords.toLocaleString('id-ID')} kata. Gambar dan suara dibuat setelah naskah ditinjau.</p><p className="text-sm text-neutral-600">Suara menggunakan AI. Pilihan suara dan pembawaan belum meniru rekaman suara pribadi.</p><button type="button" className={primary} disabled={Boolean(busy) || !props.ready || !youtubeProductionSettings.safeParse(settings).success} onClick={create}>{busy || 'Susun naskah dengan AI'}</button>
     </section> : <>
       <section className={panel}><p className="text-sm font-medium text-[#a92e5d]">{productionStageLabel[current.state]}</p><h3 className="text-xl font-semibold">{current.outline?.title || current.settings.topic}</h3><p>{current.settings.minutes} menit · {current.settings.kind === 'short' ? '9:16' : '16:9'}</p>
-        {active(current) && <div role="status"><p>{current.state === 'scripting' ? `${current.blocks.length} dari ${current.settings.minutes} menit naskah tersimpan.` : current.state === 'producing' ? `${current.completedScenes} dari ${resources.scenes} adegan video tersimpan.` : productionStageLabel[current.state]}</p><p className="mt-2 text-sm text-neutral-500">Proses tersimpan dan dapat dilanjutkan saat kembali ke Studio.</p></div>}
-        {current.message && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">{current.message}</p>}
+        <VeloxaYouTubeProgress production={current} />
+        {current.state === 'producing' && Boolean(current.progress?.attempts) && !current.progress?.working && <button type="button" disabled={Boolean(busy)} className={secondary} onClick={() => action('retry_now')}>Coba perbaikan sekarang</button>}
         {current.settings.characters.length > 0 && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{current.settings.characters.map(actor => <article key={actor.id} className="min-w-0 rounded-lg border p-3">{viewer && current.portraits?.includes(actor.id) && <img src={media(actor.id + '.jpg')} alt={`Acuan tetap ${actor.name}`} className="mb-3 aspect-square w-full rounded-lg object-cover" />}<p className="font-semibold">{actor.name}</p><p className="mt-1 text-sm text-neutral-600">Suara: {actor.voice}</p>{viewer && current.portraits?.includes(actor.id) && <audio controls preload="none" aria-label={`Contoh suara ${actor.name}`} src={media(actor.id + '.wav')} className="mt-3 w-full min-w-0" />}<p className="mt-1 break-words text-sm text-neutral-600">{actor.appearance}</p>{current.state === 'character_review' && <button type="button" className={secondary + ' mt-3'} disabled={Boolean(busy) || Boolean(actorEdit)} onClick={() => setActorEdit({ ...actor })}>Perbaiki {actor.name}</button>}</article>)}</div>}
         {actorEdit && <fieldset className="min-w-0 space-y-3 rounded-lg border p-4"><legend>Perubahan belum disimpan · {actorEdit.name}</legend><Label title="Penampilan tetap"><textarea className={field} rows={3} value={actorEdit.appearance} onChange={event => setActorEdit(value => value ? { ...value, appearance: event.target.value } : value)} /></Label><Label title="Suara tetap">{voiceSelect(actorEdit.voice, voice => setActorEdit(value => value ? { ...value, voice } : value), 'Suara karakter yang diperbaiki')}</Label><Label title="Pembawaan suara"><textarea className={field} rows={2} value={actorEdit.delivery} onChange={event => setActorEdit(value => value ? { ...value, delivery: event.target.value } : value)} /></Label><div className="flex flex-wrap gap-3"><button className={primary} disabled={Boolean(busy)} onClick={reviseCharacter}>Buat ulang acuan karakter ini</button><button className={secondary} disabled={Boolean(busy)} onClick={() => setActorEdit(null)}>Batalkan perubahan</button></div></fieldset>}{current.state === 'character_review' && <><p>Tinjau wajah dan identitas semua pemeran. Acuan yang sama dipakai di setiap adegan terkait.</p><button disabled={Boolean(busy) || Boolean(actorEdit)} className={primary} onClick={() => action('approve_characters')}>Gunakan pemeran ini & produksi video</button></>}
         {current.state === 'script_review' && <><p>Produksi akan membuat {resources.scenes} gambar, {resources.minutes} menit dialog, serta animasi kamera.</p><button disabled={Boolean(busy) || Boolean(editing)} className={primary} onClick={() => action('approve_script')}>{current.settings.characters.length ? 'Naskah sesuai · buat acuan pemeran' : 'Naskah sesuai · produksi video'}</button></>}

@@ -13,6 +13,7 @@ import type { BrandProfile } from '../veloxa-types';
 
 const exec = promisify(execFile);
 const fps = 25;
+export const YOUTUBE_LAYOUT_VERSION = 2;
 export function sceneFrameCounts(durations: number[], targetSeconds: number) {
   if (durations.length !== 4 || durations.some(value => !Number.isFinite(value) || value <= 0)) throw new Error('Durasi adegan tidak valid.');
   const total = durations.reduce((sum, value) => sum + value, 0);
@@ -26,34 +27,60 @@ export function sceneFrameCounts(durations: number[], targetSeconds: number) {
   });
 }
 /** Reject busy/low-contrast photo space; never cover it with a dark card or wash. */
-export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile) {
+export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile, sceneIndex = 0) {
   const { width, height } = productionResources(settings);
   const vertical = settings.kind === 'short';
   const x = vertical ? 50 : 70, y = vertical ? 230 : 110, copyWidth = vertical ? 480 : 520;
-  const raw = await sharp(photo).resize(width, height).removeAlpha().raw().toBuffer();
-  // Include the full motion sweep, rather than measuring only the starting photo.
-  const region = await sharp(raw, { raw: { width, height, channels: 3 } })
-    .extract({ left: x - 8, top: y - 30, width: copyWidth + 72, height: vertical ? 530 : 440 }).resize(100, 80).raw().toBuffer();
-  let darkest = 1, brightest = 0;
+  const raw = await sharp(photo).resize(width, height).toColourspace('srgb').removeAlpha().raw().toBuffer();
   const linear = (v: number) => { const n = v / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4; };
-  for (let i = 0; i < region.length; i += 3) {
-    const l = .2126 * linear(region[i]) + .7152 * linear(region[i + 1]) + .0722 * linear(region[i + 2]);
-    darkest = Math.min(darkest, l); brightest = Math.max(brightest, l);
-  }
-  const ink = (darkest + .05) / .05 >= 4.5 ? '#111111' : 1.05 / (brightest + .05) >= 4.5 ? '#FFFFFF' : null;
-  if (!ink) throw new Error('Foto perlu ruang teks yang lebih tenang. Adegan ini akan diperbaiki.');
-  const layers: OverlayOptions[] = [];
-  const add = async (text: string, top: number, maxHeight: number, size: number, bold = false) => {
-    const rendered = await fitVideoText(text, copyWidth, maxHeight, size, size, ink, bold);
-    if (rendered) layers.push({ input: rendered.data, left: x, top });
+  // Fit first. Contrast applies to the actual lettering, not to unused space below
+  // it or the subject beside it. The previous oversized rectangle rejected readable photos.
+  const text: { rendered: NonNullable<Awaited<ReturnType<typeof fitVideoText>>>; top: number; samples: [number, number][] }[] = [];
+  const add = async (value: string, top: number, maxHeight: number, size: number, bold = false) => {
+    const rendered = await fitVideoText(value, copyWidth, maxHeight, size, size, '#FFFFFF', bold);
+    if (rendered) {
+      const mask = await sharp(rendered.data).extractChannel('alpha').raw().toBuffer();
+      const samples: [number, number][] = [];
+      for (let row = 0; row < rendered.height; row += 2) for (let col = 0; col < rendered.width; col += 2) if (mask[row * rendered.width + col] >= 170) samples.push([col, row]);
+      text.push({ rendered, top, samples });
+    }
     return rendered?.height ?? 0;
   };
   await add(brand.businessName, y, 60, vertical ? 25 : 26);
-  const headlineTop = y + 85;
-  const headlineHeight = await add(scene.title, headlineTop, vertical ? 230 : 210, vertical ? 56 : 54, true);
+  const headlineTop = y + (vertical ? 60 : 85);
+  const headlineHeight = await add(scene.title, headlineTop, vertical ? 230 : 210, vertical ? 48 : 54, true);
+  await add(scene.supporting, headlineTop + headlineHeight + (vertical ? 32 : 55), vertical ? 200 : 150, 30);
+  const mode = sceneIndex % 4;
+  const inks = [brand.primaryColorHex, '#111111', '#FFFFFF'].filter(color => /^#[0-9a-f]{6}$/i.test(color));
+  const luminance = (color: string) => .2126 * linear(parseInt(color.slice(1, 3), 16)) + .7152 * linear(parseInt(color.slice(3, 5), 16)) + .0722 * linear(parseInt(color.slice(5, 7), 16));
+  let placement: { dx: number; dy: number; ink: string } | undefined;
+  for (const [dx, dy] of [[0, 0], [0, -36], [0, 48], [32, 0], [32, 48], [0, 84]]) {
+    if (text.some(block => x + dx + block.rendered.width > width - 70 || block.top + dy < (vertical ? 180 : 50) || block.top + dy + block.rendered.height > (vertical ? height - 320 : height - 50))) continue;
+    let darkest = 1, brightest = 0;
+    for (let time = 0; time <= 16; time++) {
+      const progress = time / 16, zoom = mode === 3 ? 1.09 - .09 * progress : mode === 0 ? 1 + .09 * progress : 1.09;
+      const horizontal = mode === 1 ? progress : mode === 2 ? 1 - progress : .5;
+      for (const block of text) for (const [col, row] of block.samples) {
+        const sx = Math.min(width - 1, Math.max(0, Math.round((x + dx + col) / zoom + width * (1 - 1 / zoom) * horizontal)));
+        const sy = Math.min(height - 1, Math.max(0, Math.round((block.top + dy + row) / zoom + height * (1 - 1 / zoom) * .5)));
+        const offset = (sy * width + sx) * 3;
+        const light = .2126 * linear(raw[offset]) + .7152 * linear(raw[offset + 1]) + .0722 * linear(raw[offset + 2]);
+        darkest = Math.min(darkest, light); brightest = Math.max(brightest, light);
+      }
+    }
+    const ink = inks.find(color => { const light = luminance(color); return light <= darkest ? (darkest + .05) / (light + .05) >= 4.5 : light >= brightest && (light + .05) / (brightest + .05) >= 4.5; });
+    if (ink) { placement = { dx, dy, ink }; break; }
+  }
+  if (!placement) throw new Error('Foto perlu ruang teks yang lebih tenang. Adegan ini akan diperbaiki.');
+  const { dx, dy, ink } = placement;
+  const layers: OverlayOptions[] = [];
+  for (const block of text) {
+    const mask = await sharp(block.rendered.data).extractChannel('alpha').raw().toBuffer();
+    const rgba = await sharp({ create: { width: block.rendered.width, height: block.rendered.height, channels: 3, background: ink } }).joinChannel(mask, { raw: { width: block.rendered.width, height: block.rendered.height, channels: 1 } }).png().toBuffer();
+    layers.push({ input: rgba, left: x + dx, top: block.top + dy });
+  }
   const accent = /^#[0-9a-f]{6}$/i.test(brand.accentColorHex) ? brand.accentColorHex : '#A92E5D';
-  layers.push({ input: Buffer.from(`<svg width="${copyWidth}" height="16"><path d="M2 10 Q${copyWidth / 2} 0 ${copyWidth - 2} 10" fill="none" stroke="${accent}" stroke-width="6"/></svg>`), left: x, top: headlineTop + headlineHeight + 12 });
-  await add(scene.supporting, headlineTop + headlineHeight + 55, vertical ? 200 : 150, vertical ? 30 : 30);
+  layers.push({ input: Buffer.from(`<svg width="${copyWidth}" height="16"><path d="M2 10 Q${copyWidth / 2} 0 ${copyWidth - 2} 10" fill="none" stroke="${accent}" stroke-width="6"/></svg>`), left: x + dx, top: headlineTop + headlineHeight + 12 + dy });
   const overlay = await sharp({ create: { width, height, channels: 4, background: '#00000000' } }).composite(layers).png().toBuffer();
   const image = await sharp(photo).resize(width, height).composite([{ input: overlay }]).jpeg({ quality: 92 }).toBuffer();
   return { photo: await sharp(photo).resize(width, height).jpeg({ quality: 92 }).toBuffer(), overlay, image };

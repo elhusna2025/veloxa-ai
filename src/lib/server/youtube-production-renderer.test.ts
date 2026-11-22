@@ -37,6 +37,14 @@ test('both video canvases keep measured text on natural photo space and reject u
     await assert.rejects(composeYouTubeFrame(strip, scene, settings, brand), /ruang teks/);
   }
 });
+
+test('a dark object outside the actual moving lettering no longer rejects a readable photograph', async () => {
+  const settings = youtubeProductionSettings.parse({ kind: 'short', minutes: 1, topic: 'Pahami manfaat catatan usaha', voice: 'marin' });
+  const photo = await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#efefed' } })
+    .composite([{ input: Buffer.from('<svg width="720" height="90"><rect width="720" height="90" fill="black"/></svg>'), left: 0, top: 680 }]).jpeg().toBuffer();
+  const frame = await composeYouTubeFrame(photo, scene, settings, blankBusinessProfile('ws', 'primary', 'Dafini Code'));
+  assert.ok(frame.image.length > 1000);
+});
 test('real segmented rendering produces a continuous H264/AAC MP4 with both scenes', { timeout: 120_000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'youtube-production-test-'));
   try {

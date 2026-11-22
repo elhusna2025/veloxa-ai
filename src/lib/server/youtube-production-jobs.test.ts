@@ -86,3 +86,24 @@ test('a rejected cast reference gets a new version without changing speaker IDs 
   const settings = result.settings as YouTubeProductionSettings;
   assert.equal(settings.characters[0].id, 'actor_1'); assert.equal(settings.characters[0].name, 'Rani'); assert.equal(settings.characters[0].voice, 'sage');
 });
+
+test('manual recovery requeues the same checkpoints without holding navigation for AI work', async () => {
+  const f = fixture(); await f.create();
+  const saved = (await f.jobRef().get()).data()!;
+  f.store.rows.set(f.jobRef().path, { ...saved, state: 'attention', scriptIndex: 1, imageIndex: 2,
+    audioIndex: 0, attempts: 8, nextRunAt: Number.MAX_SAFE_INTEGER,
+    outline: { title: 'Judul tersimpan', description: '', chapters: ['Awal'] } });
+  const quotaRows = [...f.store.rows.keys()].filter(key => key.includes('quotas/'));
+  let response = await f.action({ action: 'resume', revision: saved.revision, confirmed: true });
+  assert.equal(response.status, 200);
+  let current = (await f.jobRef().get()).data()!;
+  assert.equal(current.state, 'producing'); assert.equal(current.imageIndex, 2); assert.equal(current.scriptIndex, 1);
+  assert.equal(current.lease, null); assert.equal(current.attempts, 0); assert.ok(Number(current.nextRunAt) <= Date.now());
+  f.store.rows.set(f.jobRef().path, { ...current, attempts: 2, retryAt: Date.now() + 60_000, nextRunAt: Date.now() + 60_000 });
+  response = await f.action({ action: 'retry_now', revision: current.revision, confirmed: true });
+  assert.equal(response.status, 200);
+  current = (await f.jobRef().get()).data()!;
+  assert.equal(current.imageIndex, 2); assert.equal(current.attempts, 2); assert.equal(current.lease, null);
+  assert.deepEqual([...f.store.rows.keys()].filter(key => key.includes('quotas/')), quotaRows);
+  assert.equal((await f.action({ action: 'retry_now', revision: saved.revision, confirmed: true })).status, 409);
+});

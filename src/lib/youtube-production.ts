@@ -39,7 +39,35 @@ export type YouTubeProduction = {
   createdAt: number; updatedAt: number; retryAt?: number; message?: string;
   durationSeconds?: number; videoBytes?: number;
   portraits?: string[];
+  progress?: { images: number; audio: number; rendered: number; characters: number; attempts: number; working: boolean; checkedAt: number };
 };
+export type ProductionProgressStep = { id: string; label: string; done: number; total: number; status: 'complete' | 'current' | 'waiting' };
+export function productionProgress(value: YouTubeProduction) {
+  const count = productionResources(value.settings).scenes, p = value.progress;
+  const bounded = (n: number | undefined, total: number) => Math.max(0, Math.min(total, Number.isFinite(n) ? Math.floor(n!) : 0));
+  const scripts = bounded(value.blocks.length, value.settings.minutes);
+  const rows = [
+    { id: 'script', label: 'Naskah', done: scripts + (value.outline ? 1 : 0), total: value.settings.minutes + 1 },
+    ...(value.settings.characters.length ? [{ id: 'characters', label: 'Karakter & contoh suara', done: bounded(p?.characters ?? value.portraits?.length, value.settings.characters.length), total: value.settings.characters.length }] : []),
+    { id: 'images', label: 'Gambar adegan', done: bounded(p?.images, count), total: count },
+    { id: 'audio', label: 'Narasi & dialog', done: bounded(p?.audio, value.settings.minutes), total: value.settings.minutes },
+    { id: 'render', label: 'Video akhir', done: bounded(p?.rendered ?? value.completedScenes, count) + (value.state === 'ready' ? 1 : 0), total: count + 1 },
+  ];
+  // A completed production confirms all stages, including records predating detailed counters.
+  if (value.state === 'ready') rows.forEach(row => { row.done = row.total; });
+  const first = rows.findIndex(row => row.done < row.total);
+  const steps: ProductionProgressStep[] = rows.map((row, index) => ({ ...row, status: row.done === row.total ? 'complete' : index === first ? 'current' : 'waiting' }));
+  const phase = first < 0 ? 'complete' : rows[first].id;
+  let detail = phase === 'script' ? value.outline ? `Menulis naskah menit ${Math.min(scripts + 1, value.settings.minutes)} dari ${value.settings.minutes}` : 'Menyusun alur dan kerangka video'
+    : phase === 'characters' ? `Membuat acuan karakter dan contoh suara ${Math.min((p?.characters ?? 0) + 1, value.settings.characters.length)} dari ${value.settings.characters.length}`
+    : phase === 'images' ? p ? `Membuat gambar adegan ${Math.min(p.images + 1, count)} dari ${count}` : 'Menyiapkan gambar dan suara'
+    : phase === 'audio' ? `Membuat suara untuk menit ${Math.min((p?.audio ?? 0) + 1, value.settings.minutes)} dari ${value.settings.minutes}`
+    : phase === 'render' ? (p?.rendered ?? value.completedScenes) >= count ? 'Menggabungkan adegan menjadi video akhir' : `Merender adegan ${Math.min((p?.rendered ?? value.completedScenes) + 1, count)} dari ${count}` : 'Video selesai dan siap diputar';
+  if (value.state === 'script_review') detail = 'Naskah selesai. Menunggu tinjauan Anda sebelum membuat media.';
+  if (value.state === 'character_review') detail = 'Acuan karakter selesai. Menunggu tinjauan Anda sebelum membuat adegan.';
+  if (value.state === 'cancelled') detail = 'Produksi dihentikan. Bagian yang sudah selesai tetap tersimpan.';
+  return { steps, phase, detail, done: rows.reduce((sum, row) => sum + row.done, 0), total: rows.reduce((sum, row) => sum + row.total, 0) };
+}
 export function productionResources(settings: YouTubeProductionSettings) {
   return { minutes: settings.minutes, blocks: settings.minutes, scenes: settings.minutes * 4,
     minWords: settings.minutes * 105, maxWords: settings.minutes * 125,
