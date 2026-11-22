@@ -14,12 +14,15 @@ Implementasi ini hanya memberi izin baca metadata kanal milik akun Google, menam
 | Variabel | Persyaratan |
 | --- | --- |
 | `YOUTUBE_OAUTH_ENABLED` | Harus bernilai `true` untuk mengizinkan consent baru. |
+| `YOUTUBE_OAUTH_ALLOWED_WORKSPACE_IDS` | ID workspace Veloxa yang diizinkan, dipisahkan koma. Daftar kosong, entri tidak valid, atau wildcard menonaktifkan consent. |
 | `YOUTUBE_CLIENT_ID` | Client ID aplikasi web dari Google Auth Platform. |
 | `YOUTUBE_CLIENT_SECRET` | Secret OAuth aplikasi web. |
 | `YOUTUBE_REDIRECT_URI` | URL callback HTTPS terdaftar dengan path persis sebagaimana dijelaskan di atas. |
 | `YOUTUBE_TOKEN_ENCRYPTION_KEY` | Kunci acak 32 byte dalam format Base64 standar kanonis dengan padding, bukan Base64URL. |
 
 Simpan variabel di pengelola konfigurasi server. Jangan menambahkan awalan `NEXT_PUBLIC_`, menyalin nilai ke repositori, atau mencatat kode OAuth, parameter callback, isi respons provider, maupun token dalam log aplikasi atau akses. Perubahan konfigurasi membatalkan consent tertunda; koneksi lama yang tidak lagi cocok ditampilkan sebagai `reconnect_required` dan tidak ditimpa sampai pemilik mengonfirmasi grant baru.
+
+Untuk uji terbatas, masukkan hanya ID workspace yang disetujui. Jika workspace tidak tercantum, daftar menampilkan `configured:false` tanpa opsi kanal tertunda, permintaan mulai dan simpan menerima `503 youtube_not_configured`, dan callback gagal sebelum pertukaran token. Pemilik tetap dapat memutuskan koneksi tersimpan secara lokal.
 
 ## Kontrak backend untuk integrasi UI
 

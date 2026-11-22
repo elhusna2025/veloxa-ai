@@ -7,7 +7,7 @@ import { resolveBusinessContext } from './business-contexts';
 import { adminDb } from './firebase';
 import { ApiError, errorResponse, noStoreJson, readJson } from './http';
 import { attachOAuthBrowserState, clearOAuthBrowserState, verifyOAuthBrowserState } from './oauth-browser-state';
-import { YOUTUBE_CALLBACK_PATH, YOUTUBE_READONLY_SCOPE, youtubeConfig, youtubeNotConfigured, youtubeRedirect, type YouTubeConfig, type YouTubeEnv } from './youtube-config';
+import { YOUTUBE_CALLBACK_PATH, YOUTUBE_READONLY_SCOPE, youtubeConfigForWorkspace, youtubeNotConfigured, youtubeRedirect, type YouTubeConfig, type YouTubeEnv } from './youtube-config';
 import { encryptYouTubeTokens } from './youtube-crypto';
 import { buildYouTubeAuthorizeUrl, exchangeYouTubeGrant, publicYouTubeChannel, youtubeChannel, youtubeChannelId, YOUTUBE_CHANNEL_LIMIT } from './youtube-google';
 
@@ -114,12 +114,12 @@ export function startYouTube(request: Request, deps: Dependencies = {}) {
     const stateRef = db.collection('_youtube_oauth_states').doc(stateDigest(state));
     const url = await db.runTransaction(async tx => {
       await ownerBusiness(tx, ref, user.uid, businessId);
+      const config = youtubeConfigForWorkspace(workspaceId, deps.env);
+      if (!config) throw youtubeNotConfigured();
       const current = await generation(tx, guard);
       if (current !== startRevision) {
         throw new ApiError(409, 'Sesi koneksi YouTube telah berubah. Muat ulang daftar sebelum memulai kembali.', 'youtube_start_conflict');
       }
-      const config = youtubeConfig(deps.env);
-      if (!config) throw youtubeNotConfigured();
       const next = nextGeneration(current);
       const expiresAt = (deps.now ?? Date.now)() + ttlMs;
       // Percobaan baru membatalkan pilihan tertunda, bukan koneksi yang sudah disimpan.
@@ -140,30 +140,29 @@ async function finishYouTube(request: Request, url: URL, state: string, deps: De
   const db = deps.database ?? adminDb();
   const now = deps.now ?? Date.now;
   const stateRef = db.collection('_youtube_oauth_states').doc(stateDigest(state));
-  const raw = await db.runTransaction(async tx => {
-    const value = (await tx.get(stateRef)).data();
-    const parsed = stateRecord.safeParse(value);
+  const { actor, config } = await db.runTransaction(async tx => {
+    const parsed = stateRecord.safeParse((await tx.get(stateRef)).data());
     if (!parsed.success) throw reconnect();
     // The cookie secret is independent of the public authorize URL. Validate
     // its stored digest before consuming state, within the same transaction.
     verifyOAuthBrowserState(request, 'youtube', parsed.data.browserSecretDigest);
+    const activeConfig = youtubeConfigForWorkspace(parsed.data.workspaceId, deps.env);
+    if (!activeConfig) throw reconnect();
     tx.delete(stateRef);
-    return value;
+    return { actor: parsed.data, config: activeConfig };
   });
   onBrowserVerified();
   // Penghapusan sudah dikomit; pembatalan atau kegagalan berikutnya tidak dapat memutar ulang state.
-  const actor = stateRecord.safeParse(raw);
-  const config = youtubeConfig(deps.env);
-  if (!config || !actor.success || actor.data.expiresAt <= now() || !matchesConfig(actor.data, config) || actor.data.redirectUri !== config.redirectUri) throw reconnect();
+  if (actor.expiresAt <= now() || !matchesConfig(actor, config) || actor.redirectUri !== config.redirectUri) throw reconnect();
   if (url.searchParams.has('error')) throw invalidCallback();
   const code = z.string().min(1).max(4096).regex(/^[\x21-\x7e]+$/).parse(url.searchParams.get('code'));
-  const { uid, workspaceId, businessId, verifier, expiresAt, generation: consentGeneration } = actor.data;
+  const { uid, workspaceId, businessId, verifier, expiresAt, generation: consentGeneration } = actor;
   const ref = db.collection('workspaces').doc(workspaceId);
   const { guard, pending } = refs(ref, businessId);
   const recheck = async (tx: Tx) => {
     await ownerBusiness(tx, ref, uid, businessId);
     const current = await generation(tx, guard);
-    const activeConfig = youtubeConfig(deps.env);
+    const activeConfig = youtubeConfigForWorkspace(workspaceId, deps.env);
     if (current !== consentGeneration || expiresAt <= now() || !activeConfig || !matchesConfig(config, activeConfig)) throw reconnect();
     return current;
   };
@@ -216,7 +215,7 @@ export function youtubeAccounts(request: Request, deps: Dependencies = {}) {
       const workspace = (await tx.get(ref)).data();
       if (!workspace || !hasWorkspaceAccess(user.uid, workspace, isVerifiedAdmin(user))) throw forbidden();
       await resolveBusinessContext(ref, workspace, businessId, tx);
-      const config = youtubeConfig(deps.env);
+      const config = youtubeConfigForWorkspace(workspaceId, deps.env);
       const saved = connectionRecord.safeParse((await tx.get(connection)).data());
       const startRevision = await generation(tx, guard);
       const grant = config ? currentPending((await tx.get(pending)).data(), workspace.ownerUid, startRevision, config, (deps.now ?? Date.now)()) : null;
@@ -242,11 +241,11 @@ export function selectYouTubeConnection(request: Request, deps: Dependencies = {
     const now = deps.now ?? Date.now;
     await ref.firestore.runTransaction(async tx => {
       await ownerBusiness(tx, ref, user.uid, businessId);
+      const config = youtubeConfigForWorkspace(workspaceId, deps.env);
+      if (!config) throw youtubeNotConfigured();
       const current = await generation(tx, guard);
       const raw = (await tx.get(pending)).data();
       const assigned = await tx.get(connections.where('channelId', '==', channelId));
-      const config = youtubeConfig(deps.env);
-      if (!config) throw youtubeNotConfigured();
       const grant = currentPending(raw, user.uid, current, config, now());
       if (!grant || grant.authorizationId !== authorizationId) throw reconnect();
       const channel = grant.channels.find(option => option.channelId === channelId);

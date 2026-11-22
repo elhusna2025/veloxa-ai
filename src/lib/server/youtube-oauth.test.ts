@@ -80,6 +80,7 @@ function fixture() {
   db.rows.set(meta, { accountId: '123' });
   const env: Record<string, string | undefined> = {
     YOUTUBE_OAUTH_ENABLED: 'true', YOUTUBE_CLIENT_ID: 'fixture-client', YOUTUBE_CLIENT_SECRET: secret,
+    YOUTUBE_OAUTH_ALLOWED_WORKSPACE_IDS: workspaceId,
     YOUTUBE_REDIRECT_URI: origin + callbackPath, YOUTUBE_TOKEN_ENCRYPTION_KEY: key.toString('base64'),
   };
   const options = { time: 1_000_000, uid: owner, channel: channelA, offline: true, beforeDiscovery: async () => {} };
@@ -349,6 +350,51 @@ test('Callback duplikat, kedaluwarsa, konfigurasi berubah, atau izin dibatalkan 
       assert.equal(f.calls.length, 0);
     }
   }
+});
+
+test('Workspace di luar daftar hanya melihat koneksi lokal dan dapat memutuskannya', async () => {
+  const f = fixture();
+  const saved = await f.consent();
+  assert.equal((await f.save(saved, channelA)).status, 200);
+  const grant = await f.consent();
+  const attempt = await f.begin(secondary);
+  f.env.YOUTUBE_OAUTH_ALLOWED_WORKSPACE_IDS = 'other-workspace';
+
+  const before = structuredClone(f.db.rows);
+  const writes = f.db.writeCount;
+  const calls = f.calls.length;
+  const view = await (await f.accounts()).json();
+  assert.equal(view.configured, false);
+  assert.equal(view.startRevision, 3);
+  assert.deepEqual(view.channels, []);
+  assert.equal('authorizationId' in view, false);
+  assert.equal(view.connection.channelId, channelA);
+  assert.equal(view.connection.revision, saved);
+  assert.equal(view.connection.status, 'reconnect_required');
+
+  const start = await f.start('primary', 0);
+  assert.equal(start.headers.has('set-cookie'), false);
+  await assertError(start, 503, 'youtube_not_configured');
+  await assertError(await f.save(grant, channelA), 503, 'youtube_not_configured');
+  const callback = await attempt.finish();
+  assertRedirect(callback, 'failed');
+  assert.equal(callback.headers.has('set-cookie'), false);
+  assert.deepEqual(f.db.rows, before);
+  assert.equal(f.db.writeCount, writes);
+  assert.equal(f.calls.length, calls);
+
+  assert.equal((await f.disconnect(channelA, saved)).status, 200);
+  assert.equal((await (await f.accounts()).json()).connection, null);
+  assert.equal(f.calls.length, calls);
+});
+
+test('Workspace yang dikeluarkan dari daftar selama discovery tidak menyimpan izin tertunda', async () => {
+  const f = fixture();
+  const attempt = await f.begin();
+  f.options.beforeDiscovery = async () => { f.env.YOUTUBE_OAUTH_ALLOWED_WORKSPACE_IDS = 'other-workspace'; };
+  assertRedirect(await attempt.finish(), 'failed');
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.db.rows.has(f.pending()), false);
 });
 
 test('Mutasi memerlukan pemilik aktual dan seluruh operasi memerlukan bisnis eksplisit yang masih ada', async () => {

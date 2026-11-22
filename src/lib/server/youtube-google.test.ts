@@ -6,6 +6,7 @@ import { exchangeYouTubeGrant } from './youtube-google';
 
 const config = youtubeConfig({
   YOUTUBE_OAUTH_ENABLED: 'true', YOUTUBE_CLIENT_ID: 'fixture-client', YOUTUBE_CLIENT_SECRET: 'fixture-client-secret',
+  YOUTUBE_OAUTH_ALLOWED_WORKSPACE_IDS: 'workspace-test',
   YOUTUBE_REDIRECT_URI: 'https://veloxa.example.test/api/veloxa/youtube/callback',
   YOUTUBE_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
 })!;
