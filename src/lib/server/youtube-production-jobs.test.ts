@@ -107,3 +107,21 @@ test('manual recovery requeues the same checkpoints without holding navigation f
   assert.deepEqual([...f.store.rows.keys()].filter(key => key.includes('quotas/')), quotaRows);
   assert.equal((await f.action({ action: 'retry_now', revision: saved.revision, confirmed: true })).status, 409);
 });
+
+test('reviewing a variable scene script updates its manifest before any paid media', async () => {
+  const f = fixture(); await f.create();
+  const ref = f.jobRef() as unknown as FirebaseFirestore.DocumentReference;
+  const words = block().scenes.flatMap(scene => scene.narration.split(' '));
+  const make = (count: number) => ({ ...block(), scenes: Array.from({ length: count }, (_, index) => {
+    const narration = words.slice(Math.floor(words.length * index / count), Math.floor(words.length * (index + 1) / count)).join(' ');
+    return { ...block().scenes[0], narration, lines: [{ speakerId: 'narrator', text: narration }] };
+  }) });
+  await runYouTubeProductionStep(ref, { reserve: async () => ({ mode: 'standard', day: '2026-11-22', used: 1, dailyLimit: 3 }), plan: async () => ({ title: 'Judul', description: '', chapters: ['Awal'] }) });
+  await runYouTubeProductionStep(ref, { script: async () => make(6) });
+  let saved = (await f.jobRef().get()).data()!;
+  assert.deepEqual(saved.sceneCounts, [6]);
+  const edited = await f.action({ action: 'edit', revision: saved.revision, index: 0, block: { scenes: make(9).scenes } });
+  assert.equal(edited.status, 200);
+  saved = (await f.jobRef().get()).data()!;
+  assert.deepEqual(saved.sceneCounts, [9]); assert.equal(saved.imageIndex, 0); assert.equal(saved.audioIndex, 0);
+});

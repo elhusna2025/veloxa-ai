@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { productionProgress, productionResources, validateCast, validateScriptBlock, youtubeProductionSettings, type YouTubeProduction } from './youtube-production';
+import { productionProgress, productionResources, validateCast, validateScriptBlock, segmentYouTubeNarration, youtubeSceneLocation, youtubeProductionSettings, type YouTubeProduction } from './youtube-production';
 
 const settings = youtubeProductionSettings.parse({ kind: 'video', minutes: 60, topic: 'Cara mengelola bisnis kecil dengan catatan yang terarah', voice: 'marin' });
-test('duration drives independent script and scene budgets, including long form', () => {
+test('duration drives script length without imposing a scene count', () => {
   for (const minutes of [1, 15, 30, 60, 120]) {
     const result = productionResources({ ...settings, minutes });
-    assert.equal(result.scenes, 4 * minutes);
+    assert.equal('scenes' in result, false);
     assert.equal(result.minWords, minutes * 105);
     assert.equal(result.maxWords, minutes * 125);
     assert.equal(result.width, 1280);
@@ -57,4 +57,25 @@ test('legacy status never fabricates completed media or completion before approv
   assert.match(productionProgress(item).detail, /Menunggu tinjauan/);
   assert.equal(productionProgress(item).steps.find(row => row.id === 'images')!.done, 0);
   item.state = 'producing'; assert.equal(productionProgress(item).detail, 'Menyiapkan gambar dan suara');
+});
+
+
+test('scene counts follow reviewed narration and global indexes span unequal minute blocks', () => {
+  const narration = 'Pahami satu contoh sederhana sebelum menentukan langkah berikutnya untuk usaha yang lebih terarah dan jujur.';
+  const scene = { ...block().scenes[0], narration, lines: [{ speakerId: 'narrator', text: narration }] };
+  const seven = validateScriptBlock({ scenes: Array.from({ length: 7 }, () => scene) });
+  assert.equal(seven.scenes.length, 7);
+  for (const [index, expected] of [[0, {blockIndex:0,sceneIndex:0}], [6,{blockIndex:0,sceneIndex:6}], [7,{blockIndex:1,sceneIndex:0}], [15,{blockIndex:2,sceneIndex:3}]] as const) assert.deepEqual(youtubeSceneLocation([7,5,9], index), expected);
+  assert.throws(() => youtubeSceneLocation([7,5,9], 21));
+});
+
+
+test('paragraphs become narration-driven shots without losing words or changing speakers', () => {
+  const text = 'Penjual menunjukkan kondisi barang dengan jujur kepada pembeli. Pembeli memeriksa bagian barang yang terlihat basah. Keduanya menyepakati transaksi dengan terbuka dan saling menghormati.';
+  const original = { ...block().scenes[0], narration: text, lines: [{speakerId:'actor_1',text}] };
+  const result = segmentYouTubeNarration({index:0,chapter:'Contoh',scenes:[original]});
+  assert.equal(result.scenes.length, 3);
+  assert.equal(result.scenes.map(scene=>scene.narration).join(' '), text);
+  assert.ok(result.scenes.every(scene=>scene.lines[0].speakerId==='actor_1'));
+  assert.ok(result.scenes[1].supporting.includes('basah'));
 });

@@ -28,7 +28,7 @@ export const youtubeSceneSchema = z.object({
   characterIds: z.array(z.string().regex(/^actor_[1-5]$/)).max(5),
   visual: z.string().trim().min(20).max(1200),
 }).strict();
-export const youtubeBlockSchema = z.object({ scenes: z.array(youtubeSceneSchema).length(4) }).strict();
+export const youtubeBlockSchema = z.object({ scenes: z.array(youtubeSceneSchema).min(1) }).strict();
 export type YouTubeScene = z.infer<typeof youtubeSceneSchema>;
 export type YouTubeScriptBlock = z.infer<typeof youtubeBlockSchema> & { index: number; chapter: string };
 export type YouTubeOutline = { title: string; description: string; chapters: string[] };
@@ -39,11 +39,12 @@ export type YouTubeProduction = {
   createdAt: number; updatedAt: number; retryAt?: number; message?: string;
   durationSeconds?: number; videoBytes?: number;
   portraits?: string[];
+  sceneFrames?: number[];
   progress?: { images: number; audio: number; rendered: number; characters: number; attempts: number; working: boolean; checkedAt: number };
 };
 export type ProductionProgressStep = { id: string; label: string; done: number; total: number; status: 'complete' | 'current' | 'waiting' };
 export function productionProgress(value: YouTubeProduction) {
-  const count = productionResources(value.settings).scenes, p = value.progress;
+  const count = value.blocks.reduce((sum, block) => sum + block.scenes.length, 0), p = value.progress;
   const bounded = (n: number | undefined, total: number) => Math.max(0, Math.min(total, Number.isFinite(n) ? Math.floor(n!) : 0));
   const scripts = bounded(value.blocks.length, value.settings.minutes);
   const rows = [
@@ -56,7 +57,7 @@ export function productionProgress(value: YouTubeProduction) {
   // A completed production confirms all stages, including records predating detailed counters.
   if (value.state === 'ready') rows.forEach(row => { row.done = row.total; });
   const first = rows.findIndex(row => row.done < row.total);
-  const steps: ProductionProgressStep[] = rows.map((row, index) => ({ ...row, status: row.done === row.total ? 'complete' : index === first ? 'current' : 'waiting' }));
+  const steps: ProductionProgressStep[] = rows.map((row, index) => ({ ...row, status: row.total > 0 && row.done === row.total ? 'complete' : index === first ? 'current' : 'waiting' }));
   const phase = first < 0 ? 'complete' : rows[first].id;
   let detail = phase === 'script' ? value.outline ? `Menulis naskah menit ${Math.min(scripts + 1, value.settings.minutes)} dari ${value.settings.minutes}` : 'Menyusun alur dan kerangka video'
     : phase === 'characters' ? `Membuat acuan karakter dan contoh suara ${Math.min((p?.characters ?? 0) + 1, value.settings.characters.length)} dari ${value.settings.characters.length}`
@@ -69,12 +70,46 @@ export function productionProgress(value: YouTubeProduction) {
   return { steps, phase, detail, done: rows.reduce((sum, row) => sum + row.done, 0), total: rows.reduce((sum, row) => sum + row.total, 0) };
 }
 export function productionResources(settings: YouTubeProductionSettings) {
-  return { minutes: settings.minutes, blocks: settings.minutes, scenes: settings.minutes * 4,
+  return { minutes: settings.minutes, blocks: settings.minutes,
     minWords: settings.minutes * 105, maxWords: settings.minutes * 125,
     width: settings.kind === 'short' ? 720 : 1280, height: settings.kind === 'short' ? 1280 : 720 };
 }
+/** Resolve a global scene across minute blocks with different scene counts. */
+export function youtubeSceneLocation(counts: number[], index: number) {
+  if (!Number.isSafeInteger(index) || index < 0 || counts.some(count => !Number.isSafeInteger(count) || count < 1)) throw new Error('Indeks adegan tidak valid.');
+  let offset = 0;
+  for (let blockIndex = 0; blockIndex < counts.length; blockIndex++) {
+    if (index < offset + counts[blockIndex]) return { blockIndex, sceneIndex: index - offset };
+    offset += counts[blockIndex];
+  }
+  throw new Error('Adegan tidak ditemukan pada naskah tersimpan.');
+}
 export function scriptWords(scenes: YouTubeScene[]) {
   return scenes.reduce((count, scene) => count + scene.narration.trim().split(/\s+/u).length, 0);
+}
+/** A paragraph is not a shot. Preserve exact spoken words and speaker bindings,
+ * but give each complete sentence its own corresponding image. */
+export function segmentYouTubeNarration(block: YouTubeScriptBlock): YouTubeScriptBlock {
+  const segmenter = new Intl.Segmenter('id', { granularity: 'sentence' });
+  return { ...block, scenes: block.scenes.flatMap(scene => {
+    const groups: YouTubeScene['lines'][] = [];
+    let pending: YouTubeScene['lines'] = [];
+    for (const line of scene.lines) for (const sentence of segmenter.segment(line.text)) {
+      const text = sentence.segment.trim();
+      if (!text) continue;
+      pending.push({ speakerId: line.speakerId, text });
+      if (pending.map(line => line.text).join(' ').length >= 20) { groups.push(pending); pending = []; }
+    }
+    if (pending.length) { if (groups.length) groups[groups.length - 1].push(...pending); else groups.push(pending); }
+    return groups.map(lines => {
+      const narration = lines.map(line => line.text).join(' ');
+      let supporting = narration;
+      if (supporting.length > 110) {
+        supporting = narration.slice(0, 107).replace(/\s+\S*$/u, '') + '…';
+      }
+      return { ...scene, narration, lines, supporting };
+    });
+  }) };
 }
 export function validateScriptBlock(value: unknown): z.infer<typeof youtubeBlockSchema> {
   const block = youtubeBlockSchema.parse(value);

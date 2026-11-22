@@ -9,20 +9,23 @@ import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import { effectiveWorkspacePlan } from '../subscription';
 import { reserveGenerationAttempt } from './generation-policy';
 import { ApiError, errorResponse, noStoreJson, readJson } from './http';
-import { youtubeProductionSettings, youtubeVoiceSchema, validateScriptBlock, validateCast, productionResources, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
+import { youtubeProductionSettings, youtubeVoiceSchema, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
 import type { BrandProfile } from '../veloxa-types';
 import { planYouTubeVideo, writeYouTubeBlock, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
 import { generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
-import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
+import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, normalizeYouTubeSceneAudio, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
 
-const collection = 'private_youtube_productions';
+// Development end-to-end runs use an isolated queue so a deployed older worker
+// cannot claim a new-format script before that worker has been upgraded.
+const collection = process.env.NODE_ENV === 'development' && process.env.VELOXA_YOUTUBE_QA_QUEUE === 'isolated'
+  ? 'private_youtube_productions_qa' : 'private_youtube_productions';
 const idle = Number.MAX_SAFE_INTEGER;
 const scopeSchema = z.object({ workspaceId: workspaceIdSchema, businessId: z.string().regex(/^(primary|b_[a-f0-9-]{36})$/) });
 type Scope = z.infer<typeof scopeSchema>;
 type Ref = FirebaseFirestore.DocumentReference;
 type Job = Omit<YouTubeProduction, 'blocks'> & { ownerUid: string; workspaceId: string; businessId: string; brand: BrandProfile;
   models: { scriptModel: string; imageModel: string; voiceModel: string }; fingerprint: string; scriptIndex: number;
-  portraitIndex: number; imageIndex: number; audioIndex: number; renderIndex: number; totalFrames: number;
+  portraitIndex: number; imageIndex: number; audioIndex: number; renderIndex: number; totalFrames: number; sceneCounts?: number[];
   nextRunAt: number; attempts: number; lease: { id: string; until: number } | null; sourceGeneration?: string; characterVersions?: Record<string, number>;
   lastFailure?: { phase: string; code: string; status: number | null; at: number; unit?: number; layoutVersion?: number } };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -55,6 +58,7 @@ async function dto(ref: Ref, job: Job): Promise<YouTubeProduction> {
       attempts: job.attempts, working: Boolean(job.lease && job.lease.until > Date.now()), checkedAt: Date.now() },
     ...(job.retryAt ? { retryAt: job.retryAt } : {}), ...(job.message ? { message: job.message } : {}),
     ...(job.durationSeconds ? { durationSeconds: job.durationSeconds } : {}), ...(job.videoBytes ? { videoBytes: job.videoBytes } : {}),
+    ...(job.sceneFrames ? { sceneFrames: job.sceneFrames } : {}),
     portraits: job.settings.characters.slice(0, job.portraitIndex).map(actor => actor.id) };
 }
 async function access(request: Request, deps: Dependencies = {}) {
@@ -103,7 +107,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
         const now = Date.now();
         const job: Job = { id: input.id, workspaceId: context.workspaceId, businessId: context.businessId, ownerUid: context.actor.user.uid,
           brand: business.brand, settings: input.settings, models, fingerprint, revision: 1, state: 'planning',
-          scriptIndex: 0, portraitIndex: 0, imageIndex: 0, audioIndex: 0, renderIndex: 0, totalFrames: 0,
+          scriptIndex: 0, portraitIndex: 0, imageIndex: 0, audioIndex: 0, renderIndex: 0, totalFrames: 0, sceneCounts: [],
           completedScenes: 0, createdAt: now, updatedAt: now, nextRunAt: now, attempts: 0, lease: null };
         tx.create(ref, { ...job, listKey: `${digest([context.workspaceId, context.businessId, context.actor.user.uid])}:${String(9_999_999_999_999 - now).padStart(13, '0')}:${input.id}` }); tx.set(guard, { jobKey: ref.id });
         tx.set(context.actor.ref.collection('youtube_production_quotas').doc(input.id), { state: 'generating' });
@@ -118,6 +122,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       z.object({ action: z.literal('edit'), revision: z.number().int(), index: z.number().int().min(0).max(119), block: youtubeBlockSchemaForEdit() }).strict(),
       z.object({ action: z.literal('revise_character'), revision: z.number().int(), characterId: z.string().regex(/^actor_[1-5]$/), appearance: z.string().trim().min(15).max(1000), voice: youtubeVoiceSchema, delivery: z.string().trim().max(500), confirmed: z.literal(true) }).strict(),
     ]).parse(await readJson(request));
+    const savedCounts = input.action === 'edit' ? (await ref.collection('blocks').orderBy('index').get()).docs.map(doc => (doc.data() as YouTubeScriptBlock).scenes.length) : [];
     if (input.action === 'process') await runYouTubeProductionStep(ref, deps);
     else await ref.firestore.runTransaction(async tx => {
       const current = (await tx.get(ref)).data() as Job;
@@ -129,6 +134,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
         if (current.state !== 'script_review' || input.index >= current.settings.minutes) throw new ApiError(409, 'Naskah hanya dapat diedit sebelum produksi.');
         const block = { ...validateScriptBlock(input.block), index: input.index, chapter: current.outline!.chapters[input.index] };
         validateCast(block, current.settings); tx.set(blockRef(ref, input.index), block);
+        patch.sceneCounts = savedCounts.map((count, index) => index === input.index ? block.scenes.length : count);
       } else if (input.action === 'revise_character') {
         const index = current.settings.characters.findIndex(actor => actor.id === input.characterId);
         if (current.state !== 'character_review' || index < 0 || current.imageIndex !== 0) throw new ApiError(409, 'Pemeran hanya dapat diubah pada tahap tinjauan acuan.');
@@ -158,8 +164,8 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
   } catch (error) { return errorResponse(error); }
 }
 function youtubeBlockSchemaForEdit() {
-  return z.object({ scenes: z.array(z.object({ title: z.string(), supporting: z.string(), narration: z.string(),
-    visual: z.string(), lines: z.array(z.object({ speakerId: z.string(), text: z.string() }).strict()), characterIds: z.array(z.string()) }).strict()).length(4) }).strict();
+    return z.object({ scenes: z.array(z.object({ title: z.string(), supporting: z.string(), narration: z.string(),
+    visual: z.string(), lines: z.array(z.object({ speakerId: z.string(), text: z.string() }).strict()), characterIds: z.array(z.string()) }).strict()).min(1) }).strict();
 }
 
 async function claim(ref: Ref) {
@@ -191,6 +197,19 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
   const claimed = await claim(ref); if (!claimed) return;
   const { job, leaseId } = claimed;
   try {
+    // Older productions did not store a scene manifest. Derive it from their saved
+    // scripts once; never infer positions from a fixed number of pictures per minute.
+    if (!job.sceneCounts || job.sceneCounts.length !== job.scriptIndex) {
+      const scripts = await ref.collection('blocks').orderBy('index').get();
+      const counts = scripts.docs.map(doc => (doc.data() as YouTubeScriptBlock).scenes.length);
+      if (counts.length !== job.scriptIndex) throw new Error('Naskah tersimpan belum lengkap.');
+      await ref.firestore.runTransaction(async tx => {
+        const current = (await tx.get(ref)).data() as Job;
+        if (current.lease?.id !== leaseId) throw new Error('Produksi dilanjutkan proses lain.');
+        tx.update(ref, { sceneCounts: counts });
+      });
+      job.sceneCounts = counts;
+    }
     if (job.state === 'planning') {
       const workspace = ref.firestore.collection('workspaces').doc(job.workspaceId);
       const ws = (await workspace.get()).data()!;
@@ -202,7 +221,7 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const previous = job.scriptIndex ? (await blockRef(ref, job.scriptIndex - 1).get()).data() as YouTubeScriptBlock : null;
       const block = await (deps.script ?? writeYouTubeBlock)(job.settings, job.brand, job.outline as YouTubeOutline, job.scriptIndex, previous, job.models.scriptModel);
       const complete = job.scriptIndex + 1 === job.settings.minutes;
-      await commit(ref, leaseId, { scriptIndex: job.scriptIndex + 1, ...(complete ? { state: 'script_review', nextRunAt: idle } : {}) }, tx => tx.set(blockRef(ref, block.index), block)); return;
+      await commit(ref, leaseId, { scriptIndex: job.scriptIndex + 1, sceneCounts: [...job.sceneCounts, block.scenes.length], ...(complete ? { state: 'script_review', nextRunAt: idle } : {}) }, tx => tx.set(blockRef(ref, block.index), block)); return;
     }
     if (job.state === 'characters') {
       const actor = job.settings.characters[job.portraitIndex];
@@ -218,18 +237,22 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const complete = job.portraitIndex + 1 === job.settings.characters.length;
       await commit(ref, leaseId, { portraitIndex: job.portraitIndex + 1, ...(complete ? { state: 'character_review', nextRunAt: idle } : {}) }); return;
     }
-    const count = productionResources(job.settings).scenes;
+    const count = job.sceneCounts.reduce((sum, count) => sum + count, 0);
     if (job.imageIndex < count) {
       const cached = await Promise.all(['photo.jpg', 'overlay.png', 'preview.jpg'].map(suffix => object(ref, `${job.imageIndex}-${suffix}`).exists()));
       if (cached.every(([exists]) => exists)) { await commit(ref, leaseId, { imageIndex: job.imageIndex + 1 }); return; }
-      const block = (await blockRef(ref, Math.floor(job.imageIndex / 4)).get()).data() as YouTubeScriptBlock;
-      const scene = block.scenes[job.imageIndex % 4];
+      const location = youtubeSceneLocation(job.sceneCounts, job.imageIndex);
+      const block = (await blockRef(ref, location.blockIndex).get()).data() as YouTubeScriptBlock;
+      const scene = block.scenes[location.sceneIndex];
       const portraits = await Promise.all(scene.characterIds.map(async id => ({ id, bytes: await bytes(ref, characterMediaName(job, id, 'jpg')) })));
+      const previousLocation = job.imageIndex ? youtubeSceneLocation(job.sceneCounts, job.imageIndex - 1) : null;
+      const previousBlock = previousLocation && previousLocation.blockIndex !== location.blockIndex ? (await blockRef(ref, previousLocation.blockIndex).get()).data() as YouTubeScriptBlock : block;
+      const previous = previousLocation ? { photo: await bytes(ref, `${job.imageIndex - 1}-photo.jpg`), narration: previousBlock.scenes[previousLocation.sceneIndex].narration } : undefined;
       const candidateName = `${job.imageIndex}-candidate.jpg`;
       const hasCandidate = (await object(ref, candidateName).exists())[0];
       const rejectedCandidate = job.lastFailure?.code === 'photo_layout' && job.lastFailure.unit === job.imageIndex && job.lastFailure.layoutVersion === YOUTUBE_LAYOUT_VERSION;
       const photo = hasCandidate && !rejectedCandidate ? await bytes(ref, candidateName)
-        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits);
+        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous);
       // Save the generated candidate before layout checks, so diagnostics and repair
       // can reuse it instead of paying for another image after an interrupted write.
       if (!hasCandidate || rejectedCandidate) await save(ref, candidateName, photo, 'image/jpeg');
@@ -244,36 +267,50 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
         return { text: line.text, voice: character?.voice ?? job.settings.voice, delivery: character ? `${character.name}. ${character.delivery}` : job.settings.delivery };
       }) }));
       const voice = await generateDialogueVoiceover(scenes, { model: job.models.voiceModel, timeoutMs: 150_000 });
-      if (!voice.sceneDurations || voice.sceneDurations.reduce((a, b) => a + b, 0) < 44 || voice.sceneDurations.reduce((a, b) => a + b, 0) > 79) throw new Error('Suara belum sesuai durasi naskah.');
+      if (!voice.sceneDurations || voice.sceneDurations.length !== block.scenes.length || voice.sceneDurations.reduce((a, b) => a + b, 0) < 44 || voice.sceneDurations.reduce((a, b) => a + b, 0) > 79) throw new Error('Suara belum sesuai durasi naskah.');
       const frames = sceneFrameCounts(voice.sceneDurations, job.settings.kind === 'short' ? 59.8 : 60);
       let offset = 0;
-      for (let i = 0; i < 4; i++) {
+      const firstScene = job.sceneCounts.slice(0, job.audioIndex).reduce((sum, count) => sum + count, 0);
+      for (let i = 0; i < block.scenes.length; i++) {
         const size = Math.round(voice.sceneDurations[i] * 24000) * 2;
-        await save(ref, `${job.audioIndex * 4 + i}.pcm`, voice.pcm.subarray(offset, offset + size), 'application/octet-stream'); offset += size;
+        await save(ref, `${firstScene + i}.pcm`, voice.pcm.subarray(offset, offset + size), 'application/octet-stream'); offset += size;
       }
-      await commit(ref, leaseId, { audioIndex: job.audioIndex + 1 }, tx => frames.forEach((frameCount, i) => tx.set(sceneRef(ref, job.audioIndex * 4 + i), { frames: frameCount }))); return;
+      if (offset !== voice.pcm.length) throw new Error('Batas dialog belum sesuai audio tersimpan.');
+      await commit(ref, leaseId, { audioIndex: job.audioIndex + 1, sceneFrames: [...(job.sceneFrames ?? []).slice(0, firstScene), ...frames] }, tx => frames.forEach((frameCount, i) => tx.set(sceneRef(ref, firstScene + i), { frames: frameCount }))); return;
     }
     if (job.renderIndex < count) {
       const index = job.renderIndex;
       const [photo, overlay, pcm, previousFrame, scene] = await Promise.all([bytes(ref, `${index}-photo.jpg`), bytes(ref, `${index}-overlay.png`), bytes(ref, `${index}.pcm`), index ? bytes(ref, `${index - 1}-last.jpg`) : undefined, sceneRef(ref, index).get()]);
       const frames = Number(scene.data()?.frames);
       const result = await renderYouTubeScene({ photo, overlay, pcm, previousFrame, frames, startFrame: job.totalFrames, index, kind: job.settings.kind });
-      await Promise.all([save(ref, `${index}.ts`, result.ts, 'video/mp2t'), save(ref, `${index}-last.jpg`, result.last, 'image/jpeg')]);
+      await Promise.all([save(ref, `${index}.ts`, result.ts, 'video/mp2t'), save(ref, `${index}-render.pcm`, result.audio, 'application/octet-stream'), save(ref, `${index}-last.jpg`, result.last, 'image/jpeg')]);
       await commit(ref, leaseId, { renderIndex: index + 1, totalFrames: job.totalFrames + frames }); return;
     }
     // Stream the encoded segments in order with backpressure. No giant Buffer or browser upload.
     const source = Readable.from((async function* () {
       for (let index = 0; index < count; index++) for await (const chunk of object(ref, `${index}.ts`).createReadStream()) yield chunk;
     })());
+    const audio = Readable.from((async function* () {
+      for (let index = 0; index < count; index++) {
+        const file = object(ref, `${index}-render.pcm`);
+        // Resume media created before continuous audio was introduced, without
+        // generating another voice or redoing already approved pictures.
+        if (!(await file.exists())[0]) {
+          const scene = (await sceneRef(ref, index).get()).data();
+          await save(ref, `${index}-render.pcm`, await normalizeYouTubeSceneAudio(await bytes(ref, `${index}.pcm`), Number(scene?.frames)), 'application/octet-stream');
+        }
+        for await (const chunk of file.createReadStream()) yield chunk;
+      }
+    })());
     const final = object(ref, 'final.mp4');
-    await remuxYouTubeVideo(source, final.createWriteStream({ resumable: true, metadata: { contentType: 'video/mp4', cacheControl: 'private, no-store' } }));
+    await remuxYouTubeVideo(source, audio, final.createWriteStream({ resumable: true, metadata: { contentType: 'video/mp4', cacheControl: 'private, no-store' } }), job.totalFrames);
     const [metadata] = await final.getMetadata();
     const size = Number(metadata.size);
     if (!Number.isSafeInteger(size) || size <= 0 || size > 4 * 1024 ** 3) throw new Error('Video akhir perlu diperiksa.');
     await commit(ref, leaseId, { state: 'ready', nextRunAt: idle, durationSeconds: job.totalFrames / 25, videoBytes: size, sourceGeneration: String(metadata.generation) });
   } catch (error) {
     const phase = job.state === 'planning' ? 'outline' : job.state === 'scripting' ? 'script' : job.state === 'characters' ? 'characters'
-      : job.imageIndex < productionResources(job.settings).scenes ? 'images' : job.audioIndex < job.settings.minutes ? 'audio' : job.renderIndex < productionResources(job.settings).scenes ? 'render' : 'merge';
+      : job.imageIndex < (job.sceneCounts ?? []).reduce((a, b) => a + b, 0) ? 'images' : job.audioIndex < job.settings.minutes ? 'audio' : job.renderIndex < (job.sceneCounts ?? []).reduce((a, b) => a + b, 0) ? 'render' : 'merge';
     const raw = error as { code?: unknown; status?: unknown; name?: unknown; message?: unknown };
     const code = raw.message === 'Foto perlu ruang teks yang lebih tenang. Adegan ini akan diperbaiki.' ? 'photo_layout'
       : typeof raw.code === 'string' && /^[a-z0-9_.-]{1,80}$/i.test(raw.code) ? raw.code

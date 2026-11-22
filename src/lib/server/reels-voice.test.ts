@@ -60,6 +60,10 @@ test('dialogue keeps saved speaker voices through role changes and preserves sce
   assert.ok(requests[2].instructions.includes('Rani menjawab dengan tenang'));
   assert.equal(result.sceneDurations?.length, 4);
   assert.equal(result.sceneDurations?.reduce((sum, value) => sum + value, 0), result.pcm.length / 48000);
+  const text = 'Pahami satu contoh sederhana sebelum menentukan langkah berikutnya untuk usaha yang lebih terarah dan jujur.';
+  const seven = await generateDialogueVoiceover(Array.from({ length: 7 }, () => ({ lines: [{ text, voice: 'marin' as const, delivery: 'Hangat.' }] })), { createConnection });
+  assert.equal(seven.sceneDurations?.length, 7);
+  assert.equal(seven.sceneDurations!.reduce((sum, seconds) => sum + Math.round(seconds * 24000) * 2, 0), seven.pcm.length);
 });
 
 test('cast audition is a playable mono WAV using the same saved voice and exact spoken text', async () => {

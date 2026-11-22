@@ -44,7 +44,7 @@ export async function youtubeProductionPreview(request: Request, rawId: string) 
     const ws = job ? (await adminDb().collection('workspaces').doc(job.workspaceId).get()).data() : undefined;
     if (!job || job.ownerUid !== claims.owner || ws?.ownerUid !== claims.owner) throw new ApiError(403, 'Pratinjau tidak tersedia.');
     const name = new URL(request.url).searchParams.get('name') ?? 'final.mp4';
-    if (!/^(final\.mp4|actor_[1-5]\.(jpg|wav)|\d{1,3}-preview\.jpg)$/.test(name) || name === 'final.mp4' && job.state !== 'ready') throw new ApiError(404, 'Media belum tersedia.');
+    if (!/^(final\.mp4|actor_[1-5]\.(jpg|wav)|\d{1,5}-preview\.jpg)$/.test(name) || name === 'final.mp4' && job.state !== 'ready') throw new ApiError(404, 'Media belum tersedia.');
     const actorMedia = /^(actor_[1-5])\.(jpg|wav)$/.exec(name);
     const storageName = actorMedia ? productionMediaAccess.characterMediaName(job, actorMedia[1], actorMedia[2] as 'jpg' | 'wav') : name;
     const file = name === 'final.mp4' && job.sourceGeneration

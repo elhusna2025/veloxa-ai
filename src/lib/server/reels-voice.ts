@@ -268,7 +268,7 @@ export async function generateDialogueVoiceover(
   deps: VoiceDependencies = {},
 ): Promise<Voiceover> {
   const script = scenes.flatMap(scene => scene.lines.map(line => line.text)).join(' ');
-  if (scenes.length !== 4 || scenes.some(scene => !scene.lines.length || scene.lines.length > 6) || !isValidScript(script)) throw INVALID_SCRIPT_ERROR;
+  if (!scenes.length || scenes.some(scene => !scene.lines.length || scene.lines.length > 6) || !isValidScript(script)) throw INVALID_SCRIPT_ERROR;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const buffers: Buffer[][] = scenes.map(() => []);
