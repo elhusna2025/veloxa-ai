@@ -83,6 +83,7 @@ import {
   type VeloxaLocale,
 } from '@/lib/veloxa-i18n';
 import { VeloxaSocialAccountsPanel as VeloxaMetaConnections } from '@/components/VeloxaSocialAccountsPanel';
+import { VeloxaYouTubeConnectionPanel } from '@/components/VeloxaYouTubeConnectionPanel';
 import {createVeloxaContent} from '@/lib/veloxa-api-client';
 import { veloxaApi } from '@/lib/veloxa-api-client';
 import { VeloxaPublicLanding } from '@/components/VeloxaPublicLanding';
@@ -288,6 +289,7 @@ export default function VeloxaAiPlatformPage() {
 
   // Stage 3: OAuth & Meta Ads Customizer State
   const [editingChannel, setEditingChannel] = useState<SocialChannelId>('facebook');
+  const [youTubeCallbackStatus, setYouTubeCallbackStatus] = useState<{ workspaceId: string; businessId: string | null; status: 'authorized' | 'failed' } | null>(null);
   const [editingChannelHandle, setEditingChannelHandle] = useState<string>('');
   const [editingChannelAccountName, setEditingChannelAccountName] = useState<string>('');
   const [editingChannelFollowers, setEditingChannelFollowers] = useState<number>(0);
@@ -413,6 +415,35 @@ export default function VeloxaAiPlatformPage() {
           : 'Periksa daftar akun yang diverifikasi server, lalu pilih akun tujuan workspace ini.');
         oauthDialogRef.current?.showModal();
         callback.searchParams.delete('meta'); callback.searchParams.delete('instagram'); window.history.replaceState({}, '', callback.toString());
+      }
+      const youTubeCallback = callback.searchParams.get('youtube');
+      if (youTubeCallback === 'authorized' || youTubeCallback === 'failed') {
+        // The Google return contains no business identifier. Restore only a recent,
+        // matching local intent whose business still exists in this workspace.
+        let returnBusinessId: string | null = null;
+        const intentKey = `veloxa:youtube:return:${targetWsId}`;
+        try {
+          const intent = JSON.parse(sessionStorage.getItem(intentKey) || 'null');
+          sessionStorage.removeItem(intentKey);
+          const now = Date.now();
+          const knownBusiness = businessResult.status === 'fulfilled' && businessResult.value.businesses.some(item => item.id === intent?.businessId);
+          if (intent?.workspaceId === targetWsId && typeof intent.businessId === 'string' && Number.isFinite(intent.createdAt) && intent.createdAt <= now && now - intent.createdAt <= 15 * 60_000 && knownBusiness) {
+            returnBusinessId = intent.businessId;
+            setActiveBusinessId(intent.businessId);
+            sessionStorage.setItem(`veloxa:business:${user.uid}:${targetWsId}`, intent.businessId);
+          }
+        } catch { /* No valid intent: inspect only the active business; never save a channel automatically. */ }
+        setYouTubeCallbackStatus({ workspaceId: targetWsId, businessId: returnBusinessId, status: youTubeCallback });
+        setReviewOAuthAccounts(false);
+        setStartAddingSocialAccount(false);
+        setStatusBanner(youTubeCallback === 'failed'
+          ? 'Izin YouTube belum berhasil atau dibatalkan. Periksa bisnis aktif dan hubungkan kembali jika diperlukan.'
+          : returnBusinessId
+            ? 'Tinjau channel YouTube untuk bisnis ini, lalu simpan jika sesuai. Koneksi belum disimpan otomatis.'
+            : 'Pilih bisnis yang digunakan saat memberi izin Google, lalu tinjau channel YouTube. Koneksi belum disimpan otomatis.');
+        oauthDialogRef.current?.showModal();
+        callback.searchParams.delete('youtube');
+        window.history.replaceState({}, '', callback.toString());
       }
 
     };
@@ -1157,7 +1188,7 @@ export default function VeloxaAiPlatformPage() {
         ref={oauthDialogRef}
         aria-labelledby="oauth-dialog-title"
         data-testid="oauth-config-dialog"
-        onClose={() => { setReviewOAuthAccounts(false); setStartAddingSocialAccount(false); }}
+        onClose={() => { setReviewOAuthAccounts(false); setStartAddingSocialAccount(false); setYouTubeCallbackStatus(null); }}
         onClick={(e) => {
           if (e.target === e.currentTarget) {
             oauthDialogRef.current?.close();
@@ -1189,6 +1220,16 @@ export default function VeloxaAiPlatformPage() {
           setConnectionsVerified(true);
           setConnections(withConnectionPlaceholders(verified,INITIAL_CHANNEL_CONNECTIONS));
         }} />}
+        {authUser && <>
+          {youTubeCallbackStatus?.workspaceId === brand.workspaceId && youTubeCallbackStatus.businessId === null && <p role="status" className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900" data-testid="youtube-return-business-warning">Bisnis saat memberi izin Google belum dapat dipulihkan. Pilih bisnis yang sama melalui pemilih bisnis sebelum meninjau atau menyimpan channel YouTube.</p>}
+          {businessesReady ? <VeloxaYouTubeConnectionPanel
+            key={`youtube:${brand.workspaceId}:${activeBusinessId}`}
+            workspaceId={brand.workspaceId}
+            businessId={activeBusinessId}
+            businessName={brand.businessName}
+            reviewStatus={youTubeCallbackStatus?.workspaceId === brand.workspaceId && (youTubeCallbackStatus.businessId === null || youTubeCallbackStatus.businessId === activeBusinessId) ? youTubeCallbackStatus.status : null}
+          /> : <p role="status" className="mt-6 rounded-lg bg-neutral-50 p-4 text-base text-neutral-600" data-testid="youtube-business-not-ready">Daftar bisnis belum siap. Muat ulang daftar bisnis sebelum mengelola koneksi YouTube.</p>}
+        </>}
       </dialog>
 
       {authUser && <VeloxaBillingDialog
