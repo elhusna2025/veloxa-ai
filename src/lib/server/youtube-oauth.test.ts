@@ -188,6 +188,26 @@ test('Start membatasi scope, mengikat PKCE dan state hash, serta menolak callbac
   assert.equal(f.calls.length, 2);
 });
 
+test('TTL Firestore mengikuti kedaluwarsa state OAuth dan otorisasi tertunda', async () => {
+  const f = fixture();
+  const attempt = await f.begin();
+  const state = f.db.rows.get(`_youtube_oauth_states/${digest(attempt.state)}`)!;
+  assert.equal(state.expiresAt, f.options.time + 600_000);
+  assert.ok(state.deleteAt instanceof Date);
+  assert.equal(state.deleteAt.getTime(), state.expiresAt);
+
+  f.options.time += 30_000;
+  assertRedirect(await attempt.finish(), 'authorized');
+  const pending = f.db.rows.get(f.pending())!;
+  assert.equal(pending.expiresAt, f.options.time + 600_000);
+  assert.ok(pending.deleteAt instanceof Date);
+  assert.equal(pending.deleteAt.getTime(), pending.expiresAt);
+
+  const view = await (await f.accounts()).json();
+  assert.equal((await f.save(view.authorizationId, channelA)).status, 200);
+  assert.equal('deleteAt' in f.db.rows.get(f.connection())!, false);
+});
+
 test('Known authorize state cannot forge browser proof or consume legitimate state', async () => {
   const f = fixture();
   const attempt = await f.begin();

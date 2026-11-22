@@ -30,6 +30,8 @@ const configFields = {
 const stateRecord = scopeInput.extend({
   ...configFields, uid: z.string().min(1).max(128), generation: generationSchema,
   redirectUri: z.string().max(2048), expiresAt: timestamp, verifier: nonce,
+  // Firestore interprets this optional retention field. Logical expiry uses expiresAt.
+  deleteAt: z.unknown().optional(),
   browserSecretDigest: z.string().regex(/^[a-f0-9]{64}$/),
 });
 const grantFields = {
@@ -119,12 +121,14 @@ export function startYouTube(request: Request, deps: Dependencies = {}) {
       const config = youtubeConfig(deps.env);
       if (!config) throw youtubeNotConfigured();
       const next = nextGeneration(current);
+      const expiresAt = (deps.now ?? Date.now)() + ttlMs;
       // Percobaan baru membatalkan pilihan tertunda, bukan koneksi yang sudah disimpan.
       tx.set(guard, { generation: next });
       tx.delete(pending);
       tx.create(stateRef, {
         uid: user.uid, workspaceId: ref.id, businessId, generation: next, ...binding(config),
-        redirectUri: config.redirectUri, verifier, browserSecretDigest: stateDigest(browserSecret), expiresAt: (deps.now ?? Date.now)() + ttlMs,
+        redirectUri: config.redirectUri, verifier, browserSecretDigest: stateDigest(browserSecret),
+        expiresAt, deleteAt: new Date(expiresAt),
       });
       return buildYouTubeAuthorizeUrl(config, state, verifier);
     });
@@ -170,9 +174,11 @@ async function finishYouTube(request: Request, url: URL, state: string, deps: De
   const encryptedTokens = (deps.encrypt ?? encryptYouTubeTokens)(grant.tokens, { workspaceId, businessId, authorizationId }, config.encryptionKey);
   await db.runTransaction(async tx => {
     const current = await recheck(tx);
+    const pendingExpiresAt = now() + ttlMs;
     tx.set(pending, {
       ...binding(config), authorizationId, channels: grant.channels, authorizedBy: uid, generation: current,
-      scope: YOUTUBE_READONLY_SCOPE, expiresAt: now() + ttlMs, accessExpiresAt: grant.accessExpiresAt, encryptedTokens,
+      expiresAt: pendingExpiresAt, deleteAt: new Date(pendingExpiresAt),
+      scope: YOUTUBE_READONLY_SCOPE, accessExpiresAt: grant.accessExpiresAt, encryptedTokens,
     });
   });
 }
