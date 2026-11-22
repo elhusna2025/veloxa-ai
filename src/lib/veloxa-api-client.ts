@@ -8,7 +8,7 @@ import {readBrandAnalysisStream,type AnalysisStage,type BrandAnalysis} from './b
 import { getFirebaseAuthInstance } from './veloxa-auth';
 
 /** Only send Firebase credentials to our own API, never to arbitrary URLs. */
-async function signedVeloxaFetch(path: string, init: RequestInit = {}, feedback?: { onProgress: (progress: GenerationProgress) => void }): Promise<Response> {
+export async function signedVeloxaFetch(path: string, init: RequestInit = {}, feedback?: { onProgress: (progress: GenerationProgress) => void }): Promise<Response> {
   if (!path.startsWith('/api/veloxa/')) throw new Error('Alamat layanan Veloxa tidak valid.');
   const auth = getFirebaseAuthInstance();
   if (!auth) throw new Error('Firebase belum dikonfigurasi.');

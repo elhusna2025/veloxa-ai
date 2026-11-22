@@ -9,13 +9,15 @@ import { ApiError, errorResponse, noStoreJson, readJson } from './http';
 import { attachOAuthBrowserState, clearOAuthBrowserState, verifyOAuthBrowserState } from './oauth-browser-state';
 import { YOUTUBE_CALLBACK_PATH, YOUTUBE_READONLY_SCOPE, youtubeConfigForWorkspace, youtubeNotConfigured, youtubeRedirect, type YouTubeConfig, type YouTubeEnv } from './youtube-config';
 import { encryptYouTubeTokens } from './youtube-crypto';
+import { assertNoYouTubeUploadDispatch } from './youtube-upload-dispatch';
+import { youtubeUploadRefs } from './youtube-upload-records';
 import { buildYouTubeAuthorizeUrl, exchangeYouTubeGrant, publicYouTubeChannel, youtubeChannel, youtubeChannelId, YOUTUBE_CHANNEL_LIMIT } from './youtube-google';
 
 const ttlMs = 10 * 60_000;
-const nonce = z.string().length(43).regex(/^[A-Za-z0-9_-]{43}$/);
+export const nonce = z.string().length(43).regex(/^[A-Za-z0-9_-]{43}$/);
 const identifier = () => randomBytes(32).toString('base64url');
 const stateDigest = (state: string) => createHash('sha256').update(state).digest('hex');
-const scopeInput = z.object({
+export const scopeInput = z.object({
   workspaceId: workspaceIdSchema,
   businessId: z.string().refine(value => value === 'primary' || (value.length === 38 && /^b_[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value))),
 }).strict();
@@ -39,7 +41,7 @@ const grantFields = {
   scope: z.literal(YOUTUBE_READONLY_SCOPE), accessExpiresAt: timestamp, encryptedTokens: z.string().min(1).max(24_000),
 };
 const pendingRecord = z.object({ ...grantFields, expiresAt: timestamp, channels: z.array(youtubeChannel).min(1).max(YOUTUBE_CHANNEL_LIMIT) });
-const connectionRecord = youtubeChannel.extend({ ...grantFields, connectedAt: timestamp });
+export const connectionRecord = youtubeChannel.extend({ ...grantFields, connectedAt: timestamp });
 
 type Dependencies = {
   authorize?: typeof requireWorkspace;
@@ -251,7 +253,11 @@ export function selectYouTubeConnection(request: Request, deps: Dependencies = {
       const channel = grant.channels.find(option => option.channelId === channelId);
       if (!channel) throw new ApiError(409, 'Kanal tidak tercantum dalam izin YouTube ini.', 'youtube_channel_not_authorized');
       if (assigned.docs.some(doc => doc.id !== businessId)) throw new ApiError(409, 'Kanal YouTube sudah terhubung ke bisnis lain di workspace ini.', 'youtube_channel_assigned');
+      await assertNoYouTubeUploadDispatch(tx, ref, businessId);
       const next = nextGeneration(current);
+      const upload = youtubeUploadRefs(ref, businessId);
+      tx.delete(upload.grant);
+      tx.delete(upload.pending);
       tx.set(guard, { generation: next });
       tx.set(connection, {
         ...publicYouTubeChannel(channel), ...binding(config), authorizationId, authorizedBy: user.uid,
@@ -276,6 +282,10 @@ export function disconnectYouTube(request: Request, deps: Dependencies = {}) {
         throw new ApiError(409, 'Koneksi YouTube telah berubah. Muat ulang daftar sebelum memutuskan koneksi.', 'youtube_connection_conflict');
       }
       const next = nextGeneration(await generation(tx, guard));
+      await assertNoYouTubeUploadDispatch(tx, ref, businessId);
+      const upload = youtubeUploadRefs(ref, businessId);
+      tx.delete(upload.grant);
+      tx.delete(upload.pending);
       tx.set(guard, { generation: next });
       tx.delete(connection);
       tx.delete(pending);

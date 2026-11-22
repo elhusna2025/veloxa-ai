@@ -21,7 +21,7 @@ export function VeloxaLegalDocument({ page, isId, sections, children }: {
     <>
       <p className="mt-4 text-sm text-neutral-600">
         {page === 'terms' ? (isId ? 'Berlaku sejak ' : 'Effective from ') : (isId ? 'Terakhir diperbarui ' : 'Last updated ')}
-        <time dateTime="2026-11-03">{isId ? '3 November 2026' : 'November 3, 2026'}</time>
+        <time dateTime="2026-11-22">{isId ? '22 November 2026' : 'November 22, 2026'}</time>
       </p>
       <nav className={styles.documentNav} aria-label={isId ? 'Dokumen hukum' : 'Legal documents'}>
         <Link href="/terms/" aria-current={page === 'terms' ? 'page' : undefined}>{isId ? 'Ketentuan' : 'Terms'}</Link>

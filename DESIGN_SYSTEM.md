@@ -87,6 +87,11 @@ Warna DNA bisnis merupakan arahan untuk **konten bisnis**. Warna logo Berez/Cend
 
 Urutan workspace: **Beranda → Profil & aset → Content Studio → Jadwal konten → Meta Ads**. Akun sosial menjadi pengaturan koneksi terpisah. Navigasi ponsel mengikuti urutan makna yang sama; label boleh dipendekkan.
 
+- Content Studio dapat memiliki submode kanal seperti Sosial dan YouTube di dalam tab yang sama; pertahankan urutan lima tab utama di atas.
+- YouTube Studio berfokus pada produksi video AI. Mulai dari topik, format, durasi, pembawaan suara, dan pemeran; lanjutkan ke tinjauan naskah, tinjauan acuan karakter, produksi media, lalu pratinjau dan publikasi. Unggah file komputer bukan tindakan utama Studio ini.
+- Durasi 15/30/60 menit atau khusus memengaruhi panjang naskah dan jumlah adegan. Tampilkan sumber daya produksi sebelum konfirmasi gambar dan suara. Naskah tersimpan dapat diedit per menit sebelum produksi; bedakan perubahan belum disimpan dari versi yang disetujui.
+- Pemeran memiliki identitas tetap, gambar acuan yang ditinjau, suara, dan gaya bicara. Tampilkan siapa yang berbicara pada setiap dialog. Narator terpisah dari maksimal lima pemeran. Jelaskan kemampuan suara yang benar-benar tersedia; jangan menyebut pilihan preset sebagai peniruan rekaman suara pribadi.
+
 Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. Pergantian bisnis tidak membuang perubahan yang belum disimpan atau menerapkan hasil AI ke bisnis lain.
 
 ## Workspace di ponsel dan desktop
@@ -117,6 +122,8 @@ Bisnis aktif ditampilkan dengan nama, identitas singkat, dan akun yang terkait. 
 - Pratinjau Reels memutar MP4 akhir agar pengguna dapat menilai judul, kesesuaian teks pendukung dengan narasi, foto, gerak, dan penerapan palet DNA Visual. Gunakan [panduan desain konten](CONTENT_DESIGN_SYSTEM.md) untuk komposisi serta narasi.
 - Sediakan tindakan buka/unduh; jangan menampilkan thumbnail kecil sebagai satu-satunya cara meninjau hasil.
 - Operasi jaringan memiliki indikator tahap dan tombol sibuk/disabled. Kegagalan menyebut tahap, status hasil yang diketahui, dan langkah berikutnya.
+- Pratinjau unggah YouTube merangkum channel, file, metadata, deklarasi, dan pilihan privasi sebelum konfirmasi. Tampilkan progres byte aktual dan status operasi tersimpan; jangan menyamakan izin upload dengan video yang sudah terbit.
+- Perubahan unggah yang belum dikonfirmasi memiliki penjaga navigasi yang menjelaskan perubahan tertunda. Operasi unggah yang sudah tersimpan dapat dilanjutkan melalui navigasi durable tanpa menghilangkan statusnya.
 - Jangan menampilkan persen atau waktu selesai palsu. Jangan mengklaim berhasil ketika hanya permintaan yang terkirim.
 - Hasil jaringan yang belum pasti tidak boleh memicu generasi atau kiriman ganda. Tawarkan pemeriksaan hasil proses yang sama.
 - Di Studio, pemulihan otomatis melanjutkan sesi naskah dan memakai kembali gambar yang berhasil pada operasi yang sama. Kuota draf dihitung sekali untuk operasi tersebut. Bila pemulihan masih berjalan, pertahankan status proses dan tombol sibuk; tampilkan draf selesai setelah seluruh media tersimpan.

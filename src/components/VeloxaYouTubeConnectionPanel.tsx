@@ -262,7 +262,7 @@ export function VeloxaYouTubeConnectionPanel({ workspaceId, businessId, business
       update(expectedEpoch, { needsRefresh: true, error: 'Permintaan simpan sudah dikirim, tetapi koneksi belum dapat dipastikan. Muat ulang status sebelum mencoba lagi.' });
       return;
     }
-    update(expectedEpoch, { selectedChannelId: '', notice: 'Channel YouTube tersimpan untuk bisnis ini. Publikasi video belum tersedia.' });
+    update(expectedEpoch, { selectedChannelId: '', notice: 'Channel YouTube tersimpan untuk bisnis ini. Buka YouTube Studio untuk memberi izin unggah.' });
   }
 
   async function disconnectConnection(expectedEpoch: number) {
@@ -296,7 +296,7 @@ export function VeloxaYouTubeConnectionPanel({ workspaceId, businessId, business
       <div className="min-w-0"><h3 ref={headingRef} id={headingId} tabIndex={-1} className="text-xl font-semibold">YouTube</h3><p className="mt-1 break-words text-sm text-neutral-500">Untuk {businessName}</p></div>
       <span className="rounded-md bg-[#faf2f5] px-2 py-1 text-xs font-medium text-[#682943]">Persiapan koneksi</span>
     </div>
-    <p id={permissionsId} className="text-base leading-relaxed text-neutral-600">Veloxa hanya meminta izin untuk melihat channel YouTube Anda. Unggah dan publikasi video belum tersedia.</p>
+    <p id={permissionsId} className="text-base leading-relaxed text-neutral-600">Koneksi awal memakai izin baca channel YouTube. Beri izin unggah di YouTube Studio saat siap mengirim video.</p>
 
     {reviewStatus === 'failed' && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900" data-testid="youtube-callback-failed">Izin YouTube belum berhasil atau dibatalkan. Periksa status di bawah, lalu hubungkan kembali jika diperlukan.</p>}
     {reviewStatus === 'authorized' && <p role="status" className="rounded-lg border border-[#ead4de] bg-[#faf2f5] p-3 text-sm leading-relaxed text-[#682943]" data-testid="youtube-callback-authorized">Anda kembali dari Google. Koneksi belum otomatis disimpan; tinjau channel untuk bisnis ini terlebih dahulu.</p>}
@@ -310,7 +310,7 @@ export function VeloxaYouTubeConnectionPanel({ workspaceId, businessId, business
         <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm text-neutral-500">Channel tersimpan</p><p className="mt-1 break-words text-base font-semibold">{connection.title}</p>{connection.handle && <p className="mt-1 break-words text-sm text-neutral-600">{connection.handle}</p>}</div><span className={`text-sm font-medium ${view.needsRefresh ? 'text-amber-800' : connection.status === 'connected' ? 'text-emerald-800' : 'text-amber-800'}`} data-testid="youtube-saved-status">{view.needsRefresh ? 'Status belum diperbarui' : connection.status === 'connected' ? 'Terhubung' : 'Hubungkan kembali'}</span></div>
         {date && <p className="text-sm text-neutral-500">Tersimpan sejak {date}</p>}
         {url && <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center text-sm font-medium text-[#682943] underline underline-offset-4">Buka channel YouTube ↗</a>}
-        <p className="text-sm leading-relaxed text-neutral-600" data-testid="youtube-publishing-unavailable">Koneksi ini hanya untuk persiapan akun. YouTube belum menjadi tujuan publikasi di Content Studio atau Jadwal konten.</p>
+        <p className="text-sm leading-relaxed text-neutral-600" data-testid="youtube-upload-permission-hint">Untuk mengirim file ke channel ini, buka YouTube Studio di Content Studio dan periksa izin unggah.</p>
       </div> : !view.loading && !view.needsRefresh && <p className="rounded-lg border border-dashed border-neutral-200 p-4 text-base text-neutral-600" data-testid="youtube-empty">Belum ada channel YouTube tersimpan untuk bisnis ini.</p>}
 
       {!!data.channels.length && <fieldset disabled={!canMutate || !data.configured || !data.authorizationId} className="min-w-0 space-y-3 rounded-lg border border-[#e7d4dd] bg-[#fcf8fa] p-4" data-testid="youtube-pending-channels">

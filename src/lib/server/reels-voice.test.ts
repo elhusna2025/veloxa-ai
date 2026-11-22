@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import { generateReelsVoiceover, REELS_VOICE_MODEL } from './reels-voice';
+import { generateReelsVoiceover, generateDialogueVoiceover, generateCharacterVoiceSample, REELS_VOICE_MODEL } from './reels-voice';
 import { REELS_SPEC } from '../reels-spec';
 
 const script = 'Pernah penasaran kenapa langkah kecil bisa membuat hari terasa lebih ringan? Mulai saja dengan memilih satu kebiasaan sederhana yang cocok untukmu. Tak perlu langsung sempurna, beri dirimu waktu untuk mencoba dan menemukan ritme yang nyaman. Pelan-pelan, perubahan baik bisa tumbuh. Semoga tips ini membantu, ya.';
@@ -37,6 +37,45 @@ const sceneLines = [
   'Isi setiap cabang dengan satu contoh dan tandai bagian yang masih membuatmu ragu.',
   'Pilih satu cabang lalu mulai latihan dari situ. Coba gunakan cara ini besok juga.',
 ];
+
+test('dialogue keeps saved speaker voices through role changes and preserves scene timing', async () => {
+  const requests: { voice: string; text: string; instructions: string }[] = [];
+  const createConnection = () => {
+    const connection = new MockConnection();
+    queueMicrotask(() => {
+      connection.emit('session.created', {});
+      const response = connection.sent[0].response as { audio: { output: { voice: string } }; input: { content: { text: string }[] }[]; instructions: string };
+      const text = response.input[0].content[0].text;
+      requests.push({ voice: response.audio.output.voice, text, instructions: response.instructions });
+      connection.emit('response.output_audio.delta', makeAudioEvent(Buffer.alloc(6 * 48000)));
+      connection.emit('response.output_audio_transcript.done', { transcript: text });
+      connection.emit('response.done', { response: { status: 'completed' } });
+    });
+    return connection as never;
+  };
+  const voices = ['cedar', 'coral', 'cedar', 'marin'] as const;
+  const result = await generateDialogueVoiceover(sceneLines.map((text, index) => ({ lines: [{ text, voice: voices[index], delivery: index === 2 ? 'Rani menjawab dengan tenang.' : 'Bicara dengan alami.' }] })), { createConnection });
+  assert.deepEqual(requests.map(request => request.voice), voices);
+  assert.deepEqual(requests.map(request => request.text), sceneLines);
+  assert.ok(requests[2].instructions.includes('Rani menjawab dengan tenang'));
+  assert.equal(result.sceneDurations?.length, 4);
+  assert.equal(result.sceneDurations?.reduce((sum, value) => sum + value, 0), result.pcm.length / 48000);
+});
+
+test('cast audition is a playable mono WAV using the same saved voice and exact spoken text', async () => {
+  const connection = new MockConnection();
+  const pcm = Buffer.alloc(4 * 48000);
+  queueMicrotask(() => {
+    connection.emit('session.created', {});
+    const response = connection.sent[0].response as { audio: { output: { voice: string } }; input: { content: { text: string }[] }[] };
+    assert.equal(response.audio.output.voice, 'sage');
+    emitCompletion(connection, pcm, response.input[0].content[0].text);
+  });
+  const wav = await generateCharacterVoiceSample('Rani', 'sage', 'Hangat', undefined, { createConnection: () => connection as never });
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF'); assert.equal(wav.toString('ascii', 8, 12), 'WAVE');
+  assert.equal(wav.readUInt32LE(24), 24000); assert.equal(wav.readUInt16LE(22), 1);
+  assert.equal(wav.readUInt32LE(40), pcm.length); assert.deepEqual(wav.subarray(44), pcm);
+});
 
 function mockScenes(transcriptFor: (line: string, attempt: number) => string, lines = sceneLines, audioForScene?: (index: number) => Buffer) {
   const requests: { line: string; instructions: string }[] = [];

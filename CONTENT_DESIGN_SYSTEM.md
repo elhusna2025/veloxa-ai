@@ -50,3 +50,12 @@ Visual per slide mengikuti isi slide tersebut, dengan identitas warna dan arahan
 ## Verifikasi perubahan
 
 Uji render asli memakai font bundel, bounds dan overflow, kontras foto terang, serta logo/screenshot tetap utuh. Tinjau hasil aktual pada lebar 390 px dan master; navigasi UI bukan bukti keterbacaan media. Hasil lama tidak berubah otomatis: aturan berlaku untuk render baru.
+
+## Video YouTube dan Shorts
+
+- Produksi YouTube memakai naskah baru sesuai topik dan durasi yang dipilih, dengan alur pembahasan per menit. Target 105–125 kata per menit dan empat adegan per menit, bukan mengulang atau memperlambat satu naskah Reels untuk mengisi video panjang. Shorts memakai kanvas 720 × 1280; video panjang 1280 × 720.
+- Naskah, gambar acuan pemeran, gambar adegan, dialog, dan segmen video disimpan terpisah agar bagian yang sudah berhasil dapat dipakai kembali. Naskah serta acuan pemeran ditinjau sebelum produksi seluruh video. Progres menyebut bagian tersimpan; waktu selesai tidak diperkirakan tanpa bukti.
+- Setiap dialog terikat pada ID pemeran dan pilihan suara yang sama sepanjang video. Foto adegan menerima gambar acuan kanonis semua karakter yang tampak di adegan itu, berikut nama dan ciri penampilannya. Kamera, ekspresi, dan tindakan boleh berubah; identitas wajah, rambut dan pakaian mengikuti acuan. Tetap tinjau hasil akhir untuk penyimpangan identitas.
+- Judul dan teks pendukung diukur memakai Inter ExtraBold dan Inter Medium. Foto menyediakan ruang teks alami, dengan kontras minimum 4,5:1 di area gerak kamera. Lapisan tulisan tetap, foto bergerak pelan dengan zoom/pan maksimal 9% dan perpindahan lembut sekitar 0,32 detik. Palet dan objek mengikuti DNA serta konteks bisnis aktif.
+- Dialog dapat berganti pembicara di dalam satu adegan. Ukur durasi PCM aktual tiap adegan sebelum menetapkan jumlah frame; sesuaikan tempo dalam rentang terbatas dan perbaiki suara yang terlalu jauh dari target. Beri tahu bahwa suara menggunakan AI. Preset dan arahan pembawaan belum menyediakan peniruan rekaman pribadi.
+- Video panjang dirender sebagai segmen terbatas lalu digabung melalui stream. Pratinjau MP4 privat memakai permintaan rentang byte sehingga browser tidak perlu mengunduh seluruh video sebelum memutar. Publikasi adalah konfirmasi terpisah, terikat ke channel dan izin unggah yang masih berlaku.

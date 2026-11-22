@@ -84,6 +84,14 @@ export function fitCompositionText(text: string, width: number, height: number, 
   });
 }
 
+/** The video studios share the same bundled Inter faces and measured typography. */
+export function fitVideoText(text: string, width: number, height: number, max: number, min: number, color: string, bold = false) {
+  return fitText(text, width, height, max, min, color, {
+    font: bold ? 'Inter ExtraBold' : 'Inter Medium', file: bold ? reelsHeadlineFont : reelsLabelFont,
+    wrap: 'word', gapRatio: bold ? .09 : .24,
+  });
+}
+
 const linearColor = Array.from({ length: 256 }, (_, byte) => {
   const channel = byte / 255;
   return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;

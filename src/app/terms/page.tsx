@@ -41,6 +41,7 @@ export default function VeloxaTermsOfUsePage() {
             "Meta Graph API (Instagram Professional & Facebook Page), TikTok Content Posting API (Video & Photo Mode), dan YouTube Data API v3 (Shorts).",
             "Veloxa AI hanya mempublikasikan konten atau menjalankan penjadwalan Autopilot sesuai frekuensi (1x–4x sehari) dan kalender yang Anda aktifkan.",
             "Anda memegang kendali penuh untuk mencabut akses OAuth kapan saja melalui dasbor Veloxa AI maupun langsung dari pengaturan keamanan akun Instagram, Facebook, TikTok, atau Google Anda.",
+            "Unggahan YouTube tunduk pada ketentuan YouTube, Google Privacy Policy, dan Google API Services User Data Policy. Unggahan berawal sebagai private dan hanya dimulai setelah konfirmasi eksplisit Anda; ketersediaan bergantung pada YouTube dan konfigurasi Veloxa.",
           ],
         },
         {
@@ -103,6 +104,7 @@ export default function VeloxaTermsOfUsePage() {
             "Meta Graph API (Instagram Professional & Facebook Page), TikTok Content Posting API (Video & Photo Mode), and YouTube Data API v3 (Shorts).",
             "Veloxa AI only publishes or schedules posts according to the Autopilot cadence (1x–4x daily) and campaign settings you explicitly configure.",
             "You retain full control to revoke OAuth permissions at any time from your Veloxa AI dashboard or directly within your Instagram, Facebook, TikTok, or Google account security settings.",
+            "YouTube uploads are subject to YouTube, Google Privacy, and Google API Services User Data terms. Uploads default to private and start only after your explicit confirmation; availability depends on YouTube and Veloxa configuration.",
           ],
         },
         {
@@ -148,6 +150,11 @@ export default function VeloxaTermsOfUsePage() {
       <VeloxaLegalDocument page="terms" isId={isId} sections={sections}>
         <section className={styles.contact} aria-labelledby="legal-contact">
           <h2 id="legal-contact">{isId ? "Pertanyaan tentang ketentuan?" : "Questions about these terms?"}</h2>
+          <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
+            <a href="https://www.youtube.com/t/terms">{isId ? "Ketentuan Layanan YouTube" : "YouTube Terms of Service"}</a>
+            <a href="https://policies.google.com/privacy">{isId ? "Kebijakan Privasi Google" : "Google Privacy Policy"}</a>
+            <a href="https://developers.google.com/terms/api-services-user-data-policy">{isId ? "Kebijakan Data Pengguna API Google" : "Google API Services User Data Policy"}</a>
+          </div>
           <a className={`${authStyles.secondary} ${styles.action}`} href={`mailto:${legalContactEmail}`}>{legalContactEmail}</a>
         </section>
       </VeloxaLegalDocument>

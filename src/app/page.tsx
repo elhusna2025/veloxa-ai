@@ -19,6 +19,9 @@ import { normalizeBrandProfile } from '@/lib/veloxa-brand-profile';
 import { withConnectionPlaceholders } from '@/lib/social-account-identity';
 import type { CarouselPlan } from '@/lib/carousel-plan';
 import { VeloxaStudioComposer } from '@/components/VeloxaStudioComposer';
+import { VeloxaStudioModePicker } from '@/components/VeloxaStudioModePicker';
+import { VeloxaYouTubeProductionStudio as VeloxaYouTubeStudio } from '@/components/VeloxaYouTubeProductionStudio';
+import { consumeYouTubeUploadReturnIntent } from '@/lib/youtube-upload-client';
 import { ContentGenerationError, type GenerationQuota, type GenerationFeedback, type GenerationStage } from '@/lib/content-generation';
 import type { PublicationQuota } from '@/lib/server/publication-quota';
 import PublishReviewDialog from '@/components/PublishReviewDialog';
@@ -176,6 +179,10 @@ export default function VeloxaAiPlatformPage() {
   const [businessSaving,setBusinessSaving]=useState(false);
   const [profileDirty,setProfileDirty]=useState(false);
   const [profileBusy,setProfileBusy]=useState(false);
+  const [youtubeBusy, setYoutubeBusy] = useState(false);
+  const [youtubeDirty, setYoutubeDirty] = useState(false);
+  const [studioMode, setStudioMode] = useState<'social' | 'youtube'>('social');
+  const [uploadReturn, setUploadReturn] = useState<{ workspaceId: string; businessId: string; status: 'authorized' | 'failed' } | null>(null);
   const [adsSourceDraft,setAdsSourceDraft]=useState<ContentDraft|undefined>();
   const activeBusiness:BusinessContext=businesses.find(item=>item.id===activeBusinessId)||{id:PRIMARY_BUSINESS,revision:0,brand:workspaceBrand,connectionIds:[],schedule:{connectionIds:[],timesWib:['08:00','19:00'],days:[...BUSINESS_DAYS]}};
   const brand=activeBusiness.id===PRIMARY_BUSINESS?workspaceBrand:activeBusiness.brand;
@@ -222,10 +229,10 @@ export default function VeloxaAiPlatformPage() {
   const studioCollectionHeading = useRef<HTMLHeadingElement>(null);
   const focusStudioCollection = useRef(false);
   useEffect(() => {
-    if (activeTab !== 'studio' || !focusStudioCollection.current) return;
+    if (activeTab !== 'studio' || studioMode !== 'social' || !focusStudioCollection.current) return;
     focusStudioCollection.current = false;
     studioCollectionHeading.current?.focus();
-  }, [activeTab]);
+  }, [activeTab, studioMode]);
 
   // Event campaign creator state
   const [newCampaignName, setNewCampaignName] = useState<string>('');
@@ -416,6 +423,22 @@ export default function VeloxaAiPlatformPage() {
         oauthDialogRef.current?.showModal();
         callback.searchParams.delete('meta'); callback.searchParams.delete('instagram'); window.history.replaceState({}, '', callback.toString());
       }
+      const uploadCallback = callback.searchParams.get('youtube_upload');
+      if (uploadCallback === 'authorized' || uploadCallback === 'failed') {
+        const returnBusinessId = consumeYouTubeUploadReturnIntent(targetWsId);
+        if (returnBusinessId && businessResult.status === 'fulfilled' && businessResult.value.businesses.some(item => item.id === returnBusinessId)) {
+          setActiveBusinessId(returnBusinessId);
+          try { sessionStorage.setItem(`veloxa:business:${user.uid}:${targetWsId}`, returnBusinessId); } catch { /* Selection is already restored for this page. */ }
+          setActiveRole('user');
+          setActiveTab('studio');
+          setStudioMode('youtube');
+          setUploadReturn({ workspaceId: targetWsId, businessId: returnBusinessId, status: uploadCallback });
+        } else {
+          setStatusBanner('Bisnis asal izin unggah belum dapat dipulihkan. Pilih bisnis yang digunakan saat memberi izin, lalu tinjau di YouTube Studio.');
+        }
+        callback.searchParams.delete('youtube_upload');
+        window.history.replaceState({}, '', callback.toString());
+      }
       const youTubeCallback = callback.searchParams.get('youtube');
       if (youTubeCallback === 'authorized' || youTubeCallback === 'failed') {
         // The Google return contains no business identifier. Restore only a recent,
@@ -462,6 +485,7 @@ export default function VeloxaAiPlatformPage() {
       const epoch = ++hydrationEpoch.current;
       setIsWorkspaceLoading(!!fbUser);
       setAuthUser(fbUser);setBusinessesReady(false);setBusinesses([]);setActiveBusinessId(PRIMARY_BUSINESS);setProfileDirty(false);setProfileBusy(false);
+      setStudioMode('social');setYoutubeBusy(false);setYoutubeDirty(false);setUploadReturn(null);
       setContentHistoryReady(false);
       setPublicationQuota(null);
       setGenerationQuota(null);
@@ -551,14 +575,49 @@ export default function VeloxaAiPlatformPage() {
     router.push(authUser ? '/onboarding' : '/register');
   };
 
-  const navigateWorkspace=(tab:UserTabId)=>{if(profileDirty&&['brand_vault','autonomy'].includes(activeTab)&&tab!==activeTab){setStatusBanner('Simpan atau batalkan perubahan sebelum berpindah halaman.');return;}setActiveTab(tab);};
+  const canLeaveYouTubeStudio = () => {
+    if (youtubeBusy) {
+      setStatusBanner('Tunggu proses YouTube selesai sebelum berpindah.');
+      return false;
+    }
+    if (youtubeDirty) {
+      setStatusBanner('Tinjau atau buang isian unggahan YouTube sebelum berpindah.');
+      return false;
+    }
+    return true;
+  };
+  const navigateWorkspace = (tab: UserTabId) => {
+    if (tab !== activeTab && !canLeaveYouTubeStudio()) return false;
+    if (profileDirty && ['brand_vault', 'autonomy'].includes(activeTab) && tab !== activeTab) {
+      setStatusBanner('Simpan atau batalkan perubahan sebelum berpindah halaman.');
+      return false;
+    }
+    setActiveTab(tab);
+    return true;
+  };
+  const changeStudioMode = (mode: 'social' | 'youtube') => {
+    if (mode === studioMode) return true;
+    if (!canLeaveYouTubeStudio()) return false;
+    if (isCreatingContent || businessSaving || publishingDraftId) {
+      setStatusBanner('Tunggu proses Content Studio selesai sebelum mengganti studio.');
+      return false;
+    }
+    setStudioMode(mode);
+    setStatusBanner('');
+    return true;
+  };
+  const openSocialStudio = () => {
+    if (studioMode === 'youtube' && !canLeaveYouTubeStudio()) return false;
+    if (!navigateWorkspace('studio')) return false;
+    return changeStudioMode('social');
+  };
   const openStudioWithFormat = (format: ContentFormat) => {
+    if (!openSocialStudio()) return;
     setStudioFormat(format);
     setStudioFilter('all');
-    navigateWorkspace('studio');
   };
-  const businessLocked=isWorkspaceLoading||isCreatingContent||Boolean(publishingDraftId)||businessSaving||profileDirty||profileBusy;
-  const selectBusiness=(id:string)=>{if(businessLocked||!businessesReady||!businesses.some(item=>item.id===id))return;hydrationEpoch.current++;try{sessionStorage.setItem(`veloxa:business:${authUser?.uid}:${workspaceBrand.workspaceId}`,id);}catch{ /* Storage is optional. */ }setActiveBusinessId(id);setStatusBanner('');};
+  const businessLocked = isWorkspaceLoading || isCreatingContent || Boolean(publishingDraftId) || businessSaving || profileDirty || profileBusy || youtubeBusy || youtubeDirty;
+  const selectBusiness=(id:string)=>{if(businessLocked||!businessesReady||!businesses.some(item=>item.id===id))return;hydrationEpoch.current++;try{sessionStorage.setItem(`veloxa:business:${authUser?.uid}:${workspaceBrand.workspaceId}`,id);}catch{ /* Storage is optional. */ }setUploadReturn(null);setActiveBusinessId(id);setStatusBanner('');};
   const reloadBusinesses=async()=>{const epoch=hydrationEpoch.current;const result=await veloxaApi<{businesses:BusinessContext[]}>(`/api/veloxa/businesses?workspaceId=${encodeURIComponent(workspaceBrand.workspaceId)}`);if(epoch!==hydrationEpoch.current)return;setBusinesses(result.businesses);setBusinessesReady(true);setBusinessError('');};
   const saveBusinessChanges=async(patch:{connectionIds?:string[];profile?:BrandProfile;schedule?:BusinessSchedule;expectedProfileFingerprint?:string})=>{
     if(!businessesReady)throw new Error('Muat ulang daftar bisnis terlebih dahulu.');const epoch=hydrationEpoch.current;setBusinessSaving(true);
@@ -584,6 +643,7 @@ export default function VeloxaAiPlatformPage() {
 
   const populateOAuthModalFieldsForChannel = (channel: SocialChannelId) => setEditingChannel(channel);
   const handleOpenOAuthConfigModal = (channel: SocialChannelId) => {
+    if (!canLeaveYouTubeStudio()) return;
     setEditingChannel(channel);
     oauthDialogRef.current?.showModal();
   };
@@ -610,11 +670,13 @@ export default function VeloxaAiPlatformPage() {
   const handleQuickLoginRole = (_targetRole: 'admin' | 'user') => router.push('/login');
 
   const handleRequestSignOutClick = () => {
+    if (!canLeaveYouTubeStudio()) return;
     logoutConfirmDialogRef.current?.showModal();
   };
 
   const handleConfirmSignOut = async () => {
     logoutConfirmDialogRef.current?.close();
+    if (!canLeaveYouTubeStudio()) return;
     try {
       await signOutVeloxaUser(); hydrationEpoch.current++; hasHydratedCloudWorkspaceRef.current = null;
       setAuthUser(null); setActiveRole('user'); setIsWorkspaceLoading(false); authDialogRef.current?.close();
@@ -765,12 +827,12 @@ export default function VeloxaAiPlatformPage() {
               activeTab={activeTab} brandName={brand.businessName} planName={currentPlan.name}
               email={authUser.email}
               used={postsUsedThisMonth} quota={publicationQuota ? publicationQuota.limit : currentPlan.monthlyPostQuota} locale={locale}
-              onNavigate={navigateWorkspace} onCreate={() => navigateWorkspace('studio')}
+              onNavigate={navigateWorkspace} onCreate={openSocialStudio}
               onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
               onBilling={() => setBillingOpen(true)}
               onAccount={() => authDialogRef.current?.showModal()} onSignOut={handleRequestSignOutClick}
               onSync={() => void handleForceCloudSync()} onLocale={handleSelectLocale}
-              isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => setActiveRole('admin')}
+              isSuperAdmin={authUser.isSuperAdmin} onAdmin={() => { if (canLeaveYouTubeStudio()) setActiveRole('admin'); }}
               status={statusBanner === 'Profil bisnis sudah tersimpan. Selamat datang di Veloxa!' && activeTab !== 'overview' ? undefined : statusBanner || undefined}
               onDismissStatus={() => setStatusBanner('')}
             >
@@ -788,7 +850,7 @@ export default function VeloxaAiPlatformPage() {
                   connectionsVerified={connectionsVerified && businessesReady}
                   drafts={businessDrafts}
                   onEditProfile={() => navigateWorkspace('brand_vault')}
-                  onStudio={() => navigateWorkspace('studio')}
+                  onStudio={openSocialStudio}
                   onMetaAds={() => navigateWorkspace('meta_ads')}
                   onCreateContent={openStudioWithFormat}
                   onConnections={() => handleOpenOAuthConfigModal(activeConnections.some(item => item.channel === 'facebook' && item.connected) ? 'facebook' : 'instagram')}
@@ -803,9 +865,9 @@ export default function VeloxaAiPlatformPage() {
                     },
                     onAssign: () => setManagingBusiness(true),
                     onCollection: () => {
+                      if (!openSocialStudio()) return;
                       setStudioFilter('all');
                       focusStudioCollection.current = true;
-                      navigateWorkspace('studio');
                     },
                     onReview: handlePublishDraftNow,
                   }}
@@ -823,10 +885,24 @@ export default function VeloxaAiPlatformPage() {
               )}
 
               {/* ====================================================================
-                 TAB 3: STUDIO KONTEN MULTI-PLATFORM (IG, FB, TIKTOK, YOUTUBE SHORTS)
+                 TAB 3: CONTENT STUDIO
                  ==================================================================== */}
               {activeTab === 'studio' && (
-                <div className="space-y-6">
+                <div className="min-w-0 space-y-6">
+                  <VeloxaStudioModePicker value={studioMode} onChange={changeStudioMode} busy={youtubeBusy || isCreatingContent || businessSaving || Boolean(publishingDraftId)} />
+                  {studioMode === 'youtube' ? (
+                    <VeloxaYouTubeStudio
+                      key={`youtube-upload:${authUser.uid}:${brand.workspaceId}:${activeBusinessId}`}
+                      workspaceId={brand.workspaceId}
+                      businessId={activeBusinessId}
+                      businessName={brand.businessName}
+                      ready={businessesReady && !isWorkspaceLoading}
+                      onBusyChange={setYoutubeBusy}
+                      onDirtyChange={setYoutubeDirty}
+                      onManageConnection={() => handleOpenOAuthConfigModal('youtube_shorts')}
+                      reviewStatus={uploadReturn?.workspaceId === brand.workspaceId && uploadReturn.businessId === activeBusinessId ? uploadReturn.status : null}
+                    />
+                  ) : <>
                   <VeloxaStudioComposer key={`${brand.workspaceId}:${activeBusinessId}`} brand={brand} onAssistantBusyChange={setBusinessSaving} onResume={()=>void handleGenerateStudioDraft('manual_studio',undefined,true)} sourceMode={studioSourceMode} onSourceMode={setStudioSourceMode} offerings={brand.offerings} offeringIds={studioOfferingIds} onOfferings={setStudioOfferingIds} contentIntent={studioContentIntent} onIntent={setStudioContentIntent} accounts={activeConnections} accountsVerified={connectionsVerified&&businessesReady} selectedConnectionIds={selectedConnectionIds} onAccounts={setSelectedConnectionIds} brandName={brand.businessName} format={studioFormat} topic={studioTopic} assetIds={selectedReferenceIds} referenceRoles={referenceRoles} onRole={(id,role)=>setReferenceRoles(previous=>({...previous,[id]:role}))} referenceInstruction={referenceInstruction} assets={vaultAssets} creating={isCreatingContent} feedback={generationFeedback} quota={generationQuota} onFormat={setStudioFormat} onTopic={setStudioTopic} onAssets={setSelectedReferenceIds} onInstruction={setReferenceInstruction} onManageAssets={() => setActiveTab('brand_vault')} onCreate={plan => void handleGenerateStudioDraft('manual_studio',undefined,false,plan)} />
 
                   <div className="flex flex-wrap items-center justify-between gap-4"><h2 ref={studioCollectionHeading} tabIndex={-1} className="text-xl font-semibold">{t("Koleksi konten")} <span className="ml-1 text-base font-normal text-neutral-400">{businessDrafts.length}</span></h2><div role="group" aria-label={t("Filter konten")} className="flex max-w-full flex-wrap gap-1 rounded-lg border border-neutral-200 bg-white p-1">{([{id:'all',label:'Semua'},{id:'draft',label:'Draf'},{id:'published',label:'Terbit'},{id:'attention',label:'Perlu perhatian'}] as const).map(item => <button type="button" key={item.id} aria-pressed={studioFilter === item.id} onClick={() => setStudioFilter(item.id)} className={`rounded-md px-3 py-2 text-sm ${studioFilter === item.id ? 'bg-neutral-100 font-medium text-neutral-950' : 'text-neutral-500 hover:text-neutral-900'}`}>{t(item.label)}</button>)}</div></div>
@@ -998,6 +1074,7 @@ export default function VeloxaAiPlatformPage() {
                       </article>
                     ))}
                   </div>
+                  </>}
                 </div>
               )}
 
@@ -1272,7 +1349,7 @@ export default function VeloxaAiPlatformPage() {
           </button>
         </div>
 
-        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><button type="button" onClick={() => { authDialogRef.current?.close(); setActiveTab('brand_vault'); }} className="veloxa-button-secondary">Edit profil bisnis</button><button type="button" onClick={() => { authDialogRef.current?.close(); setBillingOpen(true); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
+        <div className="mt-5 space-y-5">{authUser ? <><div className="space-y-1"><p className="text-lg font-semibold">{authUser.displayName || brand.businessName}</p><p className="break-words text-base text-neutral-500">{authUser.email}</p></div><dl className="space-y-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4"><div><dt className="text-sm text-neutral-500">Workspace</dt><dd className="mt-1 break-words text-base font-medium">{brand.businessName}</dd></div><div><dt className="text-sm text-neutral-500">Paket saat ini</dt><dd className="mt-1 text-base font-medium">{currentPlan.name}</dd></div></dl><div className="flex flex-wrap gap-3"><button type="button" onClick={() => { authDialogRef.current?.close(); navigateWorkspace('brand_vault'); }} className="veloxa-button-secondary">Edit profil bisnis</button><button type="button" onClick={() => { authDialogRef.current?.close(); setBillingOpen(true); }} className="veloxa-button-secondary">Lihat paket</button><button type="button" onClick={() => { authDialogRef.current?.close(); handleRequestSignOutClick(); }} className="veloxa-button-secondary">Keluar akun</button></div></> : <><p className="text-base text-neutral-500">Masuk untuk melanjutkan ke workspace Anda.</p><button type="button" data-testid="google-signin-btn" onClick={() => void handleGoogleSignInClick()} className="veloxa-button-secondary w-full">Lanjutkan dengan Google</button><form onSubmit={event => void handleEmailSignInSubmit(event)} className="space-y-4"><label className="block text-sm font-medium" htmlFor="auth-email-input">Email<input id="auth-email-input" data-testid="auth-email-input" type="email" required value={authEmailInput} onChange={event => setAuthEmailInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><label className="block text-sm font-medium" htmlFor="auth-password-input">Password<input id="auth-password-input" data-testid="auth-password-input" type="password" required minLength={6} value={authPasswordInput} onChange={event => setAuthPasswordInput(event.target.value)} className="mt-2 w-full rounded-lg border border-neutral-200 p-3 text-base"/></label><button type="submit" data-testid="email-signin-submit-btn" className="veloxa-button-primary w-full">Masuk</button></form></>}</div>
       </dialog>
 
       <PublishReviewDialog draft={drafts.find(draft => draft.id === publishReviewDraftId) || null} brandName={brand.businessName} onCancel={() => setPublishReviewDraftId(null)} onConfirm={() => { if (publishReviewDraftId) void confirmPublishDraftNow(publishReviewDraftId); }} />

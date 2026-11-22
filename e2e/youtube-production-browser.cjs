@@ -1,0 +1,45 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const assert = require('node:assert/strict');
+const { build } = require('esbuild');
+const { chromium } = require('playwright');
+const artifacts = '/private/tmp/veloxa-youtube-studio-20261122/production-ui';
+fs.mkdirSync(artifacts, { recursive: true });
+let server, browser;
+const watchdog = setTimeout(() => process.exit(124), 50_000);
+(async () => {
+  const output = path.join(artifacts, 'fixture.js');
+  await build({ entryPoints: ['e2e/fixtures/YouTubeProductionPage.tsx'], bundle: true, outfile: output, jsx: 'automatic', platform: 'browser', alias: {
+    '@/lib/veloxa-api-client': path.resolve('e2e/fixtures/youtube-production-api.ts'), '@/lib/youtube-upload-client': path.resolve('e2e/fixtures/youtube-production-api.ts'),
+  } });
+  const css = fs.readdirSync('.next/static/css').filter(name => name.endsWith('.css')).map(name => fs.readFileSync('.next/static/css/' + name, 'utf8')).join('\n');
+  server = http.createServer((req, res) => {
+    if (req.url.startsWith('/fixture.js')) { res.setHeader('Content-Type', 'text/javascript'); return res.end(fs.readFileSync(output)); }
+    if (req.url.startsWith('/api/')) { res.setHeader('Content-Type', 'image/svg+xml'); return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#eae4ef"/><circle cx="200" cy="160" r="70" fill="#ad87a2"/><text x="100" y="310" font-size="28">Acuan simulasi</text></svg>'); }
+    res.setHeader('Content-Type', 'text/html'); res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css}</style></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>`);
+  });
+  await new Promise(resolve => server.listen(8793, '127.0.0.1', resolve));
+  browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, timeout: 10_000 });
+  const page = await browser.newPage(); page.setDefaultTimeout(5000);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const state of ['empty', 'script_review', 'character_review', 'producing', 'attention']) {
+      await page.goto(`http://127.0.0.1:8793/?state=${state}`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { name: 'Studio video AI', exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${state}:${width} overflow`);
+      if (state === 'empty') {
+        await page.getByRole('combobox', { name: 'Suara narator' }).focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+        assert.equal(await page.getByRole('combobox', { name: 'Suara narator' }).innerText(), 'cedar');
+        for (let i = 0; i < 5; i++) await page.getByRole('button', { name: 'Tambah karakter', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: 'Tambah karakter', exact: true }).isDisabled(), true);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+      }
+      await page.screenshot({ path: `${artifacts}/${state}-${width}.png`, fullPage: true });
+    }
+  }
+  assert.deepEqual(errors, []);
+  fs.writeFileSync(`${artifacts}/results.json`, JSON.stringify({ passed: true, widths: [1440, 390], states: ['empty-five-characters', 'script_review', 'character_review', 'producing', 'attention'], keyboard: 'Voice dropdown Down/Enter; five character maximum', externalWrites: false }, null, 2));
+  console.log('Production Studio: desktop, 390px, keyboard and five states passed.');
+})().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(async () => { await browser?.close(); server?.close(); clearTimeout(watchdog); });

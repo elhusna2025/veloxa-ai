@@ -1,8 +1,8 @@
-import { youtubeCallback } from '@/lib/server/youtube-oauth';
+import { dispatchYouTubeCallback } from '@/lib/server/youtube-upload-permission';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export function GET(request: Request) {
-  return youtubeCallback(request);
+  return dispatchYouTubeCallback(request);
 }

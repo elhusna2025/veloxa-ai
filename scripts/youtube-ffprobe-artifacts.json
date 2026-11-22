@@ -1,0 +1,29 @@
+{
+  "linux-x64": {
+    "version": "9.1",
+    "archiveType": "tar.xz",
+    "url": "https://github.com/elhusna2025/veloxa-ai/releases/download/youtube-ffprobe-9.1-1/veloxa-ffprobe-9.1-linux-x64.tar.xz",
+    "source": "https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz",
+    "archiveBytes": 14512392,
+    "archiveSha256": "656333a24e24453bcf3e9516754d0b354cb1d81d3e29dcbe150ad31dc684ef36",
+    "member": "veloxa-ffprobe-9.1-linux-x64/ffprobe",
+    "binaryBytes": 6057984,
+    "binarySha256": "0196345c2f481456c06588b35c9dab6cb69da4ac6cf63feb98cc83f5ddcfeee7",
+    "license": {
+      "member": "veloxa-ffprobe-9.1-linux-x64/LICENSE.txt",
+      "bytes": 26517,
+      "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30"
+    }
+  },
+  "darwin-x64": {
+    "version": "9.1-https://www.martin-riedl.de",
+    "archiveType": "zip",
+    "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1795212433_9.1/ffprobe.zip",
+    "source": "https://git.martin-riedl.de/ffmpeg/build-script",
+    "archiveBytes": 33959464,
+    "archiveSha256": "41ca7b7cba7992e33f1da3f1bf54db8ec103a4d387b1bfac3162062e8b1074ad",
+    "member": "ffprobe",
+    "binaryBytes": 95121072,
+    "binarySha256": "08628babfba2b69c83f5071586d75207feb698594304e4bee0c5c134a258f1d1"
+  }
+}

@@ -47,6 +47,8 @@ interface VoiceDependencies {
   timeoutMs?: number;
   model?: string;
   sceneLines?: readonly string[];
+  voice?: 'marin' | 'cedar' | 'coral' | 'ash' | 'sage' | 'shimmer' | 'echo' | 'alloy' | 'ballad' | 'verse';
+  delivery?: string;
 }
 
 interface Voiceover {
@@ -222,7 +224,7 @@ async function generateSceneVoiceover(lines: readonly string[], deps: VoiceDepen
 
   async function narrate(line: string, index: number): Promise<Voiceover> {
     const direction = SCENE_DELIVERY[index];
-    const instructions = `${CONVERSATIONAL_VOICE} ${direction} Mulai langsung dari kata pertama naskah. Jangan menyisipkan pengantar, sapaan, atau penutup tambahan.`;
+    const instructions = `${CONVERSATIONAL_VOICE} ${direction} Mulai langsung dari kata pertama naskah. Jangan menyisipkan pengantar, sapaan, atau penutup tambahan. ${deps.delivery ? `Arahan pembawaan (bukan naskah): ${deps.delivery.slice(0, 800)}` : ''}`;
     const expected = spokenWords(line);
     const scene = await requestVoice(line, instructions, deps, controller.signal);
     if (matchesSpokenScript(expected, scene.transcript)) return scene;
@@ -258,6 +260,51 @@ async function generateSceneVoiceover(lines: readonly string[], deps: VoiceDepen
     clearTimeout(timer);
     controller.abort();
   }
+}
+
+/** Preserve one voice binding per speaker while timing the actual dialogue of each scene. */
+export async function generateDialogueVoiceover(
+  scenes: { lines: { text: string; voice: NonNullable<VoiceDependencies['voice']>; delivery: string }[] }[],
+  deps: VoiceDependencies = {},
+): Promise<Voiceover> {
+  const script = scenes.flatMap(scene => scene.lines.map(line => line.text)).join(' ');
+  if (scenes.length !== 4 || scenes.some(scene => !scene.lines.length || scene.lines.length > 6) || !isValidScript(script)) throw INVALID_SCRIPT_ERROR;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const buffers: Buffer[][] = scenes.map(() => []);
+  const lines = scenes.flatMap((scene, index) => scene.lines.map(line => ({ ...line, index })));
+  try {
+    for (let offset = 0; offset < lines.length; offset += 2) {
+      const batch = await Promise.all(lines.slice(offset, offset + 2).map(async line => {
+        const instructions = `${CONVERSATIONAL_VOICE} Ucapkan hanya dialog ini. Karakter dan pembawaan: ${line.delivery.slice(0, 800)}. Jangan menambah kata atau menyebut nama pemeran sebagai label.`;
+        const options = { ...deps, voice: line.voice };
+        let spoken = await requestVoice(line.text, instructions, options, controller.signal);
+        if (!matchesSpokenScript(spokenWords(line.text), spoken.transcript)) spoken = await requestVoice(line.text, instructions + ' Pertahankan setiap kata persis dan berurutan.', options, controller.signal);
+        if (!matchesSpokenScript(spokenWords(line.text), spoken.transcript)) throw SAFE_VOICE_ERROR;
+        return { index: line.index, pcm: spoken.pcm };
+      }));
+      for (const line of batch) buffers[line.index].push(Buffer.alloc(24000 * 2 * .12), line.pcm, Buffer.alloc(24000 * 2 * .18));
+    }
+    const scenePcm = buffers.map(value => Buffer.concat(value));
+    const pcm = Buffer.concat(scenePcm);
+    if (pcm.length > MAX_AUDIO_BYTES || pcm.length < 20 * SAMPLE_RATE * 2) throw SAFE_VOICE_ERROR;
+    applyNarrationGain(pcm);
+    return { pcm, sampleRate: SAMPLE_RATE, transcript: script, model: deps.model ?? REELS_VOICE_MODEL,
+      sceneDurations: scenePcm.map(value => value.length / (SAMPLE_RATE * 2)) };
+  } finally { clearTimeout(timer); controller.abort(); }
+}
+
+/** Short, owner-requested cast audition using the same voice/model as the final dialogue. */
+export async function generateCharacterVoiceSample(name: string, voice: NonNullable<VoiceDependencies['voice']>, delivery: string, model?: string, deps: Pick<VoiceDependencies, 'createConnection'> = {}): Promise<Buffer> {
+  const script = `Halo, saya ${name.slice(0, 60)}. Saya akan menemani percakapan ini. Mari kita mulai dengan satu contoh yang mudah dipahami.`;
+  const spoken = await requestVoice(script, `${CONVERSATIONAL_VOICE} Pembawaan karakter: ${delivery.slice(0, 500)}. Jangan menambah kata.`, { ...deps, voice, model, timeoutMs: 40_000 });
+  if (!matchesSpokenScript(spokenWords(script), spoken.transcript)) throw SAFE_VOICE_ERROR;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + spoken.pcm.length, 4); header.write('WAVEfmt ', 8);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(SAMPLE_RATE, 24); header.writeUInt32LE(SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write('data', 36); header.writeUInt32LE(spoken.pcm.length, 40);
+  return Buffer.concat([header, spoken.pcm]);
 }
 
 async function requestVoice(script: string, instructions: string, deps: VoiceDependencies, signal?: AbortSignal): Promise<Voiceover> {
@@ -323,7 +370,7 @@ async function requestVoice(script: string, instructions: string, deps: VoiceDep
               output_modalities: ['audio'],
               instructions,
               input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: script }] }],
-              audio: { output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, voice: 'marin' } },
+              audio: { output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, voice: deps.voice ?? 'marin' } },
             },
           });
         } catch {
