@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import type { BrandProfile } from '../veloxa-types';
-import { validateScriptBlock, validateCast, segmentYouTubeNarration, youtubeBlockSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene } from '../youtube-production';
+import { scriptWords, validateScriptBlock, validateCast, segmentYouTubeNarration, youtubeBlockSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene } from '../youtube-production';
 import { ApiError } from './http';
 
 function client() {
@@ -36,13 +36,23 @@ export async function planYouTubeVideo(settings: YouTubeProductionSettings, bran
   return structured('youtube_outline', schema, JSON.stringify({ task: `Rancang video ${settings.minutes} menit. chapters berisi tepat ${settings.minutes} bagian satu menit yang membentuk satu alur sampai akhir. Untuk fiksi pilih judul cerita, isi chapters dengan kejadian konkret, dan rancang akhir cerita sejak awal. Untuk edukasi atau tutorial pilih judul yang menjelaskan topik dan susun perkembangan pembahasan yang konkret.`, settings, business: facts(brand) }), model, Math.max(1600, settings.minutes * 100));
 }
 export async function writeYouTubeBlock(settings: YouTubeProductionSettings, brand: BrandProfile, outline: YouTubeOutline, index: number, previous: YouTubeScriptBlock | null, model = String(DEFAULT_CONTENT_MODELS.scriptModel)): Promise<YouTubeScriptBlock> {
-  const block = await structured('youtube_minute', youtubeBlockSchema, JSON.stringify({
+  const brief = {
     task: 'Tulis satu menit dengan jumlah adegan yang mengikuti isi narasi, TANPA jumlah adegan tetap atau batas empat gambar. Total narasi WAJIB 105–125 kata. Buat satu adegan untuk setiap gagasan, tindakan, objek, atau konteks baru agar gambar berganti tepat ketika hal itu mulai dibicarakan. Target ritme shot sekitar 3–8 detik sebagai panduan, bukan jatah jumlah gambar. Jangan menahan satu gambar selama beberapa gagasan berbeda. Setiap adegan memuat satu kalimat atau frasa lisan utuh dan visual yang benar-benar menggambarkan kalimat itu. Judul tiap adegan maksimal tujuh kata, teks pendukung singkat. Narasi adalah kata-kata final yang didengar penonton. Untuk cerita, masuk langsung ke dunia tokoh dan lanjutkan kejadian antarmenit. Hindari nasihat kepada penulis atau penjelasan teknik bercerita kecuali diminta. Jangan membaca judul sebagai label. visual menggambarkan subjek, tindakan dan lingkungan yang relevan dengan ucapan dalam adegan. Tidak selalu buku atau alat tulis. Pembuka dan akhir harus memenuhi format dan genre pada topik pengguna. Bahasa lisan alami dengan jeda tanda baca dan penekanan yang tidak berlebihan. lines berisi urutan dialog; speakerId harus narrator atau ID karakter di settings.characters. narration WAJIB sama persis dengan semua lines.text yang disambung satu spasi. characterIds hanya karakter yang tampak pada foto adegan itu. Jangan menciptakan identitas atau suara baru. Pemeran boleh berdialog lebih dari satu orang dalam satu adegan. Jika karakter kosong, gunakan narrator dan characterIds kosong.',
     settings, business: facts(brand),
     outline: { title: outline.title, description: outline.description, totalMinutes: settings.minutes,
       nearbyChapters: outline.chapters.slice(Math.max(0, index - 2), index + 3), currentChapter: outline.chapters[index] },
     finalChapter: outline.chapters.at(-1), minute: index + 1, previous: previous?.scenes.map(scene => scene.narration),
-  }), model, 6500);
+  };
+  const generate = (revision?: { narration: string[]; instruction: string }) =>
+    structured('youtube_minute', youtubeBlockSchema, JSON.stringify({ ...brief, revision }), model, 6500);
+  let block = await generate();
+  const words = scriptWords(block.scenes);
+  if (words < 105 || words > 125) {
+    block = await generate({
+      narration: block.scenes.map(scene => scene.narration),
+      instruction: `Draf sebelumnya berisi ${words} kata lisan. ${words < 105 ? 'Tambahkan' : 'Kurangi'} sekitar ${Math.abs(115 - words)} kata agar total mendekati 115. Pertahankan isi, alur dan akhir. Sesuaikan adegan, visual dan dialog dengan narasi hasil revisi.`,
+    });
+  }
   const result = segmentYouTubeNarration({ ...validateScriptBlock(block), index, chapter: outline.chapters[index] });
   validateScriptBlock({ scenes: result.scenes });
   validateCast(result, settings);
