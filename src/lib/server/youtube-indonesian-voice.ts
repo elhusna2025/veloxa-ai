@@ -21,13 +21,50 @@ export function readIndonesianSpeech(wav: Buffer) {
   throw new Error('Rekaman Indonesia 24 kHz mono belum lengkap.');
 }
 
-export async function synthesizeAchird(text: string, signal?: AbortSignal, speakingRate = 1) {
+async function synthesize(input: { text: string } | { ssml: string }, signal?: AbortSignal, speakingRate = 1) {
   const client = await auth.getClient();
   const response = await client.request<{ audioContent: string }>({
     method: 'POST', url: 'https://texttospeech.googleapis.com/v1/text:synthesize',
     timeout: 30_000, signal, retry: false,
-    data: { input: { text }, voice: { languageCode: 'id-ID', name: achirdVoice },
+    data: { input, voice: { languageCode: 'id-ID', name: achirdVoice },
       audioConfig: { audioEncoding: 'LINEAR16', sampleRateHertz: 24000, speakingRate } },
   });
   return readIndonesianSpeech(Buffer.from(response.data.audioContent, 'base64'));
+}
+
+export function synthesizeAchird(text: string, signal?: AbortSignal, speakingRate = 1) {
+  return synthesize({ text }, signal, speakingRate);
+}
+
+/** Locate the deliberately long SSML breaks, trimming only digital quiet inside each one. */
+export function splitAchirdChapter(pcm: Buffer, count: number) {
+  const takes: Buffer[] = [];
+  const rate = 24000;
+  const step = rate / 100; // 10 ms of mono PCM16
+  const samples = pcm.length / 2;
+  let lastCut = 0;
+  let quietFrom = 0;
+  let heardSpeech = false;
+  for (let i = 0; i < samples; i += step) {
+    const end = Math.min(i + step, samples);
+    let peak = 0;
+    for (let n = i; n < end; n++) peak = Math.max(peak, Math.abs(pcm.readInt16LE(n * 2)));
+    if (peak < 48) continue;
+    if (heardSpeech && i - quietFrom >= rate * 1.3) {
+      takes.push(pcm.subarray(lastCut * 2, (quietFrom + rate * .25) * 2));
+      lastCut = i - rate * .15;
+    }
+    heardSpeech = true;
+    quietFrom = end;
+  }
+  if (!heardSpeech || takes.length !== count - 1) return;
+  takes.push(pcm.subarray(lastCut * 2));
+  return { pcm: Buffer.concat(takes), sceneDurations: takes.map(take => take.length / (2 * rate)) };
+}
+
+export async function synthesizeAchirdChapter(lines: string[], signal?: AbortSignal, speakingRate = 1) {
+  const escape = (line: string) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const ssml = '<speak>' + lines.map(escape).join('<break time="2s"/>') + '</speak>';
+  if (Buffer.byteLength(ssml) > 5000) return;
+  return splitAchirdChapter(await synthesize({ ssml }, signal, speakingRate), lines.length);
 }

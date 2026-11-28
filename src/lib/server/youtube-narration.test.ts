@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { youtubeNarratorDelivery } from '../youtube-production';
 import { paceYouTubeSpeech, youtubeSpeechBounds } from './youtube-speech-pacing';
-import { readIndonesianSpeech } from './youtube-indonesian-voice';
+import { readIndonesianSpeech, splitAchirdChapter } from './youtube-indonesian-voice';
 import { sceneSubtitles } from './youtube-production-renderer';
 
 test('narrator direction includes the voiceover brief but excludes other sections', () => {
@@ -36,4 +36,20 @@ test('Achird accepts only complete mono PCM at the scene sample rate', () => {
   assert.throws(() => readIndonesianSpeech(wav.subarray(0, 46)));
   wav.writeUInt32LE(48000, 24);
   assert.throws(() => readIndonesianSpeech(wav));
+});
+
+test('a chapter take keeps speech and short pauses intact across picture changes', () => {
+  const word = Buffer.alloc(4800);
+  for (let i = 0; i < word.length; i += 2) word.writeInt16LE(1200, i);
+  const phrase = Buffer.concat([word, Buffer.alloc(12000), word]);
+  const marker = Buffer.alloc(2 * 48000);
+  const take = Buffer.concat([phrase, marker, phrase, marker, phrase]);
+  const split = splitAchirdChapter(take, 3);
+  assert.ok(split);
+  const trimmedBreak = Buffer.alloc(19200);
+  assert.deepEqual(split.pcm, Buffer.concat([phrase, trimmedBreak, phrase, trimmedBreak, phrase]));
+  assert.equal(split.sceneDurations.reduce((sum, v) => sum + Math.round(v * 24000), 0), split.pcm.length / 2);
+  assert.equal(splitAchirdChapter(take, 2), undefined);
+  assert.equal(splitAchirdChapter(phrase, 2), undefined);
+  assert.equal(splitAchirdChapter(marker, 1), undefined);
 });

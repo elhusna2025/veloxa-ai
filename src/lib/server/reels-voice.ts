@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { OpenAIRealtimeWS } from 'openai/realtime/ws';
-import { synthesizeAchird } from './youtube-indonesian-voice';
+import { synthesizeAchird, synthesizeAchirdChapter } from './youtube-indonesian-voice';
 import type { YouTubeProductionSettings } from '../youtube-production';
 import { ApiError } from './http';
 import { REELS_SPEC, reelsWordCount } from '../reels-spec';
@@ -53,6 +53,7 @@ interface VoiceDependencies {
   delivery?: string;
   referencePcm?: Buffer;
   achirdSpeakingRate?: number;
+  continuousNarrator?: boolean;
 }
 
 interface Voiceover {
@@ -61,6 +62,7 @@ interface Voiceover {
   transcript: string;
   model: string;
   sceneDurations?: number[];
+  continuousNarration?: boolean;
 }
 
 function isValidScript(script: string): boolean {
@@ -278,6 +280,15 @@ export async function generateDialogueVoiceover(
   const buffers: Buffer[][] = scenes.map(() => []);
   const lines = scenes.flatMap((scene, index) => scene.lines.map(line => ({ ...line, index })));
   try {
+    if (deps.continuousNarrator && lines.every(line => line.voice === 'achird')) {
+      const texts = scenes.map(scene => scene.lines.map(line => line.text).join(' '));
+      const take = await synthesizeAchirdChapter(texts, controller.signal, deps.achirdSpeakingRate);
+      if (take) {
+        applyNarrationGain(take.pcm);
+        return { ...take, sampleRate: SAMPLE_RATE, transcript: script, model: deps.model ?? REELS_VOICE_MODEL, continuousNarration: true };
+      }
+      // Ambiguous scene timing: record exact lines individually so picture cues stay accurate.
+    }
     for (let offset = 0; offset < lines.length; offset += 2) {
       const batch = await Promise.all(lines.slice(offset, offset + 2).map(async line => {
         if (line.voice === 'achird') return { index: line.index, pcm: await synthesizeAchird(line.text, controller.signal, deps.achirdSpeakingRate) };

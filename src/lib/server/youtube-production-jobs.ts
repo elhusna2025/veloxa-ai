@@ -278,7 +278,7 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       // Older narrator-only jobs already have a usable reference in their opening scene.
       const referenceScene = job.narratorReferenceScene ?? (job.audioIndex > 0 && !job.settings.characters.length ? 0 : undefined);
       const voice = hasCharacterDialogue || job.settings.voice === 'achird'
-        ? await generateDialogueVoiceover(scenes, voiceOptions)
+        ? await generateDialogueVoiceover(scenes, { ...voiceOptions, continuousNarrator: !hasCharacterDialogue })
         : await generateYouTubeNarration(block.scenes.map(scene => scene.narration), {
           ...voiceOptions, voice: job.settings.voice, delivery,
           referencePcm: referenceScene === undefined ? undefined : await bytes(ref, `${referenceScene}.pcm`),
@@ -286,7 +286,9 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const usesAchird = scenes.some(scene => scene.lines.some(line => line.voice === 'achird'));
       const rawSeconds = voice.pcm.length / 48000;
       if (!voice.sceneDurations || voice.sceneDurations.length !== block.scenes.length || (!usesAchird && (rawSeconds < 44 || rawSeconds > 79))) throw new Error('Suara belum sesuai durasi naskah.');
-      const paced = paceYouTubeSpeech(voice.pcm, voice.sceneDurations, block.scenes.map(scene => scene.narration));
+      const paced = 'continuousNarration' in voice && voice.continuousNarration
+        ? { pcm: voice.pcm, sceneDurations: voice.sceneDurations }
+        : paceYouTubeSpeech(voice.pcm, voice.sceneDurations, block.scenes.map(scene => scene.narration));
       const targetSeconds = job.settings.kind === 'short' ? 59.8 : 60;
       const frames = sceneFrameCounts(paced.sceneDurations, targetSeconds);
       // Retake upstream while the recording is still replaceable. Never save a timeline
