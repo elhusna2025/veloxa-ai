@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import type { BrandProfile } from '../veloxa-types';
-import { scriptWords, validateScriptBlock, validateCast, segmentYouTubeNarration, youtubeBlockSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene } from '../youtube-production';
+import { validateScriptBlock, validateCast, splitYouTubeSpokenLines, youtubeSceneSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene } from '../youtube-production';
 import { ApiError } from './http';
 
 function client() {
@@ -15,12 +15,19 @@ function facts(brand: BrandProfile) {
     audience: brand.targetAudience, tone: brand.brandTone, website: brand.websiteUrl,
     visual: brand.visualVibe, palette: [brand.primaryColorHex, brand.accentColorHex, ...(brand.additionalColorHexes ?? [])], forbidden: brand.forbiddenWords };
 }
+function spokenContext(settings: YouTubeProductionSettings, brand: BrandProfile) {
+  return {
+    topic: settings.topic, kind: settings.kind, minutes: settings.minutes, delivery: settings.delivery,
+    cast: settings.characters.map(({ id, name, delivery }) => ({ id, name, delivery })),
+    business: { name: brand.businessName, description: brand.businessDescription, audience: brand.targetAudience, offerings: brand.offerings, tone: brand.brandTone, forbidden: brand.forbiddenWords },
+  };
+}
 const editorialBrief = [
-  'Utamakan hasil yang diminta pada settings.topic. Bedakan permintaan untuk membuat karya dengan permintaan untuk mengajarkan cara membuat karya itu.',
+  'Utamakan hasil yang diminta pada topik. Bedakan permintaan untuk membuat karya dengan permintaan untuk mengajarkan cara membuat karya itu.',
   'Jika diminta cerita fiksi, ciptakan dan kisahkan langsung peristiwa yang dialami tokoh. Bangun suasana, konflik, dan konsekuensi sesuai genre. Bila diminta plot twist, tanam petunjuk lalu ungkap maknanya di akhir.',
   'Untuk tutorial, jelaskan langkah dan contoh. Untuk dokumenter atau edukasi, jaga akurasi. Untuk format lain, ikuti maksud brief.',
   'Bangun tiap bab dari perkembangan baru. Tentukan subjek, peristiwa, bukti atau tindakan yang berbeda pada setiap bab. Adegan penghubung melanjutkan akibat adegan sebelumnya. Jangan mengulang pembuka, kesimpulan atau metafora visual generik pada tiap menit.',
-  'Untuk kisah nyata atau biografi, temukan satu pertanyaan tentang perjalanan tokohnya. Kenalkan siapa dia, keadaan awal dan apa yang sedang diusahakannya. Tunjukkan kendala, pilihan, dan akibat yang bisa dijelaskan dari fakta. Kenalkan suatu tempat atau usaha sebelum menceritakan peristiwa di sana. Hubungkan hasil akhir dengan tindakan yang membuatnya mungkin. Jika sebabnya tidak diketahui, cukup jelaskan urutan peristiwanya.',
+  'Di pembuka, beri pendengar pijakan sesuai format: siapa atau apa yang dibahas dan persoalan yang membuatnya layak diikuti. Untuk fiksi, kenalkan situasi dan taruhannya tanpa membocorkan akhir. Untuk kisah nyata atau biografi, temukan satu pertanyaan tentang perjalanan tokohnya. Kenalkan siapa dia, keadaan awal dan apa yang sedang diusahakannya. Tunjukkan kendala, pilihan, dan akibat yang bisa dijelaskan dari fakta. Kenalkan suatu tempat atau usaha sebelum menceritakan peristiwa di sana. Hubungkan hasil akhir dengan tindakan yang membuatnya mungkin. Jika sebabnya tidak diketahui, cukup jelaskan urutan peristiwanya.',
   'Profil bisnis memberi konteks jika relevan. Jangan sisipkan produk, ajakan promosi, atau pelajaran yang tidak diminta.',
 ].join(' ');
 
@@ -35,30 +42,41 @@ async function structured<T>(name: string, schema: z.ZodType<T>, prompt: string,
 export async function planYouTubeVideo(settings: YouTubeProductionSettings, brand: BrandProfile, model = String(DEFAULT_CONTENT_MODELS.scriptModel)): Promise<YouTubeOutline> {
   const schema = z.object({ title: z.string().min(1).max(90), description: z.string().max(3000),
     chapters: z.array(z.string().min(8).max(180)).length(settings.minutes) }).strict();
-  return structured('youtube_outline', schema, JSON.stringify({ task: `Rancang video ${settings.minutes} menit. chapters berisi tepat ${settings.minutes} bagian satu menit yang membentuk satu alur sampai akhir. Untuk biografi dan sejarah usaha, tulis sinopsis alur utuh di description seperti deskripsi untuk penonton. Setiap bab mengubah keadaan tokoh dan menyiapkan bab berikutnya. Untuk fiksi pilih judul cerita, isi chapters dengan kejadian konkret, dan rancang akhir cerita sejak awal. Untuk edukasi atau tutorial pilih judul yang menjelaskan topik dan susun perkembangan pembahasan yang konkret.`, settings, business: facts(brand) }), model, Math.max(1600, settings.minutes * 100));
+  return structured('youtube_outline', schema, JSON.stringify({ task: `Rancang video ${settings.minutes} menit. chapters berisi tepat ${settings.minutes} bagian satu menit yang membentuk satu alur sampai akhir. Untuk biografi dan sejarah usaha, tulis sinopsis alur utuh di description seperti deskripsi untuk penonton. Setiap bab mengubah keadaan tokoh dan menyiapkan bab berikutnya. Untuk fiksi pilih judul cerita, isi chapters dengan kejadian konkret, dan rancang akhir cerita sejak awal. Untuk edukasi atau tutorial pilih judul yang menjelaskan topik dan susun perkembangan pembahasan yang konkret.`, ...spokenContext(settings, brand) }), model, Math.max(1600, settings.minutes * 100));
 }
 export async function writeYouTubeBlock(settings: YouTubeProductionSettings, brand: BrandProfile, outline: YouTubeOutline, index: number, previous: YouTubeScriptBlock | null, model = String(DEFAULT_CONTENT_MODELS.scriptModel)): Promise<YouTubeScriptBlock> {
   const brief = {
-    task: 'Tulis satu menit dengan jumlah adegan yang mengikuti isi narasi, TANPA jumlah adegan tetap atau batas empat gambar. Total narasi WAJIB 105–125 kata. Bidik 115 kata untuk memberi ruang bernapas dan menghindari pengisi durasi. Tulis untuk telinga: gunakan kata kerja konkret, panjang kalimat yang beragam, dan kaitkan kalimat berikutnya dengan hal yang baru didengar. Baca sebagai satu cerita utuh. Hindari frasa transisi birokratis, daftar fasilitas yang diulang, dan awalan identik pada setiap adegan. Buat satu adegan untuk setiap gagasan, tindakan, objek, atau konteks baru agar gambar berganti tepat ketika hal itu mulai dibicarakan. Target ritme shot sekitar 3–8 detik sebagai panduan, bukan jatah jumlah gambar. Jangan menahan satu gambar selama beberapa gagasan berbeda. Setiap adegan memuat satu kalimat atau frasa lisan utuh dan satu shot spesifik (jarak kamera, subjek, tindakan). Variasikan detail dekat, interaksi, dan gambaran luas sesuai cerita. Hindari rangkaian panorama serupa. Sertakan visual yang benar-benar menggambarkan kalimat itu. Judul tiap adegan maksimal tujuh kata, teks pendukung singkat. Narasi adalah kata-kata final yang didengar penonton. Untuk cerita, masuk langsung ke dunia tokoh dan lanjutkan kejadian antarmenit. Hindari nasihat kepada penulis atau penjelasan teknik bercerita kecuali diminta. Jangan membaca judul sebagai label. visual menggambarkan subjek, tindakan dan lingkungan yang relevan dengan ucapan dalam adegan. Tidak selalu buku atau alat tulis. Pembuka dan akhir harus memenuhi format dan genre pada topik pengguna. Bahasa lisan alami dengan jeda tanda baca dan penekanan yang tidak berlebihan. lines berisi urutan dialog; speakerId harus narrator atau ID karakter di settings.characters. narration WAJIB sama persis dengan semua lines.text yang disambung satu spasi. characterIds hanya karakter yang tampak pada foto adegan itu. Jangan menciptakan identitas atau suara baru. Pemeran boleh berdialog lebih dari satu orang dalam satu adegan. Jika karakter kosong, gunakan narrator dan characterIds kosong.',
-    spokenContinuity: 'Untuk kisah tokoh, tulis narasi bab ini dulu sebagai tuturan yang enak didengarkan tanpa gambar. Awali dari keadaan terakhir tokoh pada bab sebelumnya. Saat berganti waktu atau lokasi, beri pendengar pijakan. Baru pecah tuturan itu ke shot. Saat dibacakan tanpa gambar, pendengar harus paham apa yang berubah dan mengapa itu penting. Hindari pertanyaan retoris beruntun, daftar tahun, deskripsi kamera dan gerak orang lewat untuk mengisi durasi. Akhiri dengan hasil nyata dari tindakan tokoh, tanpa mengarang motif maupun hubungan sebab-akibat.',
-    settings, business: facts(brand),
-    outline: { title: outline.title, description: outline.description, totalMinutes: settings.minutes,
-      chapterSequence: outline.chapters, currentChapter: outline.chapters[index], followingChapter: outline.chapters[index + 1], chapterBoundary: 'Kembangkan hanya isi bab sekarang. Simpan fakta dan temuan bab berikutnya untuk bab berikutnya.' },
-    finalChapter: outline.chapters.at(-1), minute: index + 1, previous: previous?.scenes.map(({ narration, visual }) => ({ narration, visual })),
+    task: 'Tulis narasi dan dialog final yang dapat dipahami sebagai cerita audio. Target 115 kata lisan dalam bab ini (105–125). Untuk biografi, ikuti keadaan tokoh, kendala nyata, keputusan dan akibatnya sampai pertanyaan awal terjawab. Jembatani pergantian waktu dan lokasi. Tiap kalimat harus menambah pemahaman. Hindari menerangkan gerakan sepele, benda di layar atau aktivitas latar untuk mengisi waktu. Untuk tutorial pertahankan tindakan yang memang perlu dilakukan penonton. Untuk fiksi jaga alur peristiwa, dialog dan akhir sesuai genre. Setiap baris memuat ucapan satu pembicara, tanpa arahan panggung. Gunakan narrator atau ID pemeran yang diberikan. Hanya tulis kata yang perlu didengar.',
+    ...spokenContext(settings, brand),
+    title: outline.title, synopsis: outline.description, chapters: outline.chapters, minute: index + 1,
+    chapter: outline.chapters[index], previousNarration: previous?.scenes.map(scene => scene.narration),
   };
-  const generate = (revision?: { narration: string[]; instruction: string }) =>
-    structured('youtube_minute', youtubeBlockSchema, JSON.stringify({ ...brief, revision }), model, 6500);
-  let block = await generate();
-  for (let edit = 0; edit < 2; edit++) {
-    const words = scriptWords(block.scenes);
+  const speechSchema = z.object({ lines: z.array(youtubeSceneSchema.shape.lines.element).min(1) }).strict();
+  const write = (revision?: { previousText: string; instruction: string }) =>
+    structured('youtube_spoken_script', speechSchema, JSON.stringify({ ...brief, revision }), model, 2200);
+  let speech = await write();
+  for (let edit = 0; ; edit++) {
+    const previousText = speech.lines.map(line => line.text).join(' ');
+    const words = previousText.trim().split(/\s+/u).length;
     if (words >= 105 && words <= 125) break;
-    block = await generate({
-      narration: block.scenes.map(scene => scene.narration),
-      instruction: `Draf sebelumnya berisi ${words} kata lisan. ${words < 105 ? 'Tambahkan' : 'Kurangi'} sekitar ${Math.abs(115 - words)} kata agar total mendekati 115. Pertahankan isi, alur dan akhir. Sesuaikan adegan, visual dan dialog dengan narasi hasil revisi.`,
-    });
+    if (edit === 2) throw new Error('Setiap menit membutuhkan 105–125 kata narasi.');
+    speech = await write({ previousText, instruction: `Draf memiliki ${words} kata. ${words < 105 ? 'Tambahkan' : 'Ringkas'} sekitar ${Math.abs(115 - words)} kata. Kembangkan hanya fakta, alasan atau akibat yang membantu pendengar mengikuti topik.` });
   }
-  const result = segmentYouTubeNarration({ ...validateScriptBlock(block), index, chapter: outline.chapters[index] });
-  validateScriptBlock({ scenes: result.scenes });
+  const passages = splitYouTubeSpokenLines(speech.lines).map(lines => ({ lines, narration: lines.map(line => line.text).join(' ') }));
+  const shotSchema = youtubeSceneSchema.pick({ title: true, supporting: true, visual: true, characterIds: true }).extend({ index: z.number().int() });
+  const storyboard = await structured('youtube_storyboard', z.object({ shots: z.array(shotSchema).length(passages.length) }).strict(), JSON.stringify({
+    task: 'Susun satu ilustrasi per bagian ucapan yang sudah final. Salin indeks tiap bagian. Gambar mendukung makna dan konteks, termasuk ketika narator menjelaskan keputusan atau perubahan keadaan. Variasikan jarak, lokasi dan tindakan. Judul pendek dan teks pendukung merangkum makna. characterIds hanya untuk pemeran terdaftar yang tampak. Pertahankan konteks waktu dan konsistensi pemeran.',
+    topic: settings.topic, chapter: outline.chapters[index], direction: settings.direction, cast: settings.characters,
+    business: facts(brand), previousShot: previous?.scenes.at(-1)?.visual,
+    passages: passages.map(({ narration, lines }, index) => ({ index, narration, speakers: lines.map(line => line.speakerId) })),
+  }), model, 6500);
+  const byIndex = new Map(storyboard.shots.map(shot => [shot.index, shot]));
+  const scenes = passages.map((passage, index) => {
+    const shot = byIndex.get(index);
+    if (!shot) throw new Error('Urutan gambar belum cocok dengan naskah.');
+    return { ...passage, title: shot.title, visual: shot.visual, supporting: shot.supporting, characterIds: shot.characterIds };
+  });
+  const result = { ...validateScriptBlock({ scenes }), index, chapter: outline.chapters[index] };
   validateCast(result, settings);
   return result;
 }

@@ -92,21 +92,24 @@ export function youtubeSceneLocation(counts: number[], index: number) {
 export function scriptWords(scenes: YouTubeScene[]) {
   return scenes.reduce((count, scene) => count + scene.narration.trim().split(/\s+/u).length, 0);
 }
-/** A paragraph is not a shot. Preserve exact spoken words and speaker bindings,
- * but give each complete sentence its own corresponding image. */
-export function segmentYouTubeNarration(block: YouTubeScriptBlock): YouTubeScriptBlock {
+export function splitYouTubeSpokenLines(lines: YouTubeScene['lines']) {
   const segmenter = new Intl.Segmenter('id', { granularity: 'sentence' });
+  const groups: YouTubeScene['lines'][] = [];
+  let pending: YouTubeScene['lines'] = [];
+  for (const line of lines) for (const sentence of segmenter.segment(line.text)) {
+    const text = sentence.segment.trim();
+    if (!text) continue;
+    pending.push({ speakerId: line.speakerId, text });
+    if (pending.map(line => line.text).join(' ').length >= 20) { groups.push(pending); pending = []; }
+  }
+  if (pending.length) { if (groups.length) groups[groups.length - 1].push(...pending); else groups.push(pending); }
+  return groups;
+}
+
+/** Preserve the script and speaker bindings when an editor splits an existing shot. */
+export function segmentYouTubeNarration(block: YouTubeScriptBlock): YouTubeScriptBlock {
   return { ...block, scenes: block.scenes.flatMap(scene => {
-    const groups: YouTubeScene['lines'][] = [];
-    let pending: YouTubeScene['lines'] = [];
-    for (const line of scene.lines) for (const sentence of segmenter.segment(line.text)) {
-      const text = sentence.segment.trim();
-      if (!text) continue;
-      pending.push({ speakerId: line.speakerId, text });
-      if (pending.map(line => line.text).join(' ').length >= 20) { groups.push(pending); pending = []; }
-    }
-    if (pending.length) { if (groups.length) groups[groups.length - 1].push(...pending); else groups.push(pending); }
-    return groups.map(lines => {
+    return splitYouTubeSpokenLines(scene.lines).map(lines => {
       const narration = lines.map(line => line.text).join(' ');
       let supporting = narration;
       if (supporting.length > 110) {
