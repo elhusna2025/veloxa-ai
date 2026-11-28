@@ -268,26 +268,32 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
         const character = job.settings.characters.find(actor => actor.id === line.speakerId);
         return { text: line.text, voice: character?.voice ?? job.settings.voice, delivery: character ? `${character.name}. ${character.delivery}` : youtubeNarratorDelivery(job.settings) };
       }) }));
-      const voiceOptions = { model: job.models.voiceModel, timeoutMs: 150_000 };
+      // A retry of deterministic TTS must change the rate if the previous take missed the chapter length.
+      const previousRateError = job.attempts > 0 ? job.lastFailure?.code : undefined;
+      const achirdSpeakingRate = previousRateError === 'achird_too_short' ? .82 : previousRateError === 'achird_too_long' ? 1.16 : 1;
+      const voiceOptions = { model: job.models.voiceModel, timeoutMs: 150_000, achirdSpeakingRate };
       const delivery = youtubeNarratorDelivery(job.settings) + (job.attempts && job.lastFailure?.code === 'youtube_narration_pacing'
         ? ' Baca bagian ini dalam sekitar 54 detik. Jaga aliran kata di dalam frasa. Jeda antargambar disiapkan saat penyuntingan.' : '');
       const hasCharacterDialogue = block.scenes.some(scene => scene.lines.some(line => line.speakerId !== 'narrator'));
       // Older narrator-only jobs already have a usable reference in their opening scene.
       const referenceScene = job.narratorReferenceScene ?? (job.audioIndex > 0 && !job.settings.characters.length ? 0 : undefined);
-      const voice = hasCharacterDialogue
+      const voice = hasCharacterDialogue || job.settings.voice === 'achird'
         ? await generateDialogueVoiceover(scenes, voiceOptions)
         : await generateYouTubeNarration(block.scenes.map(scene => scene.narration), {
           ...voiceOptions, voice: job.settings.voice, delivery,
           referencePcm: referenceScene === undefined ? undefined : await bytes(ref, `${referenceScene}.pcm`),
         });
-      if (!voice.sceneDurations || voice.sceneDurations.length !== block.scenes.length || voice.sceneDurations.reduce((a, b) => a + b, 0) < 44 || voice.sceneDurations.reduce((a, b) => a + b, 0) > 79) throw new Error('Suara belum sesuai durasi naskah.');
+      const usesAchird = scenes.some(scene => scene.lines.some(line => line.voice === 'achird'));
+      const rawSeconds = voice.pcm.length / 48000;
+      if (!voice.sceneDurations || voice.sceneDurations.length !== block.scenes.length || (!usesAchird && (rawSeconds < 44 || rawSeconds > 79))) throw new Error('Suara belum sesuai durasi naskah.');
       const paced = paceYouTubeSpeech(voice.pcm, voice.sceneDurations, block.scenes.map(scene => scene.narration));
       const targetSeconds = job.settings.kind === 'short' ? 59.8 : 60;
       const frames = sceneFrameCounts(paced.sceneDurations, targetSeconds);
       // Retake upstream while the recording is still replaceable. Never save a timeline
       // that requires rushing the narration or that the renderer cannot normalize.
       if (paced.sceneDurations.some((seconds, i) => seconds * 25 / frames[i] > (hasCharacterDialogue ? 1.35 : 1.2) || seconds * 25 / frames[i] < .72)) {
-        throw new ApiError(503, 'Narasi perlu direkam kembali agar nyaman diikuti.', 'youtube_narration_pacing');
+        const reason = usesAchird ? (paced.pcm.length / 48000 < targetSeconds ? 'achird_too_short' : 'achird_too_long') : 'youtube_narration_pacing';
+        throw new ApiError(503, 'Narasi perlu direkam kembali agar nyaman diikuti.', reason);
       }
       let offset = 0;
       const firstScene = job.sceneCounts.slice(0, job.audioIndex).reduce((sum, count) => sum + count, 0);

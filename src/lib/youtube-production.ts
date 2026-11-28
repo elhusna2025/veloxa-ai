@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const youtubeVoices = ['marin', 'cedar', 'coral', 'ash', 'sage', 'shimmer', 'echo', 'alloy', 'ballad', 'verse'] as const;
+export const youtubeVoices = ['marin', 'cedar', 'coral', 'ash', 'sage', 'shimmer', 'echo', 'alloy', 'ballad', 'verse', 'achird'] as const;
 export const youtubeVoiceSchema = z.enum(youtubeVoices);
 export const youtubeCharacterSchema = z.object({
   id: z.string().regex(/^actor_[1-5]$/),

@@ -36,7 +36,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
     return [item, ...items.filter(saved => saved.id !== item.id)].sort((a, b) => b.createdAt - a.createdAt);
   }), []);
   useEffect(() => { onBusyChange(Boolean(busy)); return () => onBusyChange(false); }, [busy, onBusyChange]);
-  const dirty = Boolean(editing) || Boolean(actorEdit) || publishDirty || !selected && JSON.stringify(settings) !== JSON.stringify(defaults);
+  const dirty = Boolean(editing) || Boolean(actorEdit) || publishDirty || !selected && JSON.stringify(settings) !== JSON.stringify({ ...defaults, voice: productions[0]?.settings.voice ?? defaults.voice });
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
   useEffect(() => {
     if (loading || selected || !focusNewVideo.current) return;
@@ -48,7 +48,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
     const controller = new AbortController(); if (!props.ready) return;
     setLoading(true);
     void veloxaApi<{ productions: YouTubeProduction[] }>(endpoint(), { signal: controller.signal, redirect: 'error' })
-      .then(result => { if (!controller.signal.aborted) { setProductions(result.productions); setSelected(result.productions[0]?.id ?? null); } })
+      .then(result => { if (!controller.signal.aborted) { setProductions(result.productions); setSelected(result.productions[0]?.id ?? null); setSettings({ ...defaults, voice: result.productions[0]?.settings.voice ?? defaults.voice }); } })
       .catch(failure => { if (!controller.signal.aborted) setError(failure.message); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [endpoint, props.ready]);
@@ -90,7 +90,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
     const parsed = youtubeProductionSettings.parse(settings), body = JSON.stringify(parsed);
     if (!pending.current || pending.current.body !== body) pending.current = { id: crypto.randomUUID(), body };
     const result = await veloxaApi<{ production: YouTubeProduction }>(endpoint(), { method: 'POST', body: JSON.stringify({ id: pending.current.id, settings: parsed }), redirect: 'error' });
-    apply(result.production); setSelected(result.production.id); setSettings(defaults); pending.current = null;
+    apply(result.production); setSelected(result.production.id); setSettings({ ...defaults, voice: parsed.voice }); pending.current = null;
   }); }
   function action(value: 'approve_script' | 'approve_characters' | 'stop' | 'resume' | 'retry_now') { if (!current) return; void run('Menyimpan pilihan…', async () => {
     const result = await veloxaApi<{ production: YouTubeProduction }>(endpoint(current.id), { method: 'POST', body: JSON.stringify({ action: value, revision: current.revision, confirmed: true }), redirect: 'error' }); apply(result.production);
@@ -108,7 +108,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
   let elapsedFrames = 0;
   const times = current?.sceneFrames?.map(frames => { const start = elapsedFrames; elapsedFrames += frames; return `${Math.floor(start / 1500)}:${(start / 25 % 60).toFixed(1).padStart(4, '0')}–${Math.floor(elapsedFrames / 1500)}:${(elapsedFrames / 25 % 60).toFixed(1).padStart(4, '0')}`; });
   const media = (name: string) => viewer + '&name=' + encodeURIComponent(name);
-  const voiceSelect = (value: string, change: (voice: YouTubeProductionSettings['voice']) => void, label: string) => <VeloxaSelect aria-label={label} value={value} onValueChange={voice => change(voice as YouTubeProductionSettings['voice'])}>{youtubeVoices.map(voice => <option key={voice} value={voice}>{voice}</option>)}</VeloxaSelect>;
+  const voiceSelect = (value: string, change: (voice: YouTubeProductionSettings['voice']) => void, label: string) => <VeloxaSelect aria-label={label} value={value} onValueChange={voice => change(voice as YouTubeProductionSettings['voice'])}>{youtubeVoices.map(voice => <option key={voice} value={voice}>{voice === 'achird' ? 'Achird · Indonesia' : voice}</option>)}</VeloxaSelect>;
   return <div className="min-w-0 space-y-6" data-testid="youtube-production-studio">
     <section className={panel}><div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"><div className="min-w-0 space-y-2"><p className="text-sm font-medium text-[#a92e5d]">{props.businessName}</p><h2 className="text-xl font-semibold">Studio video AI</h2><p className="text-base text-neutral-600">Dari ide dan naskah menjadi gambar bergerak, dialog, dan video siap terbit.</p></div>{!loading && current && <div className="space-y-2 sm:max-w-64 sm:shrink-0"><button type="button" data-testid="youtube-new-video-top" disabled={navigationLocked} className={primary + ' w-full'} onClick={startNewVideo}>Buat video baru</button><p className="text-sm text-neutral-600">{navigationLocked ? 'Selesaikan proses atau simpan/batalkan perubahan terlebih dahulu.' : 'Video sebelumnya tetap ada di Produksi tersimpan.'}</p></div>}</div><ol className="grid gap-2 text-sm text-neutral-600 sm:grid-cols-4">{['Topik & durasi', 'Naskah & pemeran', 'Gambar, gerak & suara', 'Tinjau & terbitkan'].map((label, i) => <li key={label}>{i + 1}. {label}</li>)}</ol></section>
     {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-base text-red-800">{error}</p>}

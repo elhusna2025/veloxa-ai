@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
 import { OpenAIRealtimeWS } from 'openai/realtime/ws';
+import { synthesizeAchird } from './youtube-indonesian-voice';
+import type { YouTubeProductionSettings } from '../youtube-production';
 import { ApiError } from './http';
 import { REELS_SPEC, reelsWordCount } from '../reels-spec';
 import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
@@ -50,6 +52,7 @@ interface VoiceDependencies {
   voice?: 'marin' | 'cedar' | 'coral' | 'ash' | 'sage' | 'shimmer' | 'echo' | 'alloy' | 'ballad' | 'verse';
   delivery?: string;
   referencePcm?: Buffer;
+  achirdSpeakingRate?: number;
 }
 
 interface Voiceover {
@@ -265,7 +268,7 @@ async function generateSceneVoiceover(lines: readonly string[], deps: VoiceDepen
 
 /** Preserve one voice binding per speaker while timing the actual dialogue of each scene. */
 export async function generateDialogueVoiceover(
-  scenes: { lines: { text: string; voice: NonNullable<VoiceDependencies['voice']>; delivery: string }[] }[],
+  scenes: { lines: { text: string; voice: YouTubeProductionSettings['voice']; delivery: string }[] }[],
   deps: VoiceDependencies = {},
 ): Promise<Voiceover> {
   const script = scenes.flatMap(scene => scene.lines.map(line => line.text)).join(' ');
@@ -277,6 +280,7 @@ export async function generateDialogueVoiceover(
   try {
     for (let offset = 0; offset < lines.length; offset += 2) {
       const batch = await Promise.all(lines.slice(offset, offset + 2).map(async line => {
+        if (line.voice === 'achird') return { index: line.index, pcm: await synthesizeAchird(line.text, controller.signal, deps.achirdSpeakingRate) };
         const instructions = `${CONVERSATIONAL_VOICE} Ucapkan hanya dialog ini. Karakter dan pembawaan: ${line.delivery.slice(0, 800)}. Jangan menambah kata atau menyebut nama pemeran sebagai label.`;
         const options = { ...deps, voice: line.voice };
         let spoken = await requestVoice(line.text, instructions, options, controller.signal);
@@ -310,8 +314,9 @@ export async function generateYouTubeNarration(lines: string[], deps: VoiceDepen
 }
 
 /** Short, owner-requested cast audition using the same voice/model as the final dialogue. */
-export async function generateCharacterVoiceSample(name: string, voice: NonNullable<VoiceDependencies['voice']>, delivery: string, model?: string, deps: Pick<VoiceDependencies, 'createConnection'> = {}): Promise<Buffer> {
+export async function generateCharacterVoiceSample(name: string, voice: YouTubeProductionSettings['voice'], delivery: string, model?: string, deps: Pick<VoiceDependencies, 'createConnection'> = {}): Promise<Buffer> {
   const script = `Halo, saya ${name.slice(0, 60)}. Saya akan menemani percakapan ini. Mari kita mulai dengan satu contoh yang mudah dipahami.`;
+  if (voice === 'achird') return pcmWav(await synthesizeAchird(script));
   const spoken = await requestVoice(script, `${CONVERSATIONAL_VOICE} Pembawaan karakter: ${delivery.slice(0, 500)}. Jangan menambah kata.`, { ...deps, voice, model, timeoutMs: 40_000 });
   if (!matchesSpokenScript(spokenWords(script), spoken.transcript)) throw SAFE_VOICE_ERROR;
   return pcmWav(spoken.pcm);
