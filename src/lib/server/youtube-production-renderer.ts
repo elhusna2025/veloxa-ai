@@ -30,7 +30,7 @@ export function sceneFrameCounts(durations: number[], targetSeconds: number) {
 export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile, sceneIndex = 0) {
   const { width, height } = productionResources(settings);
   const vertical = settings.kind === 'short';
-  const x = vertical ? 50 : 70, y = vertical ? 230 : 110, copyWidth = vertical ? 480 : 520;
+  const x = vertical ? 50 : 70, y = vertical ? 230 : 110, copyWidth = vertical ? 480 : 540;
   const raw = await sharp(photo).resize(width, height).toColourspace('srgb').removeAlpha().raw().toBuffer();
   const linear = Array.from({ length: 256 }, (_, byte) => {
     const n = byte / 255;
@@ -43,8 +43,8 @@ export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, se
   // Fit first. Contrast applies to the actual lettering, not to unused space below
   // it or the subject beside it. The previous oversized rectangle rejected readable photos.
   const text: { rendered: NonNullable<Awaited<ReturnType<typeof fitVideoText>>>; top: number; samples: [number, number][] }[] = [];
-  const add = async (value: string, top: number, maxHeight: number, size: number, bold = false) => {
-    const rendered = await fitVideoText(value, copyWidth, maxHeight, size, size, '#FFFFFF', bold);
+  const add = async (value: string, top: number, maxHeight: number, size: number, bold = false, minSize = size) => {
+    const rendered = await fitVideoText(value, copyWidth, maxHeight, size, minSize, '#FFFFFF', bold);
     if (rendered) {
       const mask = await sharp(rendered.data).extractChannel('alpha').raw().toBuffer();
       const samples: [number, number][] = [];
@@ -53,12 +53,13 @@ export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, se
     }
     return rendered?.height ?? 0;
   };
-  await add(brand.businessName, y, 60, vertical ? 25 : 26);
-  const headlineTop = y + (vertical ? 60 : 85);
+  const headlineTop = y;
   const headlineHeight = await add(scene.title, headlineTop, vertical ? 230 : 210, vertical ? 48 : 54, true);
-  await add(scene.supporting, headlineTop + headlineHeight + (vertical ? 32 : 55), vertical ? 200 : 150, 30);
+  await add(scene.supporting, headlineTop + headlineHeight + (vertical ? 32 : 55), 220, vertical ? 36 : 42, false, 30);
   const mode = sceneIndex % 4;
-  const inks = [...new Set([brand.primaryColorHex, '#111111', '#FFFFFF', '#000000'])]
+  const primary = /^#[0-9a-f]{6}$/i.test(brand.primaryColorHex) ? brand.primaryColorHex : '#20548A';
+  const deepBrand = '#' + [1, 3, 5].map(index => Math.round(parseInt(primary.slice(index, index + 2), 16) * .24).toString(16).padStart(2, '0')).join('');
+  const inks = [...new Set([primary, ...(brand.additionalColorHexes ?? []), deepBrand, '#FFFFFF', '#000000'])]
     .filter(color => /^#[0-9a-f]{6}$/i.test(color)).map(color => ({
       color, value: .2126 * linear[parseInt(color.slice(1, 3), 16)] + .7152 * linear[parseInt(color.slice(3, 5), 16)] + .0722 * linear[parseInt(color.slice(5, 7), 16)],
     }));
@@ -73,48 +74,53 @@ export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, se
       rows: Int32Array.from({ length: height }, (_, n) => width * Math.round(n / zoom + height * (1 - 1 / zoom) * .5)),
     };
   });
-  function readableInk(block: typeof text[number], left: number, top: number) {
+  function readableInk(block: typeof text[number], left: number, top: number, contrast: number, palette: typeof inks) {
     let min = 1, max = 0;
-    const readable = (ink: typeof inks[number]) => (min + .05) >= 4.5 * (ink.value + .05) || (ink.value + .05) >= 4.5 * (max + .05);
+    const readable = (ink: typeof inks[number]) => (min + .05) >= contrast * (ink.value + .05) || (ink.value + .05) >= contrast * (max + .05);
     for (const { rows, cols } of sweep) {
       for (const [col, row] of block.samples) {
-        const value = light[rows[top + row] + cols[left + col]];
-        if (value < min || value > max) {
-          min = Math.min(min, value); max = Math.max(max, value);
-          if (!inks.some(readable)) return;
+        const pixel = rows[top + row] + cols[left + col];
+        // Include the area around the stroke, where texture can obscure thin letters at phone size.
+        const nearMin = Math.min(light[pixel], light[pixel - 4], light[pixel + 4], light[pixel - 4 * width], light[pixel + 4 * width]);
+        const nearMax = Math.max(light[pixel], light[pixel - 4], light[pixel + 4], light[pixel - 4 * width], light[pixel + 4 * width]);
+        if (nearMin < min || nearMax > max) {
+          min = Math.min(min, nearMin); max = Math.max(max, nearMax);
+          if (!palette.some(readable)) return;
         }
       }
     }
-    return inks.find(readable)?.color;
+    return palette.find(readable)?.color;
   }
   const safeTop = vertical ? 180 : 48, safeBottom = height - (vertical ? 320 : 48);
   type Placed = { top: number; ink: string; block: typeof text[number] };
-  let placement: { left: number; blocks: Placed[] } | undefined;
   // Try the original spacing first, then compact spacing. A horizon, doorway,
   // or other feature may fall in the gap between the title and its explanation.
-  for (const left of [x, x - 16, x + 24]) {
-    if (placement) break;
-    const checked = text.map(() => new Map<number, string | undefined>());
-    for (const start of [y, ...Array.from({ length: Math.ceil((safeBottom - safeTop) / 24) }, (_, i) => safeTop + 24 * i)]) {
-      const blocks: Placed[] = [];
-      let next = start;
-      for (const [i, block] of text.entries()) {
-        const preferred = i === 0 ? start : Math.max(next, start + block.top - y);
-        const options = [preferred, ...Array.from({ length: 8 }, (_, n) => next + 16 * n)];
-        for (const top of options) {
-          if (top + block.rendered.height > safeBottom) continue;
-          if (!checked[i].has(top)) checked[i].set(top, readableInk(block, left, top));
-          const ink = checked[i].get(top);
-          if (!ink) continue;
-          blocks.push({ block, ink, top });
-          next = top + block.rendered.height + (block.top === headlineTop ? 32 : 16);
-          break;
+  function findPlacement(contrast: number, palette: typeof inks) {
+    for (const left of [x, x - 16, x + 24]) {
+      const checked = text.map(() => new Map<number, string | undefined>());
+      for (const start of [y, ...Array.from({ length: Math.ceil((safeBottom - safeTop) / 24) }, (_, i) => safeTop + 24 * i)]) {
+        const blocks: Placed[] = [];
+        let next = start;
+        for (const [i, block] of text.entries()) {
+          const preferred = i === 0 ? start : Math.max(next, start + block.top - y);
+          const options = [preferred, ...Array.from({ length: 8 }, (_, n) => next + 16 * n)];
+          for (const top of options) {
+            if (top + block.rendered.height > safeBottom) continue;
+            if (!checked[i].has(top)) checked[i].set(top, readableInk(block, left, top, contrast, palette));
+            const ink = checked[i].get(top);
+            if (!ink) continue;
+            blocks.push({ block, ink, top });
+            next = top + block.rendered.height + (block.top === headlineTop ? 32 : 16);
+            break;
+          }
+          if (blocks.length !== i + 1) break;
         }
-        if (blocks.length !== i + 1) break;
+        if (blocks.length === text.length) return { left, blocks };
       }
-      if (blocks.length === text.length) { placement = { left, blocks }; break; }
     }
   }
+  const preferredInks = inks.filter(ink => ink.color !== '#000000');
+  const placement = findPlacement(7, preferredInks) ?? findPlacement(4.5, preferredInks) ?? findPlacement(4.5, inks);
   if (!placement) throw new Error('Foto perlu ruang teks yang lebih tenang. Adegan ini akan diperbaiki.');
   const layers: OverlayOptions[] = [];
   for (const { block, top, ink } of placement.blocks) {

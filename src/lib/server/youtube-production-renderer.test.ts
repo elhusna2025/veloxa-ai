@@ -48,6 +48,17 @@ test('a landscape horizon can separate the title and supporting copy during a pa
   assert.equal((await sharp(frame.image).metadata()).width, 1280);
 });
 
+test('business name is not stamped onto a YouTube or Shorts scene', async () => {
+  const brand = blankBusinessProfile('ws', 'primary', 'Cendekia AI');
+  for (const kind of ['short', 'video'] as const) {
+    const settings = youtubeProductionSettings.parse({ kind, minutes: 1, topic: 'Sejarah Kota Bandar Lampung', voice: 'marin' });
+    const photo = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#18202e' } }).jpeg().toBuffer();
+    const first = await composeYouTubeFrame(photo, scene, settings, brand);
+    const renamed = await composeYouTubeFrame(photo, scene, settings, { ...brand, businessName: 'Nama lain' });
+    assert.deepEqual(first.overlay, renamed.overlay);
+  }
+});
+
 test('a dark object outside the actual moving lettering no longer rejects a readable photograph', async () => {
   const settings = youtubeProductionSettings.parse({ kind: 'short', minutes: 1, topic: 'Pahami manfaat catatan usaha', voice: 'marin' });
   const photo = await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#efefed' } })
