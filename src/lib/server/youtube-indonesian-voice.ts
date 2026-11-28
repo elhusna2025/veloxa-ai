@@ -1,3 +1,4 @@
+import { recordYouTubeUsage } from './youtube-production-usage';
 import { GoogleAuth } from 'google-auth-library';
 
 const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
@@ -29,6 +30,7 @@ async function synthesize(input: { text: string } | { ssml: string }, signal?: A
     data: { input, voice: { languageCode: 'id-ID', name: achirdVoice },
       audioConfig: { audioEncoding: 'LINEAR16', sampleRateHertz: 24000, speakingRate } },
   });
+  recordYouTubeUsage('voice', achirdVoice, undefined, undefined, Array.from('ssml' in input ? input.ssml : input.text).length);
   return readIndonesianSpeech(Buffer.from(response.data.audioContent, 'base64'));
 }
 

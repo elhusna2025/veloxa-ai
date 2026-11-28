@@ -45,7 +45,11 @@ export type YouTubeScene = z.infer<typeof youtubeSceneSchema>;
 export type YouTubeScriptBlock = z.infer<typeof youtubeBlockSchema> & { index: number; chapter: string };
 export type YouTubeOutline = { title: string; description: string; chapters: string[] };
 export type YouTubeProductionState = 'planning' | 'scripting' | 'script_review' | 'characters' | 'character_review' | 'producing' | 'ready' | 'cancelled' | 'attention';
+export type YouTubeUsageSummary = { partial: boolean; stages: Partial<Record<'script' | 'images' | 'voice', {
+  calls: number; usd: number; unpriced: number; input: number; output: number; characters: number;
+}>> };
 export type YouTubeProduction = {
+  aiUsage?: YouTubeUsageSummary;
   id: string; revision: number; settings: YouTubeProductionSettings; state: YouTubeProductionState;
   scriptSource?: 'imported'; outline?: YouTubeOutline; blocks: YouTubeScriptBlock[]; completedScenes: number;
   createdAt: number; updatedAt: number; retryAt?: number; message?: string;

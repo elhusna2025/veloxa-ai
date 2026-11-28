@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VeloxaSelect } from './VeloxaSelect';
 import { VeloxaYouTubePublish } from './VeloxaYouTubePublish';
+import { VeloxaYouTubeUsage } from './VeloxaYouTubeUsage';
 import { VeloxaYouTubeProgress } from './VeloxaYouTubeProgress';
 import { VeloxaYouTubeSceneGallery } from './VeloxaYouTubeSceneGallery';
 import { veloxaApi } from '@/lib/veloxa-api-client';
@@ -178,6 +179,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
     </section> : <>
       <section className={panel}><p className="text-sm font-medium text-[#a92e5d]">{productionStageLabel[current.state]}</p><h3 className="text-xl font-semibold">{current.outline?.title || current.settings.topic}</h3><p>{current.settings.minutes} menit · {current.settings.kind === 'short' ? '9:16' : '16:9'}{current.settings.genre && current.settings.genre !== 'auto' && ` · ${youtubeGenreLabels[current.settings.genre]}`}</p>
         <VeloxaYouTubeProgress production={current} />
+        <VeloxaYouTubeUsage usage={current.aiUsage} sceneCount={current.settings.characters.length ? 0 : sceneCount} />
         {(current.state === 'attention' || current.state === 'cancelled') && <button disabled={Boolean(busy)} className={primary} onClick={() => action('resume')}>Lanjutkan produksi yang sama</button>}
         {viewer && <VeloxaYouTubeSceneGallery key={current.id} production={current} media={media} />}
         {current.state === 'producing' && Boolean(current.progress?.attempts) && !current.progress?.working && <button type="button" disabled={Boolean(busy)} className={secondary} onClick={() => action('retry_now')}>Coba perbaikan sekarang</button>}

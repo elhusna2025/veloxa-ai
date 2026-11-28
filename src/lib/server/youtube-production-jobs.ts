@@ -1,3 +1,4 @@
+import { withYouTubeUsage } from './youtube-production-usage';
 import { createHash, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
@@ -54,7 +55,7 @@ async function bytes(ref: Ref, name: string, max = 20 * 1024 * 1024) {
 }
 async function dto(ref: Ref, job: Job): Promise<YouTubeProduction> {
   const scripts = await ref.collection('blocks').orderBy('index').get();
-  return { id: job.id, revision: job.revision, settings: job.settings, state: job.state,
+  return { ...(job.aiUsage ? { aiUsage: job.aiUsage } : {}), id: job.id, revision: job.revision, settings: job.settings, state: job.state,
     ...(job.scriptSource ? { scriptSource: job.scriptSource } : {}), ...(job.outline ? { outline: job.outline } : {}), blocks: scripts.docs.map(doc => doc.data() as YouTubeScriptBlock),
     completedScenes: job.renderIndex, createdAt: job.createdAt, updatedAt: job.updatedAt,
     progress: { images: job.imageIndex, audio: job.audioIndex, rendered: job.renderIndex, characters: job.portraitIndex,
@@ -129,7 +130,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
         if (!imported) await checkProductionGuard(tx, guard, ref);
         const now = Date.now();
         const job: Job = { id: input.id, workspaceId: context.workspaceId, businessId: context.businessId, ownerUid: context.actor.user.uid,
-          brand: business.brand, settings: input.settings, models, narrativeComposition: true, fingerprint, revision: 1, state: 'planning',
+          brand: business.brand, settings: input.settings, models, narrativeComposition: true, aiUsage: { partial: false, stages: {} }, fingerprint, revision: 1, state: 'planning',
           scriptIndex: 0, portraitIndex: 0, imageIndex: 0, audioIndex: 0, renderIndex: 0, totalFrames: 0, sceneCounts: [],
           completedScenes: 0, createdAt: now, updatedAt: now, nextRunAt: now, attempts: 0, lease: null };
         if (imported) {
@@ -162,7 +163,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
     if (input.action === 'suggest_edit') {
       if (job.state !== 'script_review' || job.revision !== input.revision || !job.outline || input.index >= job.scriptIndex)
         throw new ApiError(409, 'Naskah sudah berubah. Buka kembali menit yang ingin direvisi.');
-      const proposal = await (deps.suggest ?? suggestYouTubeScriptRevision)(job.settings, job.outline, input.index, input.block.scenes, input.note, job.models.scriptModel);
+      const proposal = await withYouTubeUsage(ref, () => (deps.suggest ?? suggestYouTubeScriptRevision)(job.settings, job.outline!, input.index, input.block.scenes, input.note, job.models.scriptModel));
       return noStoreJson({ proposal });
     }
     if (input.action === 'approve_script' && job.scriptSource === 'imported') {
@@ -255,6 +256,9 @@ async function commit(ref: Ref, leaseId: string, patch: Partial<Job>, writes?: (
   });
 }
 export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}) {
+  return withYouTubeUsage(ref, () => processYouTubeStep(ref, deps));
+}
+async function processYouTubeStep(ref: Ref, deps: Dependencies) {
   const claimed = await claim(ref); if (!claimed) return;
   const { job, leaseId } = claimed;
   try {

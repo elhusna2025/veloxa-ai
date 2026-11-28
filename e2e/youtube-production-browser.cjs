@@ -65,7 +65,7 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
         await page.screenshot({ path: `${artifacts}/import-review-${width}.png`, fullPage: true });
       }
       if (state === 'script_review') {
-        await page.locator('summary').first().click();
+        await page.locator('summary').filter({ hasText: /^Menit 1 ·/ }).click();
         await page.getByRole('button', { name: 'Edit menit 1', exact: true }).click();
         const note = page.getByRole('textbox', { name: 'Catatan revisi untuk AI' });
         assert.ok(await note.evaluate(el => el === document.activeElement));
@@ -83,6 +83,12 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
         const resume = page.getByRole('button', { name: 'Lanjutkan produksi yang sama', exact: true });
         await resume.focus(); await resume.press('Enter');
         await page.getByText('Membuat gambar adegan 11 dari 60', { exact: true }).waitFor();
+      }
+      if (state === 'producing') {
+        const cost = page.getByText(/^Biaya AI video ini/);
+        await cost.focus(); await cost.press('Enter');
+        await page.getByText(/Pencatatan dimulai di tengah produksi/).waitFor();
+        await page.getByText(/100 token masuk · 1.100 token keluar/).waitFor();
       }
       if (state === 'retry') { await page.getByText('Menunggu percobaan ulang otomatis', { exact: true }).waitFor(); assert.equal(await page.getByRole('progressbar', { name: 'Bagian produksi yang selesai', exact: true }).getAttribute('max'), '157'); }
       if (state === 'audio') await page.getByText('Membuat suara untuk menit 1 dari 15', { exact: true }).waitFor();

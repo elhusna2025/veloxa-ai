@@ -1,3 +1,4 @@
+import { recordYouTubeUsage } from './youtube-production-usage';
 import OpenAI from 'openai';
 import { OpenAIRealtimeWS } from 'openai/realtime/ws';
 import { synthesizeAchird, synthesizeAchirdChapter } from './youtube-indonesian-voice';
@@ -487,6 +488,9 @@ async function requestVoice(script: string | string[], instructions: string, dep
 
       connection.on('response.done', (event) => {
         if (settled) return;
+        if (isRecord(event) && isRecord(event.response) && (event.response.usage || event.response.status === 'completed')) {
+          recordYouTubeUsage('voice', model, event.response.usage, typeof event.response.id === 'string' ? event.response.id : undefined);
+        }
         if (!isRecord(event) || !isRecord(event.response) || event.response.status !== 'completed') {
           fail();
           return;
