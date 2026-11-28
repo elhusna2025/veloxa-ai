@@ -12,7 +12,7 @@ import { ApiError, errorResponse, noStoreJson, readJson } from './http';
 import { youtubeProductionSettings, youtubeVoiceSchema, youtubeBlockSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
 import { importPacingIssue, parseYouTubeScript } from '../youtube-script-import';
 import type { BrandProfile } from '../veloxa-types';
-import { planYouTubeVideo, writeYouTubeBlock, suggestYouTubeScriptRevision, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
+import { planYouTubeVideo, writeYouTubeBlock, suggestYouTubeScriptRevision, createYouTubeCharacter, createYouTubePhoto, youtubeShotContext } from './youtube-production-agent';
 import { paceYouTubeSpeech } from './youtube-speech-pacing';
 import { generateYouTubeNarration, generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
 import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, normalizeYouTubeSceneAudio, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
@@ -163,6 +163,12 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       const current = (await tx.get(ref)).data() as Job;
       const workspace = (await tx.get(context.actor.ref)).data();
       if (workspace?.ownerUid !== current.ownerUid) throw new ApiError(403, 'Pemilik workspace telah berubah.');
+      if (input.action === 'stop') {
+        if (current.state === 'ready') throw new ApiError(409, 'Video sudah selesai.');
+        if (current.state !== 'cancelled') tx.update(ref, { state: 'cancelled', nextRunAt: idle, lease: null,
+          retryAt: 0, attempts: 0, message: '', revision: current.revision + 1, updatedAt: Date.now() });
+        return;
+      }
       if (current.revision !== input.revision || current.lease && current.lease.until > Date.now()) throw new ApiError(409, 'Produksi sedang berubah. Muat status terbaru.');
       const patch: Partial<Job> = { revision: current.revision + 1, updatedAt: Date.now(), attempts: 0, message: '', retryAt: 0 };
       if (input.action === 'edit') {
@@ -190,9 +196,6 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       } else if (input.action === 'retry_now') {
         if (current.state !== 'producing' || current.attempts < 1) throw new ApiError(409, 'Produksi tidak sedang menunggu percobaan ulang.');
         patch.nextRunAt = Date.now(); patch.attempts = current.attempts;
-      } else if (input.action === 'stop') {
-        if (current.state === 'ready') throw new ApiError(409, 'Video sudah selesai.');
-        patch.state = 'cancelled'; patch.nextRunAt = idle;
       } else {
         if (current.state !== 'attention') throw new ApiError(409, 'Produksi tidak menunggu pemulihan.');
         patch.state = current.outline ? current.scriptIndex < current.settings.minutes ? 'scripting' : current.portraitIndex < current.settings.characters.length ? 'characters' : 'producing' : 'planning';
@@ -272,6 +275,7 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
         await save(ref, portraitName, portrait, 'image/jpeg');
       }
       if (!(await object(ref, voiceName).exists())[0]) {
+        if ((await ref.get()).data()?.lease?.id !== leaseId) return;
         const sample = await generateCharacterVoiceSample(actor.name, actor.voice, actor.delivery, job.models.voiceModel);
         await save(ref, voiceName, sample, 'audio/wav');
       }
@@ -294,7 +298,9 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const hasCandidate = (await object(ref, candidateName).exists())[0];
       const rejectedCandidate = job.lastFailure?.code === 'photo_layout' && job.lastFailure.unit === job.imageIndex && job.lastFailure.layoutVersion === YOUTUBE_LAYOUT_VERSION;
       const photo = hasCandidate && !rejectedCandidate ? await bytes(ref, candidateName)
-        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous, rejectedCandidate, job.narrativeComposition, job.imageIndex);
+        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous, rejectedCandidate, job.narrativeComposition, job.imageIndex, youtubeShotContext(job.outline, block, location.sceneIndex));
+      // A stop during the provider call invalidates this lease before its result enters the gallery.
+      if ((await ref.get()).data()?.lease?.id !== leaseId) return;
       // Save the generated candidate before layout checks, so diagnostics and repair
       // can reuse it instead of paying for another image after an interrupted write.
       if (!hasCandidate || rejectedCandidate) await save(ref, candidateName, photo, 'image/jpeg');

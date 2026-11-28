@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BRAND_PRESETS } from '../veloxa-engine';
 import { youtubeProductionSettings } from '../youtube-production';
-import { writeYouTubeBlock } from './youtube-production-agent';
+import sharp from 'sharp';
+import { parseYouTubeScript } from '../youtube-script-import';
+import { createYouTubePhoto, youtubeShotContext, writeYouTubeBlock } from './youtube-production-agent';
 
 test('the storyboard illustrates the finished spoken script without rewriting or reordering it', async t => {
   const key = process.env.OPENAI_API_KEY;
@@ -18,6 +20,7 @@ test('the storyboard illustrates the finished spoken script without rewriting or
     const req = JSON.parse(String(init.body));
     const kind = req.text.format.name;
     kinds.push(kind);
+    assert.ok(!req.input.includes('Unrelated publisher product'));
     let output;
     if (kind === 'youtube_spoken_script') {
       assert.ok(!req.input.includes(settings.direction));
@@ -32,7 +35,7 @@ test('the storyboard illustrates the finished spoken script without rewriting or
     }
     return Response.json({ object: 'response', status: 'completed', output_text: JSON.stringify(output), output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(output) }] }] });
   });
-  const brand = { ...BRAND_PRESETS.cafe_fnb, businessName: 'Studio', businessDescription: '', city: '', offerings: [] };
+  const brand = { ...BRAND_PRESETS.cafe_fnb, businessName: 'Studio', businessDescription: 'Unrelated publisher product', city: '', offerings: [] };
   const result = await writeYouTubeBlock(settings, brand, outline, 0, null);
   assert.deepEqual(kinds, ['youtube_spoken_script', 'youtube_storyboard']);
   assert.deepEqual(result.scenes.map(s => s.narration), spoken.map(l => l.text));
@@ -64,4 +67,38 @@ test('a short chapter can be repaired between its opening hook and closing sente
   const block = await writeYouTubeBlock(settings, BRAND_PRESETS.cafe_fnb as Parameters<typeof writeYouTubeBlock>[1], { title: 'Kamar', description: '', chapters: ['Kunci di dinding'] }, 0, null);
   assert.equal(block.scenes[0].narration, opening);
   assert.equal(block.scenes.at(-1)?.narration, ending);
+});
+
+test('visual requests ground a short hook in the story and exclude publisher identity across formats', async t => {
+  const key = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  t.after(() => { if (key === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = key; });
+  const jpeg = await sharp({ create: { width: 16, height: 16, channels: 3, background: 'white' } }).jpeg().toBuffer();
+  const prompts: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+    prompts.push(JSON.parse(String(init.body)).prompt);
+    return Response.json({ data: [{ b64_json: jpeg.toString('base64') }] });
+  });
+  for (const kind of ['short', 'video'] as const) {
+    const settings = youtubeProductionSettings.parse({ kind, minutes: 1, topic: 'Kisah seorang pianis di Vienna', voice: 'achird' });
+    const block = parseYouTubeScript('Menit 1 — Audisi\nBayangkan...\n\nMalam itu ia memainkan konser pertamanya.')[0];
+    const outline = { title: settings.topic, description: '', chapters: [block.chapter] };
+    const brand = { ...BRAND_PRESETS.cafe_fnb, businessName: 'Unrelated publisher', websiteUrl: 'https://unrelated.test', businessDescription: 'Inventory software', primaryColorHex: '#123456', accentColorHex: 'Publisher injected as a color' } as Parameters<typeof createYouTubePhoto>[2];
+    await createYouTubePhoto(block.scenes[0], settings, brand, undefined, [], undefined, false, true, 0, youtubeShotContext(outline, block, 0));
+    const prompt = prompts.at(-1)!;
+    assert.match(prompt, /pianis di Vienna/);
+    assert.match(prompt, /konser pertamanya/);
+    assert.match(prompt, /Bayangkan/);
+    assert.match(prompt, /#123456/);
+    assert.doesNotMatch(prompt, /Unrelated publisher|unrelated.test|Inventory software|Publisher injected/i);
+  }
+});
+
+test('imported short sentences share an illustration while narration and explicit visual breaks survive', () => {
+  const speech = 'Bayangkan... Usia Anda baru 22 tahun. Anda belum menyelesaikan kuliah.';
+  const [block] = parseYouTubeScript(speech + '\nVisual: Mahasiswa di kamar asrama.\n\nKemudian ada tawaran.');
+  assert.equal(block.scenes.length, 2);
+  assert.equal(block.scenes[0].narration, speech);
+  assert.match(block.scenes[0].visual, /kamar asrama/);
+  assert.equal(block.scenes[1].narration, 'Kemudian ada tawaran.');
 });

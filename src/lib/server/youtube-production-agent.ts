@@ -10,10 +10,16 @@ function client() {
   if (!process.env.OPENAI_API_KEY) throw new ApiError(503, 'Layanan produksi AI belum dikonfigurasi.');
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: 'https://api.openai.com/v1', timeout: 90_000, maxRetries: 0 });
 }
-function facts(brand: BrandProfile) {
-  return { name: brand.businessName, description: brand.businessDescription, offerings: brand.offerings,
-    audience: brand.targetAudience, tone: brand.brandTone, website: brand.websiteUrl,
-    visual: brand.visualVibe, palette: [brand.primaryColorHex, brand.accentColorHex, ...(brand.additionalColorHexes ?? [])], forbidden: brand.forbiddenWords };
+function visualPalette(brand: BrandProfile) {
+  return [brand.primaryColorHex, brand.accentColorHex, ...(brand.additionalColorHexes ?? [])]
+    .filter(color => /^#[a-f0-9]{6}$/i.test(color ?? ''));
+}
+
+export function youtubeShotContext(outline: YouTubeOutline | undefined, block: YouTubeScriptBlock, sceneIndex: number) {
+  return {
+    title: outline?.title, synopsis: outline?.description, chapter: block.chapter,
+    currentPassage: sceneIndex + 1, chapterNarration: block.scenes.map(scene => scene.narration),
+  };
 }
 const genreGuidance: Record<YouTubeStoryGenre, string> = {
   auto: 'Simpulkan genre dari permintaan. Gunakan pembuka, perkembangan dan akhir yang sesuai dengan genre itu.',
@@ -30,10 +36,12 @@ function storyDirection(settings: YouTubeProductionSettings) {
   return genreGuidance[settings.genre ?? 'auto'];
 }
 function spokenContext(settings: YouTubeProductionSettings, brand: BrandProfile) {
+  const requestedBusiness = Boolean(brand.businessName?.trim() && settings.topic.toLowerCase().includes(brand.businessName.trim().toLowerCase()))
+    || /\b(?:bisnis|usaha|produk|layanan|brand|perusahaan)\s+(?:kami|saya|kita)\b|\b(?:bisnis aktif|profil bisnis aktif)\b/iu.test(settings.topic);
   return {
     topic: settings.topic, storyDirection: storyDirection(settings), kind: settings.kind, minutes: settings.minutes, delivery: settings.delivery,
     cast: settings.characters.map(({ id, name, delivery }) => ({ id, name, delivery })),
-    business: { name: brand.businessName, description: brand.businessDescription, audience: brand.targetAudience, offerings: brand.offerings, tone: brand.brandTone, forbidden: brand.forbiddenWords },
+    business: requestedBusiness ? { name: brand.businessName, description: brand.businessDescription, audience: brand.targetAudience, offerings: brand.offerings, tone: brand.brandTone, forbidden: brand.forbiddenWords } : undefined,
   };
 }
 const editorialBrief = [
@@ -113,7 +121,7 @@ export async function writeYouTubeBlock(settings: YouTubeProductionSettings, bra
   const storyboard = await structured('youtube_storyboard', z.object({ shots: z.array(shotSchema).length(passages.length) }).strict(), JSON.stringify({
     task: 'Susun satu ilustrasi per bagian ucapan yang sudah final. Salin indeks tiap bagian. Gambar mendukung makna dan konteks, termasuk ketika narator menjelaskan keputusan atau perubahan keadaan. Variasikan jarak, lokasi dan tindakan. Judul pendek dan teks pendukung merangkum makna. characterIds hanya untuk pemeran terdaftar yang tampak. Pertahankan konteks waktu dan konsistensi pemeran.',
     topic: settings.topic, chapter: outline.chapters[index], direction: settings.direction, cast: settings.characters,
-    business: facts(brand), previousShot: previous?.scenes.at(-1)?.visual,
+    title: outline.title, synopsis: outline.description, previousShot: previous?.scenes.at(-1)?.visual,
     passages: passages.map(({ narration, lines }, index) => ({ index, narration, speakers: lines.map(line => line.speakerId) })),
   }), model, 6500);
   const byIndex = new Map(storyboard.shots.map(shot => [shot.index, shot]));
@@ -157,7 +165,7 @@ export async function createYouTubeCharacter(character: YouTubeProductionSetting
   if (!encoded || encoded.length > 24 * 1024 * 1024) throw new Error('Acuan karakter belum lengkap.');
   return sharp(Buffer.from(encoded, 'base64'), { limitInputPixels: 30_000_000 }).resize(768, 768).jpeg({ quality: 94 }).toBuffer();
 }
-export async function createYouTubePhoto(scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile, model = String(DEFAULT_CONTENT_MODELS.imageModel), portraits: { id: string; bytes: Buffer }[] = [], previous?: Pick<YouTubeScene, 'visual' | 'narration'>, repairLayout = false, narrativeComposition = false, sceneIndex = 0): Promise<Buffer> {
+export async function createYouTubePhoto(scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile, model = String(DEFAULT_CONTENT_MODELS.imageModel), portraits: { id: string; bytes: Buffer }[] = [], previous?: Pick<YouTubeScene, 'visual' | 'narration'>, repairLayout = false, narrativeComposition = false, sceneIndex = 0, story?: ReturnType<typeof youtubeShotContext>): Promise<Buffer> {
   const vertical = settings.kind === 'short';
   const request = { model, n: 1 as const, quality: 'medium' as const, output_format: 'jpeg' as const,
     size: (vertical ? '1008x1792' : '1536x864') as '1024x1024',
@@ -172,14 +180,15 @@ export async function createYouTubePhoto(scene: YouTubeScene, settings: YouTubeP
         'a reverse angle or over-the-shoulder view revealing the consequence',
       ][sceneIndex % 5]}. A tight shot should actually crop out the skyline and surrounding scenery. Honor explicit shot direction first. Show one moment in one location, no montages or split screens.`] : []),
       ...(repairLayout && !narrativeComposition ? ['The previous composition failed the moving-text contrast check. Reframe the shot from a different viewpoint. Place the action on the far right. On the left use one continuous, softly lit real surface appropriate to the location, with no horizon, silhouettes, high-contrast edges or foreground detail crossing it. Do not copy the composition of the reference shot.'] : []),
-      'The spokenNarration below is the authoritative content of THIS shot. Illustrate exactly what the narrator is saying now: the named object, person, action or concrete example. Do not illustrate a different sentence, a later point, the overall topic, a title, or a generic business scene. For example, spoken weighing goods requires an actual weighing action, not a portrait of a merchant. For abstract principles, depict a directly relevant illustrative action without claiming a historical event. Do not invent a software interface or readable screen data. Business colors guide environmental accents; preserve skin tones.',
+      'Use the approved story and chapter to identify who the narration concerns, where and when the events occur, and what changes in this passage. Depict one concrete moment that supports the current passage. For an invitation to imagine, a pronoun, or a rhetorical question, establish the actual subject from the surrounding sentences. Keep the protagonist recognizable across shots and at the age described. Avoid jumping ahead to the outcome. Do not substitute an anonymous viewer, a marketing scene, or invented screen data. Respect the author’s explicit visual directions. Use a period-appropriate illustration for a historical reconstruction. For a hypothetical outcome, show a symbolic cutaway rather than presenting an invented event or real family as documentary evidence. For financial offers, illustrate the decision and reactions, keeping contracts closed and papers turned away from camera. Never print amounts, captions or fake company logos into the picture.',
+      JSON.stringify({ topic: settings.topic, genre: settings.genre, story }),
       'When character references are attached, preserve each person exactly: facial structure, age, skin tone, hair, clothing and identity. Match each numbered image to the provided character ID. Do not swap faces, blend identities, change clothing, or invent another actor for the same role. Other shots may change camera angle, expression and action.',
       JSON.stringify({ characterReferences: portraits.map((portrait, index) => ({ image: index + 1, ...settings.characters.find(character => character.id === portrait.id) })) }),
       ...(previous ? [JSON.stringify({ previousShot: previous, instruction: 'Use this text to resolve continuity of people, place and objects. Compose a fresh shot for the current beat. If a location recurs, show the specific new evidence, action or reaction with an appropriate change of viewpoint and scale.' })] : []),
       JSON.stringify({ spokenNarration: scene.narration, shotDirection: scene.visual, speakers: scene.lines.map(line => line.speakerId),
         direction: 'Stage the approved shotDirection to illustrate the current words. Follow the requested period, location, subject, viewpoint and lighting. For maps and historical reconstructions use a legible illustrative treatment. Leave titles and labels for the compositor.',
-        visibleCharacters: scene.characterIds, business: facts(brand), visualStyle: settings.direction,
-        composition: 'The script determines the subject and action. Business facts, palette, and visualStyle only guide their appearance; they must not substitute unrelated subject matter.' }),
+        visibleCharacters: scene.characterIds, accentColors: visualPalette(brand), visualStyle: settings.direction,
+        composition: 'Use accent colors only where natural for the setting. Preserve the identities, place and period of the story. Leave lettering, signage, trademarks and watermarks out of the illustration.' }),
     ].join('\n'),
   };
   const api = client();

@@ -15,9 +15,19 @@ export function parseYouTubeScript(text: string, cast: YouTubeProductionSettings
   function flush() {
     if (!paragraph.length || !block) return;
     const spoken = paragraph.join(' ');
+    const passages: string[] = [];
+    let passage = '';
     for (const sentence of segmenter.segment(spoken)) {
-      const narration = sentence.segment.trim();
-      if (narration.length > 650) throw new Error(`Menit ${block.index + 1} memiliki kalimat terlalu panjang. Pisahkan dengan titik atau baris kosong.`);
+      const words = sentence.segment.trim();
+      if (words.length > 650) throw new Error(`Menit ${block.index + 1} memiliki kalimat terlalu panjang. Pisahkan dengan titik atau baris kosong.`);
+      if (passage && (passage.split(/\s+/u).length >= 24 || passage.length + 1 + words.length > 650)) {
+        passages.push(passage);
+        passage = '';
+      }
+      passage = passage ? passage + ' ' + words : words;
+    }
+    if (passage) passages.push(passage);
+    for (const narration of passages) {
       block.scenes.push({ title: excerpt(narration, 48), supporting: excerpt(narration, 110), narration,
         lines: [{ speakerId, text: narration }], characterIds: speakerId === 'narrator' ? [] : [speakerId],
         visual: 'Ilustrasikan isi narasi berikut. ' + narration });

@@ -187,3 +187,28 @@ test('paste preserves timed narration in a separate review draft and acquires th
   assert.equal(reserved, 1);
   assert.equal((await ref.get()).data()?.importQuotaPending, false);
 });
+
+test('stop with a stale displayed revision revokes in-flight work and repeated stops do not restart it', async () => {
+  const f = fixture();
+  await f.create();
+  const ref = f.jobRef() as unknown as FirebaseFirestore.DocumentReference;
+  let calls = 0;
+  const deps = {
+    reserve: async () => ({ mode: 'standard' as const, day: '2026-11-28', used: 1, dailyLimit: 3 }),
+    plan: async () => {
+      calls++;
+      assert.equal((await f.action({ action: 'stop', confirmed: true, revision: 0 })).status, 200);
+      return { title: 'Late result', description: '', chapters: ['Late result'] };
+    },
+  };
+  await runYouTubeProductionStep(ref, deps);
+  const stopped = (await f.jobRef().get()).data()!;
+  assert.equal(stopped.state, 'cancelled');
+  assert.equal(stopped.lease, null);
+  assert.equal(stopped.outline, undefined);
+  assert.equal(stopped.nextRunAt, Number.MAX_SAFE_INTEGER);
+  assert.equal((await f.action({ action: 'stop', confirmed: true, revision: 0 })).status, 200);
+  await runYouTubeProductionStep(ref, deps);
+  assert.equal((await f.jobRef().get()).data()?.revision, stopped.revision);
+  assert.equal(calls, 1);
+});
