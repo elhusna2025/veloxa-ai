@@ -29,6 +29,7 @@ type Job = Omit<YouTubeProduction, 'blocks'> & { ownerUid: string; workspaceId: 
   models: { scriptModel: string; imageModel: string; voiceModel: string }; fingerprint: string; scriptIndex: number;
   portraitIndex: number; imageIndex: number; audioIndex: number; renderIndex: number; totalFrames: number; sceneCounts?: number[]; narratorReferenceScene?: number; narrativeComposition?: boolean;
   importQuotaPending?: boolean; nextRunAt: number; attempts: number; lease: { id: string; until: number } | null; sourceGeneration?: string; characterVersions?: Record<string, number>;
+  stoppedFrom?: Exclude<YouTubeProduction['state'], 'cancelled' | 'ready'>;
   lastFailure?: { phase: string; code: string; status: number | null; at: number; unit?: number; layoutVersion?: number } };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const key = (scope: Scope, uid: string, id: string) => `${digest([scope.workspaceId, scope.businessId, uid])}_${id}`;
@@ -83,6 +84,18 @@ async function checkProductionGuard(tx: FirebaseFirestore.Transaction, guard: Re
   if (typeof activeKey !== 'string' || activeKey === ref.id) return;
   const active = (await tx.get(ref.firestore.collection(collection).doc(activeKey))).data() as Job | undefined;
   if (active && !['ready', 'cancelled'].includes(active.state)) throw new ApiError(409, 'Selesaikan atau hentikan produksi sebelumnya terlebih dahulu.');
+}
+function resumeStage(job: Job): YouTubeProduction['state'] {
+  if (job.state === 'cancelled' && job.stoppedFrom && job.stoppedFrom !== 'attention') return job.stoppedFrom;
+  if (!job.outline) return 'planning';
+  if (job.scriptIndex < job.settings.minutes) return 'scripting';
+  // Older stopped drafts have no saved stage. Preserve approval gates unless a
+  // media checkpoint proves the owner already started that phase.
+  if (job.state === 'cancelled' && !job.stoppedFrom && !job.imageIndex && !job.audioIndex && !job.renderIndex) {
+    if (!job.portraitIndex) return 'script_review';
+    if (job.portraitIndex === job.settings.characters.length) return 'character_review';
+  }
+  return job.portraitIndex < job.settings.characters.length ? 'characters' : 'producing';
 }
 export async function youtubeProductionApi(request: Request, rawId?: string, deps: Dependencies = {}) {
   try {
@@ -165,7 +178,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       if (workspace?.ownerUid !== current.ownerUid) throw new ApiError(403, 'Pemilik workspace telah berubah.');
       if (input.action === 'stop') {
         if (current.state === 'ready') throw new ApiError(409, 'Video sudah selesai.');
-        if (current.state !== 'cancelled') tx.update(ref, { state: 'cancelled', nextRunAt: idle, lease: null,
+        if (current.state !== 'cancelled') tx.update(ref, { state: 'cancelled', stoppedFrom: current.state, nextRunAt: idle, lease: null,
           retryAt: 0, attempts: 0, message: '', revision: current.revision + 1, updatedAt: Date.now() });
         return;
       }
@@ -197,9 +210,14 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
         if (current.state !== 'producing' || current.attempts < 1) throw new ApiError(409, 'Produksi tidak sedang menunggu percobaan ulang.');
         patch.nextRunAt = Date.now(); patch.attempts = current.attempts;
       } else {
-        if (current.state !== 'attention') throw new ApiError(409, 'Produksi tidak menunggu pemulihan.');
-        patch.state = current.outline ? current.scriptIndex < current.settings.minutes ? 'scripting' : current.portraitIndex < current.settings.characters.length ? 'characters' : 'producing' : 'planning';
-        patch.nextRunAt = Date.now();
+        if (current.state !== 'attention' && current.state !== 'cancelled') throw new ApiError(409, 'Produksi tidak menunggu pemulihan.');
+        patch.state = resumeStage(current);
+        if (patch.state !== 'script_review' || current.scriptSource !== 'imported') {
+          const guard = context.actor.ref.collection('youtube_production_guards').doc(context.businessId);
+          await checkProductionGuard(tx, guard, ref);
+          tx.set(guard, { jobKey: ref.id });
+        }
+        patch.nextRunAt = patch.state === 'script_review' || patch.state === 'character_review' ? idle : Date.now();
       }
       tx.update(ref, patch);
     });

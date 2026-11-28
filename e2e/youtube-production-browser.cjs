@@ -25,7 +25,7 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    for (const state of ['empty', 'script_review', 'character_review', 'producing', 'retry', 'audio', 'merge', 'attention']) {
+    for (const state of ['empty', 'script_review', 'character_review', 'producing', 'retry', 'audio', 'merge', 'attention', 'cancelled']) {
       await page.goto(`http://127.0.0.1:8793/?state=${state}`, { waitUntil: 'networkidle' });
       await page.getByRole('heading', { name: 'Studio video AI', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${state}:${width} overflow`);
@@ -79,6 +79,11 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
         await page.getByRole('button', { name: 'Simpan naskah' }).click();
         await page.getByRole('heading', {name: '1. Pembukaan baru dari AI'}).waitFor();
       }
+      if (state === 'cancelled') {
+        const resume = page.getByRole('button', { name: 'Lanjutkan produksi yang sama', exact: true });
+        await resume.focus(); await resume.press('Enter');
+        await page.getByText('Membuat gambar adegan 11 dari 60', { exact: true }).waitFor();
+      }
       if (state === 'retry') { await page.getByText('Menunggu percobaan ulang otomatis', { exact: true }).waitFor(); assert.equal(await page.getByRole('progressbar', { name: 'Bagian produksi yang selesai', exact: true }).getAttribute('max'), '157'); }
       if (state === 'audio') await page.getByText('Membuat suara untuk menit 1 dari 15', { exact: true }).waitFor();
       if (state === 'merge') await page.getByText('Menggabungkan adegan menjadi video akhir', { exact: true }).waitFor();
@@ -86,6 +91,6 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
     }
   }
   assert.deepEqual(errors, []);
-  fs.writeFileSync(`${artifacts}/results.json`, JSON.stringify({ passed: true, widths: [1440, 390], states: ['empty-five-characters', 'script_review', 'character_review', 'producing', 'retry', 'audio', 'merge', 'attention'], keyboard: 'Voice dropdown Down/Enter; five character maximum', externalWrites: false }, null, 2));
-  console.log('Production Studio: desktop, 390px, keyboard and eight states passed.');
+  fs.writeFileSync(`${artifacts}/results.json`, JSON.stringify({ passed: true, widths: [1440, 390], states: ['empty-five-characters', 'script_review', 'character_review', 'producing', 'retry', 'audio', 'merge', 'attention', 'cancelled'], keyboard: 'Voice dropdown Down/Enter; five character maximum', externalWrites: false }, null, 2));
+  console.log('Production Studio: desktop, 390px, keyboard and nine states passed.');
 })().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(async () => { await browser?.close(); server?.close(); clearTimeout(watchdog); });

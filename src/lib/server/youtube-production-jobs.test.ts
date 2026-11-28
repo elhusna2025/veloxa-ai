@@ -212,3 +212,36 @@ test('stop with a stale displayed revision revokes in-flight work and repeated s
   assert.equal((await f.jobRef().get()).data()?.revision, stopped.revision);
   assert.equal(calls, 1);
 });
+
+test('resume from stop keeps approvals, legacy checkpoints and the single active production guard', async () => {
+  for (const stage of ['script_review', 'characters', 'character_review', 'producing'] as const) {
+    const f = fixture(); await f.create();
+    const ref = f.jobRef(), saved = (await ref.get()).data()!;
+    f.store.rows.set(ref.path, { ...saved, state: stage, imageIndex: stage === 'producing' ? 10 : 0 });
+    await f.action({ action: 'stop', revision: saved.revision, confirmed: true });
+    const stopped = (await ref.get()).data()!;
+    assert.equal(stopped.stoppedFrom, stage);
+    assert.equal((await f.action({ action: 'resume', revision: stopped.revision, confirmed: true })).status, 200);
+    const resumed = (await ref.get()).data()!;
+    assert.equal(resumed.state, stage);
+    assert.equal(resumed.imageIndex, stopped.imageIndex);
+    assert.equal(resumed.nextRunAt === Number.MAX_SAFE_INTEGER, stage.endsWith('review'));
+  }
+  const f = fixture(); await f.create();
+  const ref = f.jobRef(), saved = (await ref.get()).data()!;
+  const stopped = { ...saved, state: 'cancelled', outline: { title: 'Draf', chapters: ['Awal'] }, scriptIndex: 1, imageIndex: 10 };
+  f.store.rows.set(ref.path, stopped);
+  const guard = f.workspaceRef.collection('youtube_production_guards').doc('primary');
+  f.store.rows.set(guard.path, { jobKey: 'other' });
+  f.store.rows.set('private_youtube_productions/other', { state: 'producing' });
+  const resume = () => f.action({ action: 'resume', revision: saved.revision, confirmed: true });
+  assert.equal((await resume()).status, 409);
+  assert.equal((await ref.get()).data()?.state, 'cancelled');
+  f.store.rows.set('private_youtube_productions/other', { state: 'ready' });
+  assert.equal((await resume()).status, 200);
+  assert.equal((await ref.get()).data()?.imageIndex, 10);
+  assert.equal((await ref.get()).data()?.state, 'producing');
+  f.store.rows.set(ref.path, { ...stopped, imageIndex: 0 });
+  assert.equal((await resume()).status, 200);
+  assert.equal((await ref.get()).data()?.state, 'script_review');
+});

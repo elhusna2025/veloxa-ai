@@ -9,7 +9,7 @@ const item = { id: '00000000-0000-4000-8000-000000000001', revision: 1, state,
   settings: { kind: 'video', minutes: 15, topic: 'Mengelola catatan usaha melalui percakapan lima pemeran.', direction: '', voice: 'marin', delivery: 'Hangat', characters },
   outline: { title: 'Catatan Usaha yang Lebih Terarah', description: 'Contoh ilustratif.', chapters: ['Mulai dari satu catatan'] },
   blocks: [{ index: 0, chapter: 'Mulai dari satu catatan', scenes: Array.from({ length: 4 }, (_, index) => ({ title: 'Mulai dari catatan usaha', supporting: 'Pahami manfaat lewat contoh sederhana.', narration, visual: 'Pengelola usaha memeriksa catatan transaksi.', characterIds: ['actor_1'], lines: [{ speakerId: 'actor_' + (index + 1), text: narration }] })) }],
-  progress: { images: ['audio','render','merge'].includes(requestedState) ? 60 : requestedState === 'producing' ? 2 : 0, audio: ['render','merge'].includes(requestedState) ? 15 : 0, rendered: requestedState === 'merge' ? 60 : requestedState === 'render' ? 2 : 0, characters: 5, attempts: requestedState === 'retry' ? 3 : 0, working: requestedState !== 'retry', checkedAt: Date.now() },
+  progress: { images: ['audio','render','merge'].includes(requestedState) ? 60 : requestedState === 'cancelled' ? 10 : requestedState === 'producing' ? 2 : 0, audio: ['render','merge'].includes(requestedState) ? 15 : 0, rendered: requestedState === 'merge' ? 60 : requestedState === 'render' ? 2 : 0, characters: 5, attempts: requestedState === 'retry' ? 3 : 0, working: requestedState !== 'retry', checkedAt: Date.now() },
   ...(requestedState === 'retry' ? { retryAt: Date.now() + 60000 } : {}),
   portraits: characters.map(actor => actor.id), completedScenes: 0, createdAt: 1, updatedAt: 1, durationSeconds: 900 };
 let imported: YouTubeProduction | undefined;
@@ -28,6 +28,11 @@ export async function veloxaApi(path: string, init?: RequestInit) {
       imported.blocks[body.index].scenes = body.block.scenes;
       imported.revision++;
       return { production: imported };
+    }
+    if (body.action === 'resume' && item.state === 'cancelled') {
+      item.state = 'producing';
+      item.revision++;
+      return { production: { ...item } };
     }
     if (body.action === 'suggest_edit') {
       const proposal = structuredClone(item.blocks[body.index]);
