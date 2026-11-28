@@ -153,3 +153,37 @@ test('revision notes return an unsaved proposal only while reviewing the matchin
   assert.equal((await youtubeProductionApi(f.request(input), f.id, deps)).status, 409);
   assert.equal(calls, 1);
 });
+
+test('paste preserves timed narration in a separate review draft and acquires the guard only on approval', async () => {
+  const f = fixture();
+  await f.create();
+  const id = randomUUID();
+  const text = '**Menit 1 — Pembuka**\nNarator: Siapa dia?\nVisual: Pintu kedai masih tertutup.\n01:00–02:00 — Jawaban\nHari itu, ia datang kembali.';
+  const input = { id, settings: { kind: 'video', minutes: 2, topic: 'Kisah kedai kecil', voice: 'achird' }, scriptText: text };
+  const create = (scriptText: string) => youtubeProductionApi(f.request({ ...input, scriptText }), undefined, f.deps);
+  const first = await create(text);
+  assert.equal(first.status, 200);
+  const { production } = await first.json();
+  assert.equal(production.state, 'script_review');
+  assert.deepEqual(production.blocks.map((b: YouTubeScriptBlock) => b.scenes[0].narration), ['Siapa dia?', 'Hari itu, ia datang kembali.']);
+  assert.match(production.blocks[0].scenes[0].visual, /Pintu kedai/);
+  assert.equal((await create(text)).status, 200);
+  assert.equal((await create(text + ' Lagi.')).status, 409);
+  assert.equal((await create(text.replace('01:00–02:00', '02:00–03:00'))).status, 400);
+  const action = (body: object) => youtubeProductionApi(f.request(body), id, f.deps);
+  assert.equal((await action({ action: 'approve_script', revision: 1, confirmed: true })).status, 400);
+  for (let index = 0; index < 2; index++) {
+    assert.equal((await action({ action: 'edit', revision: index + 1, index, block: { scenes: block(index).scenes } })).status, 200);
+  }
+  assert.equal((await action({ action: 'approve_script', revision: 3, confirmed: true })).status, 409);
+  assert.equal((await f.action({ action: 'stop', revision: 1, confirmed: true })).status, 200);
+  assert.equal((await action({ action: 'approve_script', revision: 3, confirmed: true })).status, 200);
+  const key = (await f.workspaceRef.collection('youtube_production_guards').doc('primary').get()).data()?.jobKey as string;
+  const ref = f.store.collection('private_youtube_productions').doc(key);
+  let reserved = 0;
+  await runYouTubeProductionStep(ref as unknown as FirebaseFirestore.DocumentReference, { reserve: async () => {
+    reserved++; return { mode: 'standard', day: '2026-11-28', used: 1, dailyLimit: 3 };
+  } });
+  assert.equal(reserved, 1);
+  assert.equal((await ref.get()).data()?.importQuotaPending, false);
+});

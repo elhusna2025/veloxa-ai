@@ -88,6 +88,7 @@ Warna DNA bisnis merupakan arahan untuk **konten bisnis**. Warna logo Berez/Cend
 Urutan workspace: **Beranda → Profil & aset → Content Studio → Jadwal konten → Meta Ads**. Akun sosial menjadi pengaturan koneksi terpisah. Navigasi ponsel mengikuti urutan makna yang sama; label boleh dipendekkan.
 
 - Content Studio dapat memiliki submode kanal seperti Sosial dan YouTube di dalam tab yang sama; pertahankan urutan lima tab utama di atas.
+- Di YouTube Studio, bedakan menyusun dari topik dan menempel naskah sendiri. Tampilkan durasi dari penanda menit, kesalahan urutan, serta status sebelum disimpan. Naskah tersimpan masuk ke tinjauan sebelum pengguna memulai produksi media.
 - YouTube Studio berfokus pada produksi video AI. Mulai dari topik, format, durasi, pembawaan suara, dan pemeran; lanjutkan ke tinjauan naskah, tinjauan acuan karakter, produksi media, lalu pratinjau dan publikasi. Unggah file komputer bukan tindakan utama Studio ini.
 - Saat membuka produksi tersimpan, sediakan **Buat video baru** di pengantar Studio serta di dekat pratinjau video akhir, termasuk setelah refresh. Tindakan ini membuka pilihan Shorts/video panjang dan memindahkan fokus ke formulir; produksi sebelumnya tetap tersedia di riwayat. Lindungi perubahan naskah, pemeran, dan publikasi yang belum disimpan.
 - Durasi 15/30/60 menit atau khusus memengaruhi panjang naskah dan jumlah adegan. Tampilkan sumber daya produksi sebelum konfirmasi gambar dan suara. Naskah tersimpan dapat diedit per menit sebelum produksi; bedakan perubahan belum disimpan dari versi yang disetujui.

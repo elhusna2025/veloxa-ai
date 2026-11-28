@@ -35,7 +35,7 @@ export function youtubeNarratorDelivery(settings: Pick<YouTubeProductionSettings
 export const youtubeSceneSchema = z.object({
   title: z.string().trim().min(1).max(48),
   supporting: z.string().trim().min(1).max(110),
-  narration: z.string().trim().min(20).max(650),
+  narration: z.string().trim().min(1).max(650),
   lines: z.array(z.object({ speakerId: z.string().regex(/^(narrator|actor_[1-5])$/), text: z.string().trim().min(1).max(650) }).strict()).min(1).max(6),
   characterIds: z.array(z.string().regex(/^actor_[1-5]$/)).max(5),
   visual: z.string().trim().min(20).max(1200),
@@ -47,7 +47,7 @@ export type YouTubeOutline = { title: string; description: string; chapters: str
 export type YouTubeProductionState = 'planning' | 'scripting' | 'script_review' | 'characters' | 'character_review' | 'producing' | 'ready' | 'cancelled' | 'attention';
 export type YouTubeProduction = {
   id: string; revision: number; settings: YouTubeProductionSettings; state: YouTubeProductionState;
-  outline?: YouTubeOutline; blocks: YouTubeScriptBlock[]; completedScenes: number;
+  scriptSource?: 'imported'; outline?: YouTubeOutline; blocks: YouTubeScriptBlock[]; completedScenes: number;
   createdAt: number; updatedAt: number; retryAt?: number; message?: string;
   durationSeconds?: number; videoBytes?: number;
   portraits?: string[];
@@ -126,11 +126,12 @@ export function segmentYouTubeNarration(block: YouTubeScriptBlock): YouTubeScrip
     });
   }) };
 }
-export function validateScriptBlock(value: unknown): z.infer<typeof youtubeBlockSchema> {
+export function validateScriptBlock(value: unknown, imported = false): z.infer<typeof youtubeBlockSchema> {
   const block = youtubeBlockSchema.parse(value);
   const words = scriptWords(block.scenes);
-  if (words < 105 || words > 125) throw new Error('Setiap menit membutuhkan 105–125 kata narasi.');
+  if (!imported && (words < 105 || words > 125)) throw new Error('Setiap menit membutuhkan 105–125 kata narasi.');
   for (const scene of block.scenes) {
+    if (!imported && scene.narration.length < 20) throw new Error('Narasi adegan terlalu singkat.');
     if (scene.lines.map(line => line.text).join(' ').replace(/\s+/gu, ' ').trim() !== scene.narration.replace(/\s+/gu, ' ').trim()) throw new Error('Dialog dan narasi adegan harus sama.');
   }
   return block;

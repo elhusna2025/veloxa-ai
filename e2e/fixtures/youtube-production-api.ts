@@ -1,3 +1,5 @@
+import { parseYouTubeScript } from '../../src/lib/youtube-script-import';
+import type { YouTubeProduction } from '../../src/lib/youtube-production';
 // Browser fixture only. No Firebase sessions, paid AI calls or external writes.
 const requestedState = new URLSearchParams(location.search).get('state') || 'empty';
 const state = ['retry', 'audio', 'render', 'merge'].includes(requestedState) ? 'producing' : requestedState;
@@ -10,10 +12,23 @@ const item = { id: '00000000-0000-4000-8000-000000000001', revision: 1, state,
   progress: { images: ['audio','render','merge'].includes(requestedState) ? 60 : requestedState === 'producing' ? 2 : 0, audio: ['render','merge'].includes(requestedState) ? 15 : 0, rendered: requestedState === 'merge' ? 60 : requestedState === 'render' ? 2 : 0, characters: 5, attempts: requestedState === 'retry' ? 3 : 0, working: requestedState !== 'retry', checkedAt: Date.now() },
   ...(requestedState === 'retry' ? { retryAt: Date.now() + 60000 } : {}),
   portraits: characters.map(actor => actor.id), completedScenes: 0, createdAt: 1, updatedAt: 1, durationSeconds: 900 };
+let imported: YouTubeProduction | undefined;
 export async function veloxaApi(path: string, init?: RequestInit) {
   if (path.includes('/media/')) return { ready: true };
   if (init?.method === 'POST') {
     const body = JSON.parse(String(init.body));
+    if (body.scriptText) {
+      const blocks = parseYouTubeScript(body.scriptText, body.settings.characters);
+      imported = { id: body.id, settings: body.settings, state: 'script_review', scriptSource: 'imported', revision: 1, blocks,
+        outline: { title: body.settings.topic, description: '', chapters: blocks.map(block => block.chapter) },
+        completedScenes: 0, createdAt: 1, updatedAt: 1 };
+      return { production: imported };
+    }
+    if (imported && body.action === 'edit') {
+      imported.blocks[body.index].scenes = body.block.scenes;
+      imported.revision++;
+      return { production: imported };
+    }
     if (body.action === 'suggest_edit') {
       const proposal = structuredClone(item.blocks[body.index]);
       proposal.scenes[0].title = 'Pembukaan baru dari AI';

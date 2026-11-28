@@ -10,6 +10,7 @@ import { effectiveWorkspacePlan } from '../subscription';
 import { reserveGenerationAttempt } from './generation-policy';
 import { ApiError, errorResponse, noStoreJson, readJson } from './http';
 import { youtubeProductionSettings, youtubeVoiceSchema, youtubeBlockSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
+import { importPacingIssue, parseYouTubeScript } from '../youtube-script-import';
 import type { BrandProfile } from '../veloxa-types';
 import { planYouTubeVideo, writeYouTubeBlock, suggestYouTubeScriptRevision, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
 import { paceYouTubeSpeech } from './youtube-speech-pacing';
@@ -27,7 +28,7 @@ type Ref = FirebaseFirestore.DocumentReference;
 type Job = Omit<YouTubeProduction, 'blocks'> & { ownerUid: string; workspaceId: string; businessId: string; brand: BrandProfile;
   models: { scriptModel: string; imageModel: string; voiceModel: string }; fingerprint: string; scriptIndex: number;
   portraitIndex: number; imageIndex: number; audioIndex: number; renderIndex: number; totalFrames: number; sceneCounts?: number[]; narratorReferenceScene?: number; narrativeComposition?: boolean;
-  nextRunAt: number; attempts: number; lease: { id: string; until: number } | null; sourceGeneration?: string; characterVersions?: Record<string, number>;
+  importQuotaPending?: boolean; nextRunAt: number; attempts: number; lease: { id: string; until: number } | null; sourceGeneration?: string; characterVersions?: Record<string, number>;
   lastFailure?: { phase: string; code: string; status: number | null; at: number; unit?: number; layoutVersion?: number } };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const key = (scope: Scope, uid: string, id: string) => `${digest([scope.workspaceId, scope.businessId, uid])}_${id}`;
@@ -53,7 +54,7 @@ async function bytes(ref: Ref, name: string, max = 20 * 1024 * 1024) {
 async function dto(ref: Ref, job: Job): Promise<YouTubeProduction> {
   const scripts = await ref.collection('blocks').orderBy('index').get();
   return { id: job.id, revision: job.revision, settings: job.settings, state: job.state,
-    ...(job.outline ? { outline: job.outline } : {}), blocks: scripts.docs.map(doc => doc.data() as YouTubeScriptBlock),
+    ...(job.scriptSource ? { scriptSource: job.scriptSource } : {}), ...(job.outline ? { outline: job.outline } : {}), blocks: scripts.docs.map(doc => doc.data() as YouTubeScriptBlock),
     completedScenes: job.renderIndex, createdAt: job.createdAt, updatedAt: job.updatedAt,
     progress: { images: job.imageIndex, audio: job.audioIndex, rendered: job.renderIndex, characters: job.portraitIndex,
       attempts: job.attempts, working: Boolean(job.lease && job.lease.until > Date.now()), checkedAt: Date.now() },
@@ -77,6 +78,12 @@ async function owned(request: Request, rawId: string, deps: Dependencies = {}) {
   if (!job || job.ownerUid !== context.actor.user.uid) throw new ApiError(404, 'Produksi video tidak ditemukan.');
   return { ref, job, context };
 }
+async function checkProductionGuard(tx: FirebaseFirestore.Transaction, guard: Ref, ref: Ref) {
+  const activeKey = (await tx.get(guard)).data()?.jobKey;
+  if (typeof activeKey !== 'string' || activeKey === ref.id) return;
+  const active = (await tx.get(ref.firestore.collection(collection).doc(activeKey))).data() as Job | undefined;
+  if (active && !['ready', 'cancelled'].includes(active.state)) throw new ApiError(409, 'Selesaikan atau hentikan produksi sebelumnya terlebih dahulu.');
+}
 export async function youtubeProductionApi(request: Request, rawId?: string, deps: Dependencies = {}) {
   try {
     if (request.method === 'GET') {
@@ -89,8 +96,14 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
     }
     if (!rawId) {
       const context = await access(request, deps);
-      const input = z.object({ id: z.uuid(), settings: youtubeProductionSettings }).strict().parse(await readJson(request));
+      const input = z.object({ id: z.uuid(), settings: youtubeProductionSettings, scriptText: z.string().min(1).max(480000).optional() }).strict().parse(await readJson(request, 2 * 1024 * 1024));
       if (new Set(input.settings.characters.map(actor => actor.id)).size !== input.settings.characters.length) throw new ApiError(400, 'ID karakter harus unik.');
+      let imported: YouTubeScriptBlock[] | undefined;
+      if (input.scriptText !== undefined) {
+        try { imported = parseYouTubeScript(input.scriptText, input.settings.characters); }
+        catch (error) { throw new ApiError(400, (error as Error).message); }
+        if (imported.length !== input.settings.minutes) throw new ApiError(400, 'Jumlah menit dalam naskah harus sesuai durasi produksi.');
+      }
       const { context: business } = await resolveBusinessContext(context.actor.ref, context.actor.workspace, context.businessId);
       if (!business.brand.businessName) throw new ApiError(409, 'Simpan profil bisnis sebelum membuat video.');
       const ref = context.actor.ref.firestore.collection(collection).doc(key(context, context.actor.user.uid, input.id));
@@ -100,17 +113,25 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       const job = await ref.firestore.runTransaction(async tx => {
         const current = (await tx.get(ref)).data() as Job | undefined;
         if (current) { if (current.fingerprint !== fingerprint) throw new ApiError(409, 'ID produksi sudah digunakan untuk topik berbeda.'); return current; }
-        const activeKey = (await tx.get(guard)).data()?.jobKey;
-        if (typeof activeKey === 'string') {
-          const active = (await tx.get(ref.firestore.collection(collection).doc(activeKey))).data() as Job | undefined;
-          if (active && !['ready', 'cancelled'].includes(active.state)) throw new ApiError(409, 'Selesaikan atau hentikan produksi sebelumnya terlebih dahulu.');
-        }
+        if (!imported) await checkProductionGuard(tx, guard, ref);
         const now = Date.now();
         const job: Job = { id: input.id, workspaceId: context.workspaceId, businessId: context.businessId, ownerUid: context.actor.user.uid,
           brand: business.brand, settings: input.settings, models, narrativeComposition: true, fingerprint, revision: 1, state: 'planning',
           scriptIndex: 0, portraitIndex: 0, imageIndex: 0, audioIndex: 0, renderIndex: 0, totalFrames: 0, sceneCounts: [],
           completedScenes: 0, createdAt: now, updatedAt: now, nextRunAt: now, attempts: 0, lease: null };
-        tx.create(ref, { ...job, listKey: `${digest([context.workspaceId, context.businessId, context.actor.user.uid])}:${String(9_999_999_999_999 - now).padStart(13, '0')}:${input.id}` }); tx.set(guard, { jobKey: ref.id });
+        if (imported) {
+          job.scriptSource = 'imported';
+          job.importQuotaPending = true;
+          job.state = 'script_review';
+          job.nextRunAt = idle;
+          job.outline = { title: input.settings.topic, description: '', chapters: imported.map(block => block.chapter) };
+          job.scriptIndex = imported.length;
+          job.sceneCounts = imported.map(block => block.scenes.length);
+          for (const block of imported) tx.create(blockRef(ref, block.index), block);
+        } else {
+          tx.set(guard, { jobKey: ref.id });
+        }
+        tx.create(ref, { ...job, listKey: `${digest([context.workspaceId, context.businessId, context.actor.user.uid])}:${String(9_999_999_999_999 - now).padStart(13, '0')}:${input.id}` });
         tx.set(context.actor.ref.collection('youtube_production_quotas').doc(input.id), { state: 'generating' });
         return job;
       });
@@ -131,6 +152,11 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       const proposal = await (deps.suggest ?? suggestYouTubeScriptRevision)(job.settings, job.outline, input.index, input.block.scenes, input.note, job.models.scriptModel);
       return noStoreJson({ proposal });
     }
+    if (input.action === 'approve_script' && job.scriptSource === 'imported') {
+      const saved = await ref.collection('blocks').orderBy('index').get();
+      const issue = importPacingIssue(saved.docs.map(doc => doc.data() as YouTubeScriptBlock));
+      if (issue) throw new ApiError(400, issue);
+    }
     const savedCounts = input.action === 'edit' ? (await ref.collection('blocks').orderBy('index').get()).docs.map(doc => (doc.data() as YouTubeScriptBlock).scenes.length) : [];
     if (input.action === 'process') await runYouTubeProductionStep(ref, deps);
     else await ref.firestore.runTransaction(async tx => {
@@ -141,7 +167,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       const patch: Partial<Job> = { revision: current.revision + 1, updatedAt: Date.now(), attempts: 0, message: '', retryAt: 0 };
       if (input.action === 'edit') {
         if (current.state !== 'script_review' || input.index >= current.settings.minutes) throw new ApiError(409, 'Naskah hanya dapat diedit sebelum produksi.');
-        const block = { ...validateScriptBlock(input.block), index: input.index, chapter: current.outline!.chapters[input.index] };
+        const block = { ...validateScriptBlock(input.block, current.scriptSource === 'imported'), index: input.index, chapter: current.outline!.chapters[input.index] };
         validateCast(block, current.settings); tx.set(blockRef(ref, input.index), block);
         patch.sceneCounts = savedCounts.map((count, index) => index === input.index ? block.scenes.length : count);
       } else if (input.action === 'revise_character') {
@@ -152,6 +178,11 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
         patch.portraitIndex = index; patch.state = 'characters'; patch.nextRunAt = Date.now();
       } else if (input.action === 'approve_script') {
         if (current.state !== 'script_review' || current.scriptIndex !== current.settings.minutes) throw new ApiError(409, 'Tinjau naskah lengkap sebelum produksi.');
+        if (current.scriptSource === 'imported') {
+          const guard = context.actor.ref.collection('youtube_production_guards').doc(context.businessId);
+          await checkProductionGuard(tx, guard, ref);
+          tx.set(guard, { jobKey: ref.id });
+        }
         patch.state = current.settings.characters.length ? 'characters' : 'producing'; patch.nextRunAt = Date.now();
       } else if (input.action === 'approve_characters') {
         if (current.state !== 'character_review' || current.portraitIndex !== current.settings.characters.length) throw new ApiError(409, 'Acuan karakter belum lengkap.');
@@ -219,10 +250,11 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       });
       job.sceneCounts = counts;
     }
-    if (job.state === 'planning') {
+    if (job.state === 'planning' || job.importQuotaPending) {
       const workspace = ref.firestore.collection('workspaces').doc(job.workspaceId);
       const ws = (await workspace.get()).data()!;
       await (deps.reserve ?? reserveGenerationAttempt)(workspace, workspace.id, effectiveWorkspacePlan(ws), workspace.collection('youtube_production_quotas').doc(job.id));
+      if (job.importQuotaPending) { await commit(ref, leaseId, { importQuotaPending: false }); return; }
       const outline = await (deps.plan ?? planYouTubeVideo)(job.settings, job.brand, job.models.scriptModel);
       await commit(ref, leaseId, { outline, state: 'scripting' }); return;
     }
