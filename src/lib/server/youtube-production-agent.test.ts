@@ -8,7 +8,7 @@ test('the storyboard illustrates the finished spoken script without rewriting or
   const key = process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = 'test-key';
   t.after(() => { if (key === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = key; });
-  const settings = youtubeProductionSettings.parse({ kind: 'short', minutes: 1, topic: 'Kenapa wajah tampak gelap di depan jendela?', direction: 'Jendela hijau dan kursi kuning.', voice: 'achird' });
+  const settings = youtubeProductionSettings.parse({ kind: 'short', minutes: 1, genre: 'tutorial', topic: 'Kenapa wajah tampak gelap di depan jendela?', direction: 'Jendela hijau dan kursi kuning.', voice: 'achird' });
   const outline = { title: 'Mengatur cahaya', description: 'Wajah dapat terlihat gelap ketika latar sangat terang.', chapters: ['Cara mendapatkan cahaya wajah yang cukup.'] };
   const spoken = Array.from({ length: 7 }, (_, i) => ({
     speakerId: 'narrator', text: 'Langkah ' + (i + 1) + ' membantu kita memahami bagaimana menentukan cahaya pada wajah ketika mengambil foto di dekat jendela.',
@@ -21,6 +21,7 @@ test('the storyboard illustrates the finished spoken script without rewriting or
     let output;
     if (kind === 'youtube_spoken_script') {
       assert.ok(!req.input.includes(settings.direction));
+      assert.match(JSON.parse(req.input).storyDirection, /hasil praktis/);
       output = { lines: spoken };
     } else {
       assert.equal(kind, 'youtube_storyboard');
@@ -36,4 +37,31 @@ test('the storyboard illustrates the finished spoken script without rewriting or
   assert.deepEqual(kinds, ['youtube_spoken_script', 'youtube_storyboard']);
   assert.deepEqual(result.scenes.map(s => s.narration), spoken.map(l => l.text));
   assert.deepEqual(result.scenes.map(s => s.title), spoken.map((_, i) => 'Gambar ' + i));
+});
+
+test('a short chapter can be repaired between its opening hook and closing sentence', async t => {
+  const key = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  t.after(() => { if (key === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = key; });
+  const words = (token: string, count: number) => Array(count).fill(token).join(' ') + '.';
+  const line = (text: string) => ({ speakerId: 'narrator', text });
+  const opening = words('pembukaan', 30), ending = words('penutup', 30);
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+    const req = JSON.parse(String(init.body)), brief = JSON.parse(req.input);
+    let result;
+    if (req.text.format.name === 'youtube_storyboard') {
+      result = { shots: brief.passages.map(({ index }: { index: number }) => ({ index, title: 'Adegan', supporting: 'Teks pendukung', visual: 'Ilustrasi yang mendukung narasi.', characterIds: [] })) };
+    } else if (req.text.format.name === 'youtube_script_bridge') {
+      assert.equal(brief.before[0].text, opening);
+      assert.equal(brief.after[0].text, ending);
+      result = { lines: [line(words('cerita', 55))] };
+    } else {
+      result = { lines: [line(opening), line(ending)] };
+    }
+    return Response.json({ object: 'response', status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(result) }] }] });
+  });
+  const settings = youtubeProductionSettings.parse({ kind: 'short', minutes: 1, genre: 'horror', topic: 'Kamar yang hanya muncul di malam hari', voice: 'achird' });
+  const block = await writeYouTubeBlock(settings, BRAND_PRESETS.cafe_fnb as Parameters<typeof writeYouTubeBlock>[1], { title: 'Kamar', description: '', chapters: ['Kunci di dinding'] }, 0, null);
+  assert.equal(block.scenes[0].narration, opening);
+  assert.equal(block.scenes.at(-1)?.narration, ending);
 });

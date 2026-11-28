@@ -30,6 +30,9 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
       await page.getByRole('heading', { name: 'Studio video AI', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${state}:${width} overflow`);
       if (state === 'empty') {
+        const genre = page.getByRole('combobox', {name: 'Kategori cerita'});
+        await genre.focus(); await genre.press('h'); await genre.press('Enter');
+        assert.equal(await genre.innerText(), 'Horor');
         await page.getByRole('combobox', { name: 'Suara narator' }).focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
         assert.equal(await page.getByRole('combobox', { name: 'Suara narator' }).innerText(), 'cedar');
         for (let i = 0; i < 5; i++) await page.getByRole('button', { name: 'Tambah karakter', exact: true }).click();

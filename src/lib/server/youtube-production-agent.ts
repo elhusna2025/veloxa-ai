@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import type { BrandProfile } from '../veloxa-types';
-import { validateScriptBlock, validateCast, splitYouTubeSpokenLines, youtubeSceneSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene } from '../youtube-production';
+import { validateScriptBlock, validateCast, splitYouTubeSpokenLines, youtubeSceneSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene, type YouTubeStoryGenre } from '../youtube-production';
 import { ApiError } from './http';
 
 function client() {
@@ -15,9 +15,23 @@ function facts(brand: BrandProfile) {
     audience: brand.targetAudience, tone: brand.brandTone, website: brand.websiteUrl,
     visual: brand.visualVibe, palette: [brand.primaryColorHex, brand.accentColorHex, ...(brand.additionalColorHexes ?? [])], forbidden: brand.forbiddenWords };
 }
+const genreGuidance: Record<YouTubeStoryGenre, string> = {
+  auto: 'Simpulkan genre dari permintaan. Gunakan pembuka, perkembangan dan akhir yang sesuai dengan genre itu.',
+  true_story: 'Buka dengan kejadian nyata yang menimbulkan pertanyaan. Kenalkan orang yang terdampak, susuri pilihan dan akibat yang terdokumentasi, lalu jawab pertanyaan dengan hasil yang diketahui.',
+  success: 'Buka dengan jarak yang mengejutkan antara keadaan awal dan pencapaian terverifikasi. Sisakan jeda alami. Telusuri hambatan spesifik, keputusan, kegagalan dan mekanisme pertumbuhan. Akhiri dengan skala dan dampak yang dapat dibuktikan. Pakai angka, usia atau tahun hanya jika tersedia dalam bahan.',
+  history: 'Buka dengan teka-teki sejarah, benda, keputusan, atau peristiwa yang akibatnya masih terasa. Bangun konteks waktu dan tempat, ikuti titik balik, bedakan bukti dan tafsir, lalu jelaskan dampaknya. Hindari memaksakan kisah sukses pribadi.',
+  fiction: 'Masuk di tengah situasi yang mengusik tokoh. Bangun keinginan, hambatan, pilihan sulit dan konsekuensinya. Bayar janji pembuka melalui akhir yang konsisten dengan genre fiksi yang diminta.',
+  horror: 'Mulai dari satu hal ganjil dalam situasi yang biasa. Bangun aturan atau pola lewat petunjuk. Naikkan ancaman melalui pilihan tokoh. Akhiri dengan pengungkapan atau gema yang masuk akal dari petunjuk awal. Rahasiakan kejutan sampai waktunya.',
+  drama: 'Ciptakan drama orisinal. Buka dengan dilema hubungan, pengkhianatan atau pertemuan yang mengubah taruhan. Ungkap motif melalui tindakan dan dialog, biarkan pilihan tokoh membawa konsekuensi. Tutup dengan pembayaran emosional. Ikuti nuansa drama Korea atau Tiongkok bila diminta.',
+  tutorial: 'Buka dengan masalah yang dikenali penonton atau hasil praktis yang ingin dicapai. Jelaskan penyebab, demonstrasikan langkah, lalu tunjukkan cara memeriksa hasilnya.',
+  other: 'Ikuti bentuk dan genre yang dijelaskan pengguna dalam topik. Pilih daya tarik pembuka dan jenis penutup yang melayani tujuan khusus itu.',
+};
+function storyDirection(settings: YouTubeProductionSettings) {
+  return genreGuidance[settings.genre ?? 'auto'];
+}
 function spokenContext(settings: YouTubeProductionSettings, brand: BrandProfile) {
   return {
-    topic: settings.topic, kind: settings.kind, minutes: settings.minutes, delivery: settings.delivery,
+    topic: settings.topic, storyDirection: storyDirection(settings), kind: settings.kind, minutes: settings.minutes, delivery: settings.delivery,
     cast: settings.characters.map(({ id, name, delivery }) => ({ id, name, delivery })),
     business: { name: brand.businessName, description: brand.businessDescription, audience: brand.targetAudience, offerings: brand.offerings, tone: brand.brandTone, forbidden: brand.forbiddenWords },
   };
@@ -26,6 +40,7 @@ const editorialBrief = [
   'Utamakan hasil yang diminta pada topik. Bedakan permintaan untuk membuat karya dengan permintaan untuk mengajarkan cara membuat karya itu.',
   'Jika diminta cerita fiksi, ciptakan dan kisahkan langsung peristiwa yang dialami tokoh. Bangun suasana, konflik, dan konsekuensi sesuai genre. Bila diminta plot twist, tanam petunjuk lalu ungkap maknanya di akhir.',
   'Untuk tutorial, jelaskan langkah dan contoh. Untuk dokumenter atau edukasi, jaga akurasi. Untuk format lain, ikuti maksud brief.',
+  'Dalam kerangka tentukan apa yang mengundang rasa ingin tahu di awal dan bagaimana akhir membayarnya. Untuk penulisan baru, menit pertama langsung menghadirkan detail pemantik itu dalam satu atau dua kalimat yang enak diucapkan. Beri ruang bernapas dengan tanda baca alami, tanpa menyebut instruksi jeda. Variasikan pernyataan, peristiwa dan pertanyaan. Hindari pola ajakan menonton yang sama serta sensasi yang melebihi bukti. Bab berikutnya meneruskan alur. Saat menyunting, utamakan catatan pengguna dan pertahankan bagian yang tidak diminta berubah.',
   'Bangun tiap bab dari perkembangan baru. Tentukan subjek, peristiwa, bukti atau tindakan yang berbeda pada setiap bab. Adegan penghubung melanjutkan akibat adegan sebelumnya. Jangan mengulang pembuka, kesimpulan atau metafora visual generik pada tiap menit.',
   'Di pembuka, beri pendengar pijakan sesuai format: siapa atau apa yang dibahas dan persoalan yang membuatnya layak diikuti. Untuk fiksi, kenalkan situasi dan taruhannya tanpa membocorkan akhir. Untuk kisah nyata atau biografi, temukan satu pertanyaan tentang perjalanan tokohnya. Kenalkan siapa dia, keadaan awal dan apa yang sedang diusahakannya. Tunjukkan kendala, pilihan, dan akibat yang bisa dijelaskan dari fakta. Kenalkan suatu tempat atau usaha sebelum menceritakan peristiwa di sana. Hubungkan hasil akhir dengan tindakan yang membuatnya mungkin. Jika sebabnya tidak diketahui, cukup jelaskan urutan peristiwanya.',
   'Profil bisnis memberi konteks jika relevan. Jangan sisipkan produk, ajakan promosi, atau pelajaran yang tidak diminta.',
@@ -44,6 +59,32 @@ export async function planYouTubeVideo(settings: YouTubeProductionSettings, bran
     chapters: z.array(z.string().min(8).max(180)).length(settings.minutes) }).strict();
   return structured('youtube_outline', schema, JSON.stringify({ task: `Rancang video ${settings.minutes} menit. chapters berisi tepat ${settings.minutes} bagian satu menit yang membentuk satu alur sampai akhir. Untuk biografi dan sejarah usaha, tulis sinopsis alur utuh di description seperti deskripsi untuk penonton. Setiap bab mengubah keadaan tokoh dan menyiapkan bab berikutnya. Untuk fiksi pilih judul cerita, isi chapters dengan kejadian konkret, dan rancang akhir cerita sejak awal. Untuk edukasi atau tutorial pilih judul yang menjelaskan topik dan susun perkembangan pembahasan yang konkret.`, ...spokenContext(settings, brand) }), model, Math.max(1600, settings.minutes * 100));
 }
+// Keep the opening and payoff when repairing a chapter that missed its speaking budget.
+async function repairSpokenLength(lines: YouTubeScene['lines'], brief: object, model: string) {
+  const words = (text: string) => text.trim().split(/\s+/u).filter(Boolean).length;
+  const passages = splitYouTubeSpokenLines(lines).flat();
+  const total = passages.reduce((sum, line) => sum + words(line.text), 0);
+  const deficit = 115 - total;
+  let start = passages.length > 1 ? 1 : 0;
+  let end = start;
+  let replaced = 0;
+  while (end < passages.length - 1 && replaced + deficit < 12) replaced += words(passages[end++].text);
+  if (replaced + deficit < 5) {
+    // A draft with one very long sentence may need a whole-passage rewrite.
+    end = passages.length;
+    replaced = passages.slice(start).reduce((sum, line) => sum + words(line.text), 0);
+  }
+  if (replaced + deficit < 5) {
+    start = 0; end = passages.length; replaced = total;
+  }
+  const target = replaced + deficit;
+  const schema = z.object({ lines: z.array(youtubeSceneSchema.shape.lines.element).min(1) });
+  const fix = await structured('youtube_script_bridge', schema, JSON.stringify({
+    ...brief, task: `Tulis HANYA bagian penghubung sepanjang ${target} kata (toleransi 8 kata). Kembangkan fakta, tindakan atau akibat yang relevan. Baca awal dan akhir untuk kesinambungan. Keduanya sudah final dan tidak boleh diulang dalam jawaban.`,
+    before: passages.slice(0, start), replace: passages.slice(start, end), after: passages.slice(end),
+  }), model, 2200);
+  return [...passages.slice(0, start), ...fix.lines, ...passages.slice(end)];
+}
 export async function writeYouTubeBlock(settings: YouTubeProductionSettings, brand: BrandProfile, outline: YouTubeOutline, index: number, previous: YouTubeScriptBlock | null, model = String(DEFAULT_CONTENT_MODELS.scriptModel)): Promise<YouTubeScriptBlock> {
   const brief = {
     task: 'Tulis narasi dan dialog final yang dapat dipahami sebagai cerita audio. Target 115 kata lisan dalam bab ini (105–125). Untuk biografi, ikuti keadaan tokoh, kendala nyata, keputusan dan akibatnya sampai pertanyaan awal terjawab. Jembatani pergantian waktu dan lokasi. Tiap kalimat harus menambah pemahaman. Hindari menerangkan gerakan sepele, benda di layar atau aktivitas latar untuk mengisi waktu. Untuk tutorial pertahankan tindakan yang memang perlu dilakukan penonton. Untuk fiksi jaga alur peristiwa, dialog dan akhir sesuai genre. Setiap baris memuat ucapan satu pembicara, tanpa arahan panggung. Gunakan narrator atau ID pemeran yang diberikan. Hanya tulis kata yang perlu didengar.',
@@ -59,7 +100,12 @@ export async function writeYouTubeBlock(settings: YouTubeProductionSettings, bra
     const previousText = speech.lines.map(line => line.text).join(' ');
     const words = previousText.trim().split(/\s+/u).length;
     if (words >= 105 && words <= 125) break;
-    if (edit === 2) throw new Error('Setiap menit membutuhkan 105–125 kata narasi.');
+    if (edit === 2) {
+      speech = { lines: await repairSpokenLength(speech.lines, brief, model) };
+      const count = speech.lines.map(line => line.text).join(' ').trim().split(/\s+/u).length;
+      if (count < 105 || count > 125) throw new Error('Setiap menit membutuhkan 105–125 kata narasi.');
+      break;
+    }
     speech = await write({ previousText, instruction: `Draf memiliki ${words} kata. ${words < 105 ? 'Tambahkan' : 'Ringkas'} sekitar ${Math.abs(115 - words)} kata. Kembangkan hanya fakta, alasan atau akibat yang membantu pendengar mengikuti topik.` });
   }
   const passages = splitYouTubeSpokenLines(speech.lines).map(lines => ({ lines, narration: lines.map(line => line.text).join(' ') }));
@@ -85,7 +131,7 @@ export async function suggestYouTubeScriptRevision(settings: YouTubeProductionSe
   const schema = z.object({ scenes: z.array(youtubeSceneSchema.omit({ narration: true })).min(1) });
   const brief = {
     task: 'Sunting hanya menit terpilih sesuai catatan. Gunakan naskah editor sebagai dasar, pertahankan fakta, gaya bicara, kesinambungan bab dan pemeran. Ubah arahan visual bila isi baru memerlukannya. Targetkan 115 kata lisan dalam lines untuk seluruh menit (105–125).',
-    topic: settings.topic, delivery: settings.delivery, cast: settings.characters.map(({ id, name }) => ({ id, name })),
+    topic: settings.topic, storyDirection: storyDirection(settings), delivery: settings.delivery, cast: settings.characters.map(({ id, name }) => ({ id, name })),
     outline, minute: index + 1, scenes, note,
   };
   let correction = '';

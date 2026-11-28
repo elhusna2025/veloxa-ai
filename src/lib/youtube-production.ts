@@ -9,10 +9,17 @@ export const youtubeCharacterSchema = z.object({
   voice: youtubeVoiceSchema,
   delivery: z.string().trim().max(500),
 }).strict();
+export const youtubeStoryGenres = ['auto', 'true_story', 'success', 'history', 'fiction', 'horror', 'drama', 'tutorial', 'other'] as const;
+export type YouTubeStoryGenre = typeof youtubeStoryGenres[number];
+export const youtubeGenreLabels: Record<YouTubeStoryGenre, string> = {
+  auto: 'Otomatis sesuai topik', true_story: 'Kisah nyata', success: 'Kisah sukses', history: 'Sejarah',
+  fiction: 'Fiksi', horror: 'Horor', drama: 'Drama (termasuk drakor dan dracin)', tutorial: 'Edukasi / tutorial', other: 'Lainnya',
+};
 export const youtubeProductionSettings = z.object({
   kind: z.enum(['short', 'video']),
   minutes: z.number().int().min(1).max(120),
   topic: z.string().trim().min(8).max(4000),
+  genre: z.enum(youtubeStoryGenres).optional(),
   direction: z.string().trim().max(2000).default(''),
   voice: youtubeVoiceSchema,
   delivery: z.string().trim().max(800).default(''),
