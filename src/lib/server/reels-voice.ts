@@ -298,7 +298,12 @@ export async function generateDialogueVoiceover(
 /** Keep the narrator and preceding delivery in one voice-locked session per chapter. */
 export async function generateYouTubeNarration(lines: string[], deps: VoiceDependencies) {
   if (!isValidScript(lines.join(' ')) || lines.some(line => !line.trim()) || !deps.voice) throw INVALID_SCRIPT_ERROR;
-  const instructions = `${CONVERSATIONAL_VOICE} Satu narator untuk seluruh dokumentasi atau cerita ini. Pertahankan warna suara, register, tempo alami dan aksen yang sama dari awal sampai akhir, termasuk ketika mengutip. Jangan memainkan pemeran lain. Pembawaan narator: ${deps.delivery ?? ''}. Jika ada contoh audio dari narator sintetis yang sama, gunakan sebagai acuan warna suara. Ucapkan hanya teks terakhir yang diberikan dan lanjutkan pembacaan secara alami.`;
+  const instructions = [
+    'Berceritalah dalam bahasa Indonesia kepada satu pendengar yang duduk di sampingmu. Ikuti makna: rasa ingin tahu sungguhan saat bertanya, beri waktu bagi jawabannya, dan lembutkan akhir pikiran. Sambungkan frasa pendek dalam satu napas. Variasikan tempo dan tekanan seperlunya. Hindari nada membaca daftar atau membuka ulang presentasi di setiap gambar.',
+    'Seluruh bagian ini dibawakan oleh narator yang sama, termasuk saat mengutip. Acuan audio bila ada berasal dari narator sintetis yang sama. Ikuti warna suara itu. Ucapkan persis pesan teks terakhir pengguna, tanpa kata tambahan.',
+    `Pembawaan yang dipilih: ${deps.delivery ?? ''}.`,
+    `Konteks alur untuk memahami maksud dan sambungan kalimat (jangan dibacakan sekaligus): ${JSON.stringify(lines)}`,
+  ].join(' ');
   const take = await requestVoice(lines, instructions, deps);
   applyNarrationGain(take.pcm);
   return take;
@@ -367,7 +372,7 @@ async function requestVoice(script: string | string[], instructions: string, dep
       if (!Array.isArray(script)) return;
       connection.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user',
         content: [{ type: 'input_text', text: script[takes.length] }] } });
-      connection.send({ type: 'response.create', response: { output_modalities: ['audio'], instructions } });
+      connection.send({ type: 'response.create', response: { output_modalities: ['audio'] } });
     };
     const succeed = () => {
       if (settled) return;

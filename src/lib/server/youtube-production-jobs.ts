@@ -12,6 +12,7 @@ import { ApiError, errorResponse, noStoreJson, readJson } from './http';
 import { youtubeProductionSettings, youtubeVoiceSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
 import type { BrandProfile } from '../veloxa-types';
 import { planYouTubeVideo, writeYouTubeBlock, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
+import { paceYouTubeSpeech } from './youtube-speech-pacing';
 import { generateYouTubeNarration, generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
 import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, normalizeYouTubeSceneAudio, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
 
@@ -268,24 +269,33 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
         return { text: line.text, voice: character?.voice ?? job.settings.voice, delivery: character ? `${character.name}. ${character.delivery}` : youtubeNarratorDelivery(job.settings) };
       }) }));
       const voiceOptions = { model: job.models.voiceModel, timeoutMs: 150_000 };
+      const delivery = youtubeNarratorDelivery(job.settings) + (job.attempts && job.lastFailure?.code === 'youtube_narration_pacing'
+        ? ' Baca bagian ini dalam sekitar 54 detik. Jaga aliran kata di dalam frasa. Jeda antargambar disiapkan saat penyuntingan.' : '');
       const hasCharacterDialogue = block.scenes.some(scene => scene.lines.some(line => line.speakerId !== 'narrator'));
       // Older narrator-only jobs already have a usable reference in their opening scene.
       const referenceScene = job.narratorReferenceScene ?? (job.audioIndex > 0 && !job.settings.characters.length ? 0 : undefined);
       const voice = hasCharacterDialogue
         ? await generateDialogueVoiceover(scenes, voiceOptions)
         : await generateYouTubeNarration(block.scenes.map(scene => scene.narration), {
-          ...voiceOptions, voice: job.settings.voice, delivery: youtubeNarratorDelivery(job.settings),
+          ...voiceOptions, voice: job.settings.voice, delivery,
           referencePcm: referenceScene === undefined ? undefined : await bytes(ref, `${referenceScene}.pcm`),
         });
       if (!voice.sceneDurations || voice.sceneDurations.length !== block.scenes.length || voice.sceneDurations.reduce((a, b) => a + b, 0) < 44 || voice.sceneDurations.reduce((a, b) => a + b, 0) > 79) throw new Error('Suara belum sesuai durasi naskah.');
-      const frames = sceneFrameCounts(voice.sceneDurations, job.settings.kind === 'short' ? 59.8 : 60);
+      const paced = paceYouTubeSpeech(voice.pcm, voice.sceneDurations, block.scenes.map(scene => scene.narration));
+      const targetSeconds = job.settings.kind === 'short' ? 59.8 : 60;
+      const frames = sceneFrameCounts(paced.sceneDurations, targetSeconds);
+      // Retake upstream while the recording is still replaceable. Never save a timeline
+      // that requires rushing the narration or that the renderer cannot normalize.
+      if (paced.sceneDurations.some((seconds, i) => seconds * 25 / frames[i] > (hasCharacterDialogue ? 1.35 : 1.2) || seconds * 25 / frames[i] < .72)) {
+        throw new ApiError(503, 'Narasi perlu direkam kembali agar nyaman diikuti.', 'youtube_narration_pacing');
+      }
       let offset = 0;
       const firstScene = job.sceneCounts.slice(0, job.audioIndex).reduce((sum, count) => sum + count, 0);
       for (let i = 0; i < block.scenes.length; i++) {
-        const size = Math.round(voice.sceneDurations[i] * 24000) * 2;
-        await save(ref, `${firstScene + i}.pcm`, voice.pcm.subarray(offset, offset + size), 'application/octet-stream'); offset += size;
+        const size = Math.round(paced.sceneDurations[i] * 24000) * 2;
+        await save(ref, `${firstScene + i}.pcm`, paced.pcm.subarray(offset, offset + size), 'application/octet-stream'); offset += size;
       }
-      if (offset !== voice.pcm.length) throw new Error('Batas dialog belum sesuai audio tersimpan.');
+      if (offset !== paced.pcm.length) throw new Error('Batas dialog belum sesuai audio tersimpan.');
       const narratorScene = block.scenes.findIndex(scene => scene.lines.every(line => line.speakerId === 'narrator'));
       await commit(ref, leaseId, { ...(referenceScene === undefined && narratorScene >= 0 ? { narratorReferenceScene: firstScene + narratorScene } : {}), audioIndex: job.audioIndex + 1, sceneFrames: [...(job.sceneFrames ?? []).slice(0, firstScene), ...frames] }, tx => frames.forEach((frameCount, i) => tx.set(sceneRef(ref, firstScene + i), { frames: frameCount, ...(job.narrativeComposition ? { caption: block.scenes[i].narration } : {}) }))); return;
     }

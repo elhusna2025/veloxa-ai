@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import type { Readable, Writable } from 'node:stream';
 import sharp, { type OverlayOptions } from 'sharp';
 import ffmpeg from '@ffmpeg-installer/ffmpeg';
+import { youtubeSpeechBounds } from './youtube-speech-pacing';
 import { fitVideoText } from './content-compositor';
 import { productionResources, type YouTubeScene, type YouTubeProductionSettings } from '../youtube-production';
 import type { BrandProfile } from '../veloxa-types';
@@ -158,7 +159,7 @@ export async function normalizeYouTubeSceneAudio(pcm: Buffer, frames: number) {
 }
 
 /** Allocate short readable phrases within the measured utterance. */
-export function sceneSubtitles(text: string, frames: number, width: number, height: number) {
+export function sceneSubtitles(text: string, frames: number, width: number, height: number, speech?: ReturnType<typeof youtubeSpeechBounds>) {
   // Strip ASS overrides and hard-break escapes from incoming script text.
   const words = text.replace(/[{}\\]/gu, '').trim().split(/\s+/u).filter(Boolean);
   const groups: string[] = [];
@@ -173,11 +174,13 @@ export function sceneSubtitles(text: string, frames: number, width: number, heig
   if (phrase) groups.push(phrase);
   const total = groups.reduce((sum, group) => sum + group.length, 0);
   const stamp = (cs: number) => `0:${String(Math.floor(cs / 6000)).padStart(2, '0')}:${String(Math.floor(cs / 100) % 60).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+  const onset = speech ? speech.first / 240 : 0; // centiseconds at 24 kHz
+  const span = (speech ? speech.last / 240 : frames * 4) - onset;
   let consumed = 0;
   const events = groups.map(group => {
-    const start = Math.round(frames * 4 * consumed / total);
+    const start = Math.round(onset + span * consumed / total);
     consumed += group.length;
-    const end = Math.round(frames * 4 * consumed / total);
+    const end = Math.round(onset + span * consumed / total);
     return `Dialogue: 0,${stamp(start)},${stamp(end)},Speech,,0,0,0,,${group}`;
   });
   return [
@@ -208,7 +211,7 @@ export async function renderYouTubeScene(input: {
     else filters.push('[composed]null[video]');
     if (input.caption) {
       await Promise.all([
-        writeFile(path.join(dir, 'speech.ass'), sceneSubtitles(input.caption, input.frames, width, height)),
+        writeFile(path.join(dir, 'speech.ass'), sceneSubtitles(input.caption, input.frames, width, height, youtubeSpeechBounds(audio))),
         copyFile(path.join(process.cwd(), 'src/lib/server/fonts/inter/Inter-ExtraBold.ttf'), path.join(dir, 'voice.ttf')),
       ]);
       filters.push('[video]split[clean][speech]', `[clean]select=eq(n\\,${input.frames - 1})[last]`, '[speech]ass=speech.ass:fontsdir=.[captioned]');

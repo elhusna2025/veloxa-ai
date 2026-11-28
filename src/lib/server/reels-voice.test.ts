@@ -347,6 +347,8 @@ test('YouTube keeps one confirmed narrator across scene turns and seeds each sub
   const recording = generateYouTubeNarration(sceneLines, { voice: 'ash', createConnection, referencePcm: Buffer.alloc(48000) });
   connection.emit('session.created', {});
   assert.equal(connection.sent[0].type, 'session.update');
+  const session = connection.sent[0].session as { instructions: string };
+  assert.ok(sceneLines.every(line => session.instructions.includes(line)));
   connection.emit('session.updated', { session: { audio: { output: { voice: 'ash' } } } });
   for (const line of sceneLines) {
     const item = connection.sent.at(-2)?.item as { content: { text: string }[] };
