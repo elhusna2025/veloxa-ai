@@ -9,10 +9,10 @@ import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import { effectiveWorkspacePlan } from '../subscription';
 import { reserveGenerationAttempt } from './generation-policy';
 import { ApiError, errorResponse, noStoreJson, readJson } from './http';
-import { youtubeProductionSettings, youtubeVoiceSchema, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
+import { youtubeProductionSettings, youtubeVoiceSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
 import type { BrandProfile } from '../veloxa-types';
 import { planYouTubeVideo, writeYouTubeBlock, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
-import { generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
+import { generateYouTubeNarration, generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
 import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, normalizeYouTubeSceneAudio, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
 
 // Development end-to-end runs use an isolated queue so a deployed older worker
@@ -25,7 +25,7 @@ type Scope = z.infer<typeof scopeSchema>;
 type Ref = FirebaseFirestore.DocumentReference;
 type Job = Omit<YouTubeProduction, 'blocks'> & { ownerUid: string; workspaceId: string; businessId: string; brand: BrandProfile;
   models: { scriptModel: string; imageModel: string; voiceModel: string }; fingerprint: string; scriptIndex: number;
-  portraitIndex: number; imageIndex: number; audioIndex: number; renderIndex: number; totalFrames: number; sceneCounts?: number[];
+  portraitIndex: number; imageIndex: number; audioIndex: number; renderIndex: number; totalFrames: number; sceneCounts?: number[]; narratorReferenceScene?: number; narrativeComposition?: boolean;
   nextRunAt: number; attempts: number; lease: { id: string; until: number } | null; sourceGeneration?: string; characterVersions?: Record<string, number>;
   lastFailure?: { phase: string; code: string; status: number | null; at: number; unit?: number; layoutVersion?: number } };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -106,7 +106,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
         }
         const now = Date.now();
         const job: Job = { id: input.id, workspaceId: context.workspaceId, businessId: context.businessId, ownerUid: context.actor.user.uid,
-          brand: business.brand, settings: input.settings, models, fingerprint, revision: 1, state: 'planning',
+          brand: business.brand, settings: input.settings, models, narrativeComposition: true, fingerprint, revision: 1, state: 'planning',
           scriptIndex: 0, portraitIndex: 0, imageIndex: 0, audioIndex: 0, renderIndex: 0, totalFrames: 0, sceneCounts: [],
           completedScenes: 0, createdAt: now, updatedAt: now, nextRunAt: now, attempts: 0, lease: null };
         tx.create(ref, { ...job, listKey: `${digest([context.workspaceId, context.businessId, context.actor.user.uid])}:${String(9_999_999_999_999 - now).padStart(13, '0')}:${input.id}` }); tx.set(guard, { jobKey: ref.id });
@@ -247,16 +247,17 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const portraits = await Promise.all(scene.characterIds.map(async id => ({ id, bytes: await bytes(ref, characterMediaName(job, id, 'jpg')) })));
       const previousLocation = job.imageIndex ? youtubeSceneLocation(job.sceneCounts, job.imageIndex - 1) : null;
       const previousBlock = previousLocation && previousLocation.blockIndex !== location.blockIndex ? (await blockRef(ref, previousLocation.blockIndex).get()).data() as YouTubeScriptBlock : block;
-      const previous = previousLocation ? { photo: await bytes(ref, `${job.imageIndex - 1}-photo.jpg`), narration: previousBlock.scenes[previousLocation.sceneIndex].narration } : undefined;
+      const priorScene = previousLocation ? previousBlock.scenes[previousLocation.sceneIndex] : undefined;
+      const previous = priorScene ? { visual: priorScene.visual, narration: priorScene.narration } : undefined;
       const candidateName = `${job.imageIndex}-candidate.jpg`;
       const hasCandidate = (await object(ref, candidateName).exists())[0];
       const rejectedCandidate = job.lastFailure?.code === 'photo_layout' && job.lastFailure.unit === job.imageIndex && job.lastFailure.layoutVersion === YOUTUBE_LAYOUT_VERSION;
       const photo = hasCandidate && !rejectedCandidate ? await bytes(ref, candidateName)
-        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous, rejectedCandidate);
+        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous, rejectedCandidate, job.narrativeComposition, job.imageIndex);
       // Save the generated candidate before layout checks, so diagnostics and repair
       // can reuse it instead of paying for another image after an interrupted write.
       if (!hasCandidate || rejectedCandidate) await save(ref, candidateName, photo, 'image/jpeg');
-      const frame = await composeYouTubeFrame(photo, scene, job.settings, job.brand, job.imageIndex);
+      const frame = await composeYouTubeFrame(photo, scene, job.settings, job.brand, job.imageIndex, job.narrativeComposition);
       await Promise.all([save(ref, `${job.imageIndex}-photo.jpg`, frame.photo, 'image/jpeg'), save(ref, `${job.imageIndex}-overlay.png`, frame.overlay, 'image/png'), save(ref, `${job.imageIndex}-preview.jpg`, frame.image, 'image/jpeg')]);
       await commit(ref, leaseId, { imageIndex: job.imageIndex + 1 }); return;
     }
@@ -264,9 +265,18 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const block = (await blockRef(ref, job.audioIndex).get()).data() as YouTubeScriptBlock;
       const scenes = block.scenes.map(scene => ({ lines: scene.lines.map(line => {
         const character = job.settings.characters.find(actor => actor.id === line.speakerId);
-        return { text: line.text, voice: character?.voice ?? job.settings.voice, delivery: character ? `${character.name}. ${character.delivery}` : job.settings.delivery };
+        return { text: line.text, voice: character?.voice ?? job.settings.voice, delivery: character ? `${character.name}. ${character.delivery}` : youtubeNarratorDelivery(job.settings) };
       }) }));
-      const voice = await generateDialogueVoiceover(scenes, { model: job.models.voiceModel, timeoutMs: 150_000 });
+      const voiceOptions = { model: job.models.voiceModel, timeoutMs: 150_000 };
+      const hasCharacterDialogue = block.scenes.some(scene => scene.lines.some(line => line.speakerId !== 'narrator'));
+      // Older narrator-only jobs already have a usable reference in their opening scene.
+      const referenceScene = job.narratorReferenceScene ?? (job.audioIndex > 0 && !job.settings.characters.length ? 0 : undefined);
+      const voice = hasCharacterDialogue
+        ? await generateDialogueVoiceover(scenes, voiceOptions)
+        : await generateYouTubeNarration(block.scenes.map(scene => scene.narration), {
+          ...voiceOptions, voice: job.settings.voice, delivery: youtubeNarratorDelivery(job.settings),
+          referencePcm: referenceScene === undefined ? undefined : await bytes(ref, `${referenceScene}.pcm`),
+        });
       if (!voice.sceneDurations || voice.sceneDurations.length !== block.scenes.length || voice.sceneDurations.reduce((a, b) => a + b, 0) < 44 || voice.sceneDurations.reduce((a, b) => a + b, 0) > 79) throw new Error('Suara belum sesuai durasi naskah.');
       const frames = sceneFrameCounts(voice.sceneDurations, job.settings.kind === 'short' ? 59.8 : 60);
       let offset = 0;
@@ -276,13 +286,14 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
         await save(ref, `${firstScene + i}.pcm`, voice.pcm.subarray(offset, offset + size), 'application/octet-stream'); offset += size;
       }
       if (offset !== voice.pcm.length) throw new Error('Batas dialog belum sesuai audio tersimpan.');
-      await commit(ref, leaseId, { audioIndex: job.audioIndex + 1, sceneFrames: [...(job.sceneFrames ?? []).slice(0, firstScene), ...frames] }, tx => frames.forEach((frameCount, i) => tx.set(sceneRef(ref, firstScene + i), { frames: frameCount }))); return;
+      const narratorScene = block.scenes.findIndex(scene => scene.lines.every(line => line.speakerId === 'narrator'));
+      await commit(ref, leaseId, { ...(referenceScene === undefined && narratorScene >= 0 ? { narratorReferenceScene: firstScene + narratorScene } : {}), audioIndex: job.audioIndex + 1, sceneFrames: [...(job.sceneFrames ?? []).slice(0, firstScene), ...frames] }, tx => frames.forEach((frameCount, i) => tx.set(sceneRef(ref, firstScene + i), { frames: frameCount, ...(job.narrativeComposition ? { caption: block.scenes[i].narration } : {}) }))); return;
     }
     if (job.renderIndex < count) {
       const index = job.renderIndex;
       const [photo, overlay, pcm, previousFrame, scene] = await Promise.all([bytes(ref, `${index}-photo.jpg`), bytes(ref, `${index}-overlay.png`), bytes(ref, `${index}.pcm`), index ? bytes(ref, `${index - 1}-last.jpg`) : undefined, sceneRef(ref, index).get()]);
       const frames = Number(scene.data()?.frames);
-      const result = await renderYouTubeScene({ photo, overlay, pcm, previousFrame, frames, startFrame: job.totalFrames, index, kind: job.settings.kind });
+      const result = await renderYouTubeScene({ photo, overlay, pcm, previousFrame, frames, caption: scene.data()?.caption, startFrame: job.totalFrames, index, kind: job.settings.kind });
       await Promise.all([save(ref, `${index}.ts`, result.ts, 'video/mp2t'), save(ref, `${index}-render.pcm`, result.audio, 'application/octet-stream'), save(ref, `${index}-last.jpg`, result.last, 'image/jpeg')]);
       await commit(ref, leaseId, { renderIndex: index + 1, totalFrames: job.totalFrames + frames }); return;
     }

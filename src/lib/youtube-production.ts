@@ -20,6 +20,11 @@ export const youtubeProductionSettings = z.object({
 }).strict().refine(value => value.kind !== 'short' || value.minutes === 1, 'Shorts memakai durasi satu menit.');
 
 export type YouTubeProductionSettings = z.infer<typeof youtubeProductionSettings>;
+export function youtubeNarratorDelivery(settings: Pick<YouTubeProductionSettings, 'topic' | 'delivery'>) {
+  const brief = settings.topic.match(/^\s*(?:[-*]\s*)?(?:voice[ -]?over|suara narator|narrator voice)\s*:\s*([^\n]{1,300})/im)?.[1];
+  return [settings.delivery, brief].filter(Boolean).join(' ');
+}
+
 export const youtubeSceneSchema = z.object({
   title: z.string().trim().min(1).max(48),
   supporting: z.string().trim().min(1).max(110),

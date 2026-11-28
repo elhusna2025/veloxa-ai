@@ -49,6 +49,7 @@ interface VoiceDependencies {
   sceneLines?: readonly string[];
   voice?: 'marin' | 'cedar' | 'coral' | 'ash' | 'sage' | 'shimmer' | 'echo' | 'alloy' | 'ballad' | 'verse';
   delivery?: string;
+  referencePcm?: Buffer;
 }
 
 interface Voiceover {
@@ -294,20 +295,33 @@ export async function generateDialogueVoiceover(
   } finally { clearTimeout(timer); controller.abort(); }
 }
 
+/** Keep the narrator and preceding delivery in one voice-locked session per chapter. */
+export async function generateYouTubeNarration(lines: string[], deps: VoiceDependencies) {
+  if (!isValidScript(lines.join(' ')) || lines.some(line => !line.trim()) || !deps.voice) throw INVALID_SCRIPT_ERROR;
+  const instructions = `${CONVERSATIONAL_VOICE} Satu narator untuk seluruh dokumentasi atau cerita ini. Pertahankan warna suara, register, tempo alami dan aksen yang sama dari awal sampai akhir, termasuk ketika mengutip. Jangan memainkan pemeran lain. Pembawaan narator: ${deps.delivery ?? ''}. Jika ada contoh audio dari narator sintetis yang sama, gunakan sebagai acuan warna suara. Ucapkan hanya teks terakhir yang diberikan dan lanjutkan pembacaan secara alami.`;
+  const take = await requestVoice(lines, instructions, deps);
+  applyNarrationGain(take.pcm);
+  return take;
+}
+
 /** Short, owner-requested cast audition using the same voice/model as the final dialogue. */
 export async function generateCharacterVoiceSample(name: string, voice: NonNullable<VoiceDependencies['voice']>, delivery: string, model?: string, deps: Pick<VoiceDependencies, 'createConnection'> = {}): Promise<Buffer> {
   const script = `Halo, saya ${name.slice(0, 60)}. Saya akan menemani percakapan ini. Mari kita mulai dengan satu contoh yang mudah dipahami.`;
   const spoken = await requestVoice(script, `${CONVERSATIONAL_VOICE} Pembawaan karakter: ${delivery.slice(0, 500)}. Jangan menambah kata.`, { ...deps, voice, model, timeoutMs: 40_000 });
   if (!matchesSpokenScript(spokenWords(script), spoken.transcript)) throw SAFE_VOICE_ERROR;
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0); header.writeUInt32LE(36 + spoken.pcm.length, 4); header.write('WAVEfmt ', 8);
-  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(SAMPLE_RATE, 24); header.writeUInt32LE(SAMPLE_RATE * 2, 28);
-  header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write('data', 36); header.writeUInt32LE(spoken.pcm.length, 40);
-  return Buffer.concat([header, spoken.pcm]);
+  return pcmWav(spoken.pcm);
 }
 
-async function requestVoice(script: string, instructions: string, deps: VoiceDependencies, signal?: AbortSignal): Promise<Voiceover> {
+function pcmWav(pcm: Buffer) {
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + pcm.length, 4); header.write('WAVEfmt ', 8);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(SAMPLE_RATE, 24); header.writeUInt32LE(SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write('data', 36); header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+async function requestVoice(script: string | string[], instructions: string, deps: VoiceDependencies, signal?: AbortSignal): Promise<Voiceover> {
   if (signal?.aborted) throw SAFE_VOICE_ERROR;
   const model = deps.model ?? REELS_VOICE_MODEL;
   let connection: VoiceConnection;
@@ -345,6 +359,16 @@ async function requestVoice(script: string, instructions: string, deps: VoiceDep
       reject(SAFE_VOICE_ERROR);
     };
 
+    const takes: Buffer[] = [];
+    let completedBytes = 0;
+    let corrected = false;
+    const output = { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, voice: deps.voice ?? 'marin' };
+    const nextLine = () => {
+      if (!Array.isArray(script)) return;
+      connection.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user',
+        content: [{ type: 'input_text', text: script[takes.length] }] } });
+      connection.send({ type: 'response.create', response: { output_modalities: ['audio'], instructions } });
+    };
     const succeed = () => {
       if (settled) return;
       const pcm = Buffer.concat(audioChunks, audioBytes);
@@ -352,9 +376,25 @@ async function requestVoice(script: string, instructions: string, deps: VoiceDep
         fail();
         return;
       }
+      if (Array.isArray(script)) {
+        if (matchesSpokenScript(spokenWords(script[takes.length]), transcript)) {
+          takes.push(pcm);
+          completedBytes += pcm.length;
+          corrected = false;
+        } else if (corrected) { fail(); return; }
+        else corrected = true;
+        if (takes.length < script.length) {
+          audioChunks.length = 0; audioBytes = 0; transcript = '';
+          try { nextLine(); } catch { fail(); }
+          return;
+        }
+      }
       settled = true;
       cleanup();
-      resolve({ pcm, sampleRate: SAMPLE_RATE, transcript, model });
+      if (Array.isArray(script)) {
+        resolve({ pcm: Buffer.concat(takes), sampleRate: SAMPLE_RATE, transcript: script.join(' '), model,
+          sceneDurations: takes.map(take => take.length / (SAMPLE_RATE * BYTES_PER_SAMPLE)) });
+      } else resolve({ pcm, sampleRate: SAMPLE_RATE, transcript, model });
     };
 
     try {
@@ -363,6 +403,10 @@ async function requestVoice(script: string, instructions: string, deps: VoiceDep
         if (settled || responseStarted) return;
         responseStarted = true;
         try {
+          if (Array.isArray(script)) {
+            connection.send({ type: 'session.update', session: { type: 'realtime', audio: { output }, instructions } });
+            return;
+          }
           connection.send({
             type: 'response.create',
             response: {
@@ -370,7 +414,7 @@ async function requestVoice(script: string, instructions: string, deps: VoiceDep
               output_modalities: ['audio'],
               instructions,
               input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: script }] }],
-              audio: { output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, voice: deps.voice ?? 'marin' } },
+              audio: { output },
             },
           });
         } catch {
@@ -378,10 +422,26 @@ async function requestVoice(script: string, instructions: string, deps: VoiceDep
         }
       });
 
+      let voiceConfirmed = false;
+      connection.on('session.updated', event => {
+        if (settled || !Array.isArray(script) || voiceConfirmed) return;
+        const session = isRecord(event) && event.session;
+        const audio = isRecord(session) && session.audio;
+        const effective = isRecord(audio) && audio.output;
+        if (!isRecord(effective) || effective.voice !== deps.voice) { fail(); return; }
+        voiceConfirmed = true;
+        try {
+          if (deps.referencePcm?.length) connection.send({ type: 'conversation.item.create', item: {
+            type: 'message', role: 'user', content: [{ type: 'input_audio', audio: deps.referencePcm.subarray(0, 8 * SAMPLE_RATE * BYTES_PER_SAMPLE).toString('base64') }],
+          } });
+          nextLine();
+        } catch { fail(); }
+      });
+
       connection.on('response.output_audio.delta', (event) => {
         if (settled || !isRecord(event)) return;
         const chunk = safeBase64Buffer(event.delta);
-        if (!chunk || chunk.length === 0 || audioBytes + chunk.length > MAX_AUDIO_BYTES) {
+        if (!chunk || chunk.length === 0 || audioBytes + chunk.length + completedBytes > MAX_AUDIO_BYTES) {
           fail();
           return;
         }

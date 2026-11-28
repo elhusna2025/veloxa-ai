@@ -125,3 +125,11 @@ test('reviewing a variable scene script updates its manifest before any paid med
   saved = (await f.jobRef().get()).data()!;
   assert.deepEqual(saved.sceneCounts, [9]); assert.equal(saved.imageIndex, 0); assert.equal(saved.audioIndex, 0);
 });
+
+test('new Shorts and long videos both opt into full-frame narrative production for unrelated topics', async () => {
+  for (const [kind, minutes, topic] of [['short', 1, 'Membuat kopi susu di kafe'], ['video', 15, 'Cerita petugas panggung saat konser']] as const) {
+    const f = fixture();
+    assert.equal((await f.create({ kind, minutes, topic })).status, 200);
+    assert.equal((await f.jobRef().get()).data()?.narrativeComposition, true);
+  }
+});

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import ffprobe from 'ffprobe-static';
-import { composeYouTubeFrame, normalizeYouTubeSceneAudio, remuxYouTubeVideo, renderYouTubeScene, sceneFrameCounts } from './youtube-production-renderer';
+import { sceneSubtitles, composeYouTubeFrame, normalizeYouTubeSceneAudio, remuxYouTubeVideo, renderYouTubeScene, sceneFrameCounts } from './youtube-production-renderer';
 import { blankBusinessProfile } from '../business-context';
 import { youtubeProductionSettings, type YouTubeScene } from '../youtube-production';
 import { productionRange } from './youtube-production-preview';
@@ -101,4 +101,20 @@ test('lossless scene audio has exactly the samples used by the picture timeline'
   const audio = await normalizeYouTubeSceneAudio(pcm, 75);
   assert.equal(audio.length, 75 * 960 * 2);
   assert.deepEqual(audio, pcm);
+});
+
+test('new landscape and portrait story layouts render narration captions over the full image', async () => {
+  const brand = blankBusinessProfile('ws', 'primary', 'Atelier');
+  for (const kind of ['video', 'short'] as const) {
+    const settings = youtubeProductionSettings.parse({ kind, minutes: 1, topic: 'Suasana di bengkel', voice: 'ash' });
+    const photo = await sharp({ create: { width: 1280, height: 720, channels: 3, background: '#456789' } }).jpeg().toBuffer();
+    const frame = await composeYouTubeFrame(photo, scene, settings, brand, 0, true);
+    const clip = await renderYouTubeScene({ photo: frame.photo, overlay: frame.overlay, frames: 25, startFrame: 1000, pcm: Buffer.alloc(48000), index: 1, kind, caption: scene.narration });
+    assert.ok(clip.ts.length > 1000);
+    assert.equal(clip.audio.length, 48000);
+    assert.equal((await sharp(clip.last).metadata()).width, kind === 'short' ? 720 : 1280);
+  }
+  const subs = sceneSubtitles('Satu gambar, lalu satu kalimat yang mengikuti suara.', 150, 1280, 720);
+  assert.match(subs, /Dialogue: 0,0:00:00.00,/);
+  assert.match(subs, /,0:00:06.00,Speech/);
 });

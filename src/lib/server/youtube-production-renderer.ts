@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -27,8 +27,13 @@ export function sceneFrameCounts(durations: number[], targetSeconds: number) {
   });
 }
 /** Reject busy/low-contrast photo space; never cover it with a dark card or wash. */
-export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile, sceneIndex = 0) {
+export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, settings: YouTubeProductionSettings, brand: BrandProfile, sceneIndex = 0, narrativeComposition = false) {
   const { width, height } = productionResources(settings);
+  if (narrativeComposition) {
+    const image = await sharp(photo).resize(width, height).jpeg({ quality: 92 }).toBuffer();
+    const overlay = await sharp({ create: { width, height, channels: 4, background: '#00000000' } }).png().toBuffer();
+    return { photo: image, overlay, image };
+  }
   const vertical = settings.kind === 'short';
   const x = vertical ? 50 : 70, y = vertical ? 230 : 110, copyWidth = vertical ? 480 : 540;
   const raw = await sharp(photo).resize(width, height).toColourspace('srgb').removeAlpha().raw().toBuffer();
@@ -152,10 +157,41 @@ export async function normalizeYouTubeSceneAudio(pcm: Buffer, frames: number) {
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
+/** Allocate short readable phrases within the measured utterance. */
+export function sceneSubtitles(text: string, frames: number, width: number, height: number) {
+  // Strip ASS overrides and hard-break escapes from incoming script text.
+  const words = text.replace(/[{}\\]/gu, '').trim().split(/\s+/u).filter(Boolean);
+  const groups: string[] = [];
+  let phrase = '';
+  const max = width < height ? 22 : 35;
+  for (const word of words) {
+    if (phrase && (phrase.length + word.length + 1 > max || /[.,!?…]$/u.test(phrase))) {
+      groups.push(phrase); phrase = '';
+    }
+    phrase = phrase ? phrase + ' ' + word : word;
+  }
+  if (phrase) groups.push(phrase);
+  const total = groups.reduce((sum, group) => sum + group.length, 0);
+  const stamp = (cs: number) => `0:${String(Math.floor(cs / 6000)).padStart(2, '0')}:${String(Math.floor(cs / 100) % 60).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+  let consumed = 0;
+  const events = groups.map(group => {
+    const start = Math.round(frames * 4 * consumed / total);
+    consumed += group.length;
+    const end = Math.round(frames * 4 * consumed / total);
+    return `Dialogue: 0,${stamp(start)},${stamp(end)},Speech,,0,0,0,,${group}`;
+  });
+  return [
+    '[Script Info]', 'ScriptType: v4.00+', 'ScaledBorderAndShadow: yes', `PlayResX: ${width}`, `PlayResY: ${height}`,
+    '[V4+ Styles]', 'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    `Style: Speech,Inter ExtraBold,${width < height ? 47 : 51},&H00F6FAFF,&H00F6FAFF,&H00252321,&H60000000,-1,0,0,0,100,100,0,0,1,3,1,2,50,50,${width < height ? 235 : 58},1`,
+    '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text', ...events, '',
+  ].join('\n');
+}
+
 /** Video and lossless timed audio are checkpointed separately. AAC is encoded once at final merge. */
 export async function renderYouTubeScene(input: {
   photo: Buffer; overlay: Buffer; pcm: Buffer; frames: number; startFrame: number;
-  index: number; kind: 'short' | 'video'; previousFrame?: Buffer;
+  index: number; kind: 'short' | 'video'; previousFrame?: Buffer; caption?: string;
 }) {
   if (!Number.isSafeInteger(input.frames) || input.frames < 1 || input.frames > 25 * 70 || !Number.isSafeInteger(input.startFrame) || input.startFrame < 0) throw new Error('Media adegan tidak valid.');
   const audio = await normalizeYouTubeSceneAudio(input.pcm, input.frames);
@@ -170,13 +206,21 @@ export async function renderYouTubeScene(input: {
     const filters = [`[0:v]scale=${width * 2}:${height * 2},zoompan=z='${zoom}':x='(iw-iw/zoom)*(${horizontal})':y='(ih-ih/zoom)*.5':d=${input.frames}:s=${width}x${height}:fps=25,setsar=1[photo]`, '[photo][1:v]overlay=shortest=0:format=yuv420[composed]'];
     if (input.previousFrame) filters.push(`[2:v]loop=loop=-1:size=1:start=0,setpts=N/(25*TB)[old]`, '[composed]format=yuva420p,fade=t=in:st=0:d=0.32:alpha=1[incoming]', '[old][incoming]overlay=shortest=1:format=yuv420[video]');
     else filters.push('[composed]null[video]');
+    if (input.caption) {
+      await Promise.all([
+        writeFile(path.join(dir, 'speech.ass'), sceneSubtitles(input.caption, input.frames, width, height)),
+        copyFile(path.join(process.cwd(), 'src/lib/server/fonts/inter/Inter-ExtraBold.ttf'), path.join(dir, 'voice.ttf')),
+      ]);
+      filters.push('[video]split[clean][speech]', `[clean]select=eq(n\\,${input.frames - 1})[last]`, '[speech]ass=speech.ass:fontsdir=.[captioned]');
+    }
     const duration = input.frames / 25;
     await exec(ffmpeg.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-filter_complex_threads', '1',
       '-i', path.join(dir, 'photo.jpg'), '-i', path.join(dir, 'overlay.png'),
-      ...(input.previousFrame ? ['-i', path.join(dir, 'previous.jpg')] : []), '-filter_complex', filters.join(';'), '-map', '[video]',
+      ...(input.previousFrame ? ['-i', path.join(dir, 'previous.jpg')] : []), '-filter_complex', filters.join(';'), '-map', input.caption ? '[captioned]' : '[video]',
       '-frames:v', String(input.frames), '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-threads', '2', '-r', '25', '-g', '50', '-bf', '0',
-      '-output_ts_offset', String(input.startFrame / 25), '-muxdelay', '0', '-mpegts_copyts', '1', '-f', 'mpegts', path.join(dir, 'scene.ts')], { timeout: 80_000, maxBuffer: 128 * 1024 });
-    await exec(ffmpeg.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', path.join(dir, 'scene.ts'), '-vf', `select=eq(n\\,${input.frames - 1})`, '-vsync', '0', '-frames:v', '1', path.join(dir, 'last.jpg')], { timeout: 15_000, maxBuffer: 128 * 1024 });
+      '-output_ts_offset', String(input.startFrame / 25), '-muxdelay', '0', '-mpegts_copyts', '1', '-f', 'mpegts', path.join(dir, 'scene.ts'),
+      ...(input.caption ? ['-map', '[last]', '-frames:v', '1', path.join(dir, 'last.jpg')] : [])], { cwd: dir, timeout: 80_000, maxBuffer: 128 * 1024 });
+    if (!input.caption) await exec(ffmpeg.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', path.join(dir, 'scene.ts'), '-vf', `select=eq(n\\,${input.frames - 1})`, '-vsync', '0', '-frames:v', '1', path.join(dir, 'last.jpg')], { timeout: 15_000, maxBuffer: 128 * 1024 });
     return { ts: await readFile(path.join(dir, 'scene.ts')), audio, last: await readFile(path.join(dir, 'last.jpg')), durationSeconds: duration };
   } finally { await rm(dir, { recursive: true, force: true }); }
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import { generateReelsVoiceover, generateDialogueVoiceover, generateCharacterVoiceSample, REELS_VOICE_MODEL } from './reels-voice';
+import { generateYouTubeNarration, generateReelsVoiceover, generateDialogueVoiceover, generateCharacterVoiceSample, REELS_VOICE_MODEL } from './reels-voice';
 import { REELS_SPEC } from '../reels-spec';
 
 const script = 'Pernah penasaran kenapa langkah kecil bisa membuat hari terasa lebih ringan? Mulai saja dengan memilih satu kebiasaan sederhana yang cocok untukmu. Tak perlu langsung sempurna, beri dirimu waktu untuk mencoba dan menemukan ritme yang nyaman. Pelan-pelan, perubahan baik bisa tumbuh. Semoga tips ini membantu, ya.';
@@ -340,4 +340,28 @@ test('menolak PCM ganjil, timeout, dan koneksi yang ditutup sebelum respons sele
     await assert.rejects(result, { code: 'reels_voice_unavailable' });
     assert.equal(connection.closeCount, 1);
   }
+});
+
+test('YouTube keeps one confirmed narrator across scene turns and seeds each subsequent chapter once', async () => {
+  const { connection, createConnection } = mock();
+  const recording = generateYouTubeNarration(sceneLines, { voice: 'ash', createConnection, referencePcm: Buffer.alloc(48000) });
+  connection.emit('session.created', {});
+  assert.equal(connection.sent[0].type, 'session.update');
+  connection.emit('session.updated', { session: { audio: { output: { voice: 'ash' } } } });
+  for (const line of sceneLines) {
+    const item = connection.sent.at(-2)?.item as { content: { text: string }[] };
+    assert.equal(item.content[0].text, line);
+    connection.emit('response.output_audio.delta', makeAudioEvent(Buffer.alloc(48000)));
+    connection.emit('response.output_audio_transcript.done', { transcript: line });
+    connection.emit('response.done', { response: { status: 'completed' } });
+  }
+  assert.deepEqual((await recording).sceneDurations, [1, 1, 1, 1]);
+  assert.equal(connection.closeCount, 1);
+  assert.equal(connection.sent.filter(e => JSON.stringify(e).includes('input_audio')).length, 1);
+  const mismatch = mock();
+  const rejected = generateYouTubeNarration(sceneLines, { voice: 'ash', createConnection: mismatch.createConnection });
+  mismatch.connection.emit('session.created', {});
+  mismatch.connection.emit('session.updated', { session: { audio: { output: { voice: 'marin' } } } });
+  await assert.rejects(rejected);
+  assert.equal(mismatch.connection.sent.length, 1);
 });
