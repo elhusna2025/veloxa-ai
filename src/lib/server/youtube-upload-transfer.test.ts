@@ -22,3 +22,16 @@ test('a dispatched final PUT retains its receipt body after the worker actually 
   assert.equal(worker.signal.aborted, true); assert.equal(requestAborted, false);
   assert.equal(result.kind, 'complete'); if (result.kind === 'complete') assert.equal(result.video.id, video.id);
 });
+
+test('sends a selected JPEG to the existing video thumbnail endpoint', async () => {
+  const image = Buffer.from([255, 216, 255, 217]);
+  const provider = youtubeUploadProvider(async (address, options) => {
+    const url = new URL(String(address));
+    assert.equal(url.pathname, '/upload/youtube/v3/thumbnails/set');
+    assert.equal(url.searchParams.get('videoId'), video.id);
+    assert.equal(new Headers(options?.headers).get('Content-Type'), 'image/jpeg');
+    assert.deepEqual(Buffer.from(options?.body as Uint8Array), image);
+    return Response.json({ items: [{ default: { width: 1280 } }] });
+  });
+  await provider.setThumbnail('test', video.id, image, new AbortController().signal);
+});

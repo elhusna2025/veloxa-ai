@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { VeloxaSelect } from './VeloxaSelect';
+import { VeloxaYouTubeThumbnails, type ThumbnailAction } from './VeloxaYouTubeThumbnails';
 import { VeloxaYouTubePublish } from './VeloxaYouTubePublish';
 import { VeloxaYouTubeUsage } from './VeloxaYouTubeUsage';
 import { VeloxaYouTubeProgress } from './VeloxaYouTubeProgress';
@@ -39,19 +40,20 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
   const [revisionError, setRevisionError] = useState('');
   const [actorEdit, setActorEdit] = useState<YouTubeProductionSettings['characters'][number] | null>(null);
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [loading, setLoading] = useState(true), [viewer, setViewer] = useState('');
+  const [thumbnailDirty, setThumbnailDirty] = useState(false);
   const [publishDirty, setPublishDirty] = useState(false);
   const current = productions.find(item => item.id === selected);
   const currentId = current?.id, currentState = current?.state;
   const pending = useRef<{ id: string; body: string } | null>(null);
   const newVideoHeading = useRef<HTMLHeadingElement>(null), focusNewVideo = useRef(false);
-  const navigationLocked = Boolean(editing) || Boolean(actorEdit) || Boolean(busy) || publishDirty;
+  const navigationLocked = Boolean(editing) || Boolean(actorEdit) || Boolean(busy) || thumbnailDirty || publishDirty;
   const { onBusyChange, onDirtyChange } = props;
   const apply = useCallback((item: YouTubeProduction) => setProductions(items => {
     if ((items.find(saved => saved.id === item.id)?.revision ?? 0) > item.revision) return items;
     return [item, ...items.filter(saved => saved.id !== item.id)].sort((a, b) => b.createdAt - a.createdAt);
   }), []);
   useEffect(() => { onBusyChange(Boolean(busy)); return () => onBusyChange(false); }, [busy, onBusyChange]);
-  const dirty = Boolean(editing) || Boolean(actorEdit) || publishDirty || !selected && Boolean(scriptText) || !selected && JSON.stringify(settings) !== JSON.stringify({ ...defaults, voice: productions[0]?.settings.voice ?? defaults.voice });
+  const dirty = Boolean(editing) || Boolean(actorEdit) || thumbnailDirty || publishDirty || !selected && Boolean(scriptText) || !selected && JSON.stringify(settings) !== JSON.stringify({ ...defaults, voice: productions[0]?.settings.voice ?? defaults.voice });
   useEffect(() => { onDirtyChange(dirty); return () => onDirtyChange(false); }, [dirty, onDirtyChange]);
   useEffect(() => {
     if (loading || selected || !focusNewVideo.current) return;
@@ -89,13 +91,25 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
     return () => { controller.abort(); clearInterval(timer); };
   }, [currentId, currentState, endpoint, apply]);
   useEffect(() => {
-    setViewer(''); if (!currentId || !currentState || !['character_review', 'producing', 'ready', 'attention', 'cancelled'].includes(currentState)) return;
+    setViewer(''); if (!currentId || !currentState || !['characters', 'character_review', 'producing', 'ready', 'attention', 'cancelled'].includes(currentState)) return;
     const controller = new AbortController();
     const refresh = () => veloxaApi(endpoint(currentId, true), { method: 'POST', signal: controller.signal, redirect: 'error' }).then(() => { if (!controller.signal.aborted) setViewer(endpoint(currentId, true)); }).catch(failure => { if (!controller.signal.aborted) setError(failure.message); });
     void refresh(); const timer = setInterval(() => { void refresh(); }, 20 * 60_000);
     return () => { controller.abort(); clearInterval(timer); };
   }, [currentId, currentState, endpoint]);
   async function run(label: string, fn: () => Promise<void>) { if (busy) return; setBusy(label); setError(''); try { await fn(); } catch (failure) { setError(failure instanceof Error ? failure.message : 'Permintaan belum selesai.'); } finally { setBusy(''); } }
+  async function submitThumbnails(actions: ThumbnailAction[]) {
+    if (!current || busy) return false;
+    let saved = false;
+    await run(actions[0].action === 'thumbnail' ? 'Menyiapkan thumbnail…' : 'Menyimpan thumbnail…', async () => {
+      for (const action of actions) {
+        const result = await veloxaApi<{ production: YouTubeProduction }>(endpoint(current.id), { method: 'POST', body: JSON.stringify(action), redirect: 'error' });
+        apply(result.production);
+      }
+      saved = true;
+    });
+    return saved;
+  }
   function startNewVideo() {
     if (navigationLocked) return;
     focusNewVideo.current = true;
@@ -211,8 +225,9 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
           </div>
         </div>}
         {editing.scenes.map((scene, index) => <fieldset key={index} disabled={Boolean(busy) || Boolean(proposal)} className="min-w-0 space-y-3 border-t pt-4"><legend>Adegan {index + 1}</legend>{(['title', 'supporting', 'visual'] as const).map(key => <Label key={key} title={{ title: 'Judul', supporting: 'Teks pendukung', visual: 'Arahan foto' }[key]}><textarea className={field} rows={2} value={scene[key]} onChange={event => setEditing(value => value ? { ...value, scenes: value.scenes.map((s, i) => i === index ? { ...s, [key]: event.target.value } : s) } : null)} /></Label>)}{scene.lines.map((line, lineIndex) => <Label key={lineIndex} title={`Dialog ${lineIndex + 1} · ${line.speakerId === 'narrator' ? 'Narator' : current.settings.characters.find(actor => actor.id === line.speakerId)?.name}`}><textarea className={field} rows={3} value={line.text} onChange={event => setEditing(value => value ? { ...value, scenes: value.scenes.map((s, i) => { if (i !== index) return s; const lines = s.lines.map((l, j) => j === lineIndex ? { ...l, text: event.target.value } : l); return { ...s, lines, narration: lines.map(l => l.text).join(' ') }; }) } : null)} /></Label>)}</fieldset>)}<button type="button" className={secondary} disabled={Boolean(busy) || Boolean(proposal)} onClick={() => setEditing(value => value ? segmentYouTubeNarration(value) : value)}>Pisahkan gambar mengikuti kalimat narasi</button><p className="text-sm text-neutral-600">Setiap kalimat utuh mendapat gambar yang sesuai. Kata-kata dan suara pemeran tetap mengikuti naskah. Pertahankan 105–125 kata narasi per menit untuk pembawaan alami.</p><div className="flex flex-wrap gap-3"><button disabled={Boolean(busy) || Boolean(proposal)} className={primary} onClick={saveScript}>Simpan naskah</button><button disabled={Boolean(busy)} className={secondary} onClick={() => setEditing(null)}>Batalkan perubahan</button></div></section>}
-      {current.state === 'ready' && <><section id="youtube-final-preview" className={panel}><h3 className="text-lg font-semibold">Tinjau video akhir</h3>{viewer ? <><video src={media('final.mp4')} controls playsInline preload="metadata" className={`mx-auto w-full rounded-lg bg-neutral-950 ${current.settings.kind === 'short' ? 'max-w-sm' : ''}`} /><p className="text-sm text-neutral-600">Durasi render: {current.durationSeconds?.toLocaleString('id-ID')} detik · suara AI</p><a className={secondary} href={media('final.mp4') + '&download=1'}>Unduh MP4</a></> : <p role="status">Menyiapkan pratinjau privat…</p>}<div className="space-y-2 border-t pt-4"><button type="button" data-testid="youtube-new-video-preview" disabled={navigationLocked} className={secondary} onClick={startNewVideo}>Buat video baru</button><p className="text-sm text-neutral-600">Pilih Shorts atau video panjang berikutnya. Hasil ini tetap tersimpan.</p></div></section><VeloxaYouTubePublish {...props} production={current} onDirtyChange={setPublishDirty} /></>}
+      {current.settings.kind === 'video' && viewer && ['characters', 'character_review', 'producing', 'ready'].includes(current.state) && <VeloxaYouTubeThumbnails key={current.id} production={current} media={media} submit={submitThumbnails} status={busy} busy={Boolean(busy)} onDirty={setThumbnailDirty} />}
+      {current.state === 'ready' && <><section id="youtube-final-preview" className={panel}><h3 className="text-lg font-semibold">Tinjau video akhir</h3>{viewer ? <><video src={media('final.mp4')} controls playsInline preload="metadata" className={`mx-auto w-full rounded-lg bg-neutral-950 ${current.settings.kind === 'short' ? 'max-w-sm' : ''}`} /><p className="text-sm text-neutral-600">Durasi render: {current.durationSeconds?.toLocaleString('id-ID')} detik · suara AI</p><a className={secondary} href={media('final.mp4') + '&download=1'}>Unduh MP4</a></> : <p role="status">Menyiapkan pratinjau privat…</p>}<div className="space-y-2 border-t pt-4"><button type="button" data-testid="youtube-new-video-preview" disabled={navigationLocked} className={secondary} onClick={startNewVideo}>Buat video baru</button><p className="text-sm text-neutral-600">Pilih Shorts atau video panjang berikutnya. Hasil ini tetap tersimpan.</p></div></section><VeloxaYouTubePublish key={current.id} {...props} thumbnailPreview={viewer && current.thumbnails?.selected ? media('thumb-' + current.thumbnails.selected + '.jpg') : undefined} production={current} onDirtyChange={setPublishDirty} /></>}
     </>}
-    {productions.length > 0 && <section className={panel}><h3 className="text-lg font-semibold">Produksi tersimpan</h3>{productions.map(item => <button type="button" key={item.id} disabled={Boolean(editing) || Boolean(actorEdit) || Boolean(busy) || publishDirty} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setError(''); }} className={`${secondary} flex w-full min-w-0 flex-col items-start text-start`}><span className="break-words font-semibold">{item.outline?.title || item.settings.topic}</span><span className="mt-1 text-sm text-neutral-600">{productionStageLabel[item.state]} · {item.settings.minutes} menit</span></button>)}</section>}
+    {productions.length > 0 && <section className={panel}><h3 className="text-lg font-semibold">Produksi tersimpan</h3>{productions.map(item => <button type="button" key={item.id} disabled={Boolean(editing) || Boolean(actorEdit) || Boolean(busy) || thumbnailDirty || publishDirty} aria-pressed={selected === item.id} onClick={() => { setSelected(item.id); setError(''); }} className={`${secondary} flex w-full min-w-0 flex-col items-start text-start`}><span className="break-words font-semibold">{item.outline?.title || item.settings.topic}</span><span className="mt-1 text-sm text-neutral-600">{productionStageLabel[item.state]} · {item.settings.minutes} menit</span></button>)}</section>}
   </div>;
 }

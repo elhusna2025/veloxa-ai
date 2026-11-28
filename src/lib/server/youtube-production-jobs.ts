@@ -13,7 +13,7 @@ import { ApiError, errorResponse, noStoreJson, readJson } from './http';
 import { youtubeProductionSettings, youtubeVoiceSchema, youtubeBlockSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
 import { importPacingIssue, parseYouTubeScript } from '../youtube-script-import';
 import type { BrandProfile } from '../veloxa-types';
-import { planYouTubeVideo, writeYouTubeBlock, suggestYouTubeScriptRevision, createYouTubeCharacter, createYouTubePhoto, youtubeShotContext } from './youtube-production-agent';
+import { createYouTubeThumbnail, planYouTubeVideo, writeYouTubeBlock, suggestYouTubeScriptRevision, createYouTubeCharacter, createYouTubePhoto, youtubeShotContext } from './youtube-production-agent';
 import { paceYouTubeSpeech } from './youtube-speech-pacing';
 import { generateYouTubeNarration, generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
 import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, normalizeYouTubeSceneAudio, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
@@ -55,7 +55,7 @@ async function bytes(ref: Ref, name: string, max = 20 * 1024 * 1024) {
 }
 async function dto(ref: Ref, job: Job): Promise<YouTubeProduction> {
   const scripts = await ref.collection('blocks').orderBy('index').get();
-  return { ...(job.aiUsage ? { aiUsage: job.aiUsage } : {}), id: job.id, revision: job.revision, settings: job.settings, state: job.state,
+  return { ...(job.thumbnailSubmitted ? { thumbnailSubmitted: true } : {}), ...(job.thumbnails ? { thumbnails: job.thumbnails } : {}), ...(job.aiUsage ? { aiUsage: job.aiUsage } : {}), id: job.id, revision: job.revision, settings: job.settings, state: job.state,
     ...(job.scriptSource ? { scriptSource: job.scriptSource } : {}), ...(job.outline ? { outline: job.outline } : {}), blocks: scripts.docs.map(doc => doc.data() as YouTubeScriptBlock),
     completedScenes: job.renderIndex, createdAt: job.createdAt, updatedAt: job.updatedAt,
     progress: { images: job.imageIndex, audio: job.audioIndex, rendered: job.renderIndex, characters: job.portraitIndex,
@@ -153,6 +153,8 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
     }
     const { ref, context, job } = await owned(request, rawId, deps);
     const input = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('thumbnail'), slot: z.union([z.literal(0), z.literal(1)]), expected: z.uuid().nullable(), note: z.string().trim().max(1000) }).strict(),
+      z.object({ action: z.literal('select_thumbnail'), id: z.uuid() }).strict(),
       z.object({ action: z.literal('process') }).strict(),
       z.object({ action: z.enum(['approve_script', 'approve_characters', 'stop', 'resume', 'retry_now']), revision: z.number().int(), confirmed: z.literal(true) }).strict(),
       z.object({ action: z.literal('suggest_edit'), revision: z.number().int(), index: z.number().int().min(0).max(119),
@@ -160,6 +162,51 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       z.object({ action: z.literal('edit'), revision: z.number().int(), index: z.number().int().min(0).max(119), block: youtubeBlockSchemaForEdit() }).strict(),
       z.object({ action: z.literal('revise_character'), revision: z.number().int(), characterId: z.string().regex(/^actor_[1-5]$/), appearance: z.string().trim().min(15).max(1000), voice: youtubeVoiceSchema, delivery: z.string().trim().max(500), confirmed: z.literal(true) }).strict(),
     ]).parse(await readJson(request));
+    if (input.action === 'thumbnail' || input.action === 'select_thumbnail') {
+      const action = input, token = randomUUID();
+      const leaseKey = 'thumbnailLease';
+      const update = (phase: 'start' | 'save' | 'release') => ref.firestore.runTransaction(async tx => {
+        const current = (await tx.get(ref)).data();
+        if (!current) throw new ApiError(404, 'Produksi tidak ditemukan.');
+        if (phase === 'release') {
+          if (current[leaseKey]?.id === token) tx.update(ref, { [leaseKey]: null });
+          return;
+        }
+        if (current.thumbnailSubmitted) throw new ApiError(409, 'Video sudah masuk antrean pengiriman. Kelola thumbnail untuk video ini di YouTube Studio.');
+        if (current.settings.kind !== 'video' || !['characters', 'character_review', 'producing', 'ready'].includes(current.state))
+          throw new ApiError(409, 'Setujui naskah video panjang sebelum membuat thumbnail.');
+        const thumbnails = current.thumbnails ?? { options: [null, null], selected: null };
+        if (action.action === 'select_thumbnail') {
+          if (!thumbnails.options.includes(action.id)) throw new ApiError(409, 'Usulan berubah. Muat ulang Studio.');
+          tx.update(ref, { thumbnails: { ...thumbnails, selected: action.id }, revision: current.revision + 1 });
+        } else if (thumbnails.options[action.slot] !== action.expected) {
+          throw new ApiError(409, 'Usulan sudah berubah. Muat ulang Studio.');
+        } else if (phase === 'start') {
+          if (current[leaseKey]?.until > Date.now()) throw new ApiError(409, 'Thumbnail sedang dibuat. Tunggu sebentar, lalu muat ulang.');
+          tx.update(ref, { [leaseKey]: { id: token, until: Date.now() + 180_000 } });
+        } else {
+          if (current[leaseKey]?.id !== token) throw new ApiError(409, 'Percobaan sudah diganti. Muat ulang Studio.');
+          const options = [...thumbnails.options];
+          options[action.slot] = token;
+          tx.update(ref, { thumbnails: { ...thumbnails, options }, [leaseKey]: null, revision: current.revision + 1 });
+        }
+      });
+      await update('start');
+      if (action.action === 'thumbnail') {
+        try {
+          const opening = (await blockRef(ref, 0).get()).data();
+          const sceneText = (opening?.scenes ?? []).map((scene: { narration: string }) => scene.narration).join(' ');
+          const story = [job.outline?.description, sceneText].join(' ').slice(0, 4500);
+          const original = action.expected ? await bytes(ref, 'thumb-' + action.expected + '.jpg') : undefined;
+          const image = await withYouTubeUsage(ref, () => createYouTubeThumbnail(job.outline?.title ?? job.settings.topic, story, action.slot, action.note, job.models.imageModel, original));
+          await save(ref, 'thumb-' + token + '.jpg', image, 'image/jpeg');
+          await update('save');
+        } finally {
+          await update('release');
+        }
+      }
+      return noStoreJson({ production: await dto(ref, (await ref.get()).data() as Job) });
+    }
     if (input.action === 'suggest_edit') {
       if (job.state !== 'script_review' || job.revision !== input.revision || !job.outline || input.index >= job.scriptIndex)
         throw new ApiError(409, 'Naskah sudah berubah. Buka kembali menit yang ingin direvisi.');

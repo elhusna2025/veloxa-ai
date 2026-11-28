@@ -144,6 +144,7 @@ function fixture(bytes: Buffer[] = [Buffer.from('fixture media')]) {
     cleanup: async () => { mediaCalls.push('cleanup'); },
   };
   const provider: YouTubeUploadProvider = {
+      setThumbnail: async () => { throw new Error('Unexpected thumbnail upload'); },
     start: async (_, metadata) => { providerCalls.push('start'); assert.equal(metadata.privacy, 'private'); return session; },
     transfer: async (_, uri, total, __, chunk) => {
       assert.equal(uri, session);

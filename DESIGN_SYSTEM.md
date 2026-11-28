@@ -165,3 +165,5 @@ Layar harus berfungsi pada lebar 390 px dan desktop tanpa overflow halaman. Kart
 - Pengaturan model dan kuota selalu menampilkan cakupannya, seluruh platform atau workspace tertentu. Tampilkan nilai yang diwariskan, kuota efektif, serta perubahan yang belum disimpan.
 - Kuota khusus workspace dapat memakai Tanpa batas untuk publikasi harian dan bulanan. Tampilkan status tersebut di workspace tanpa angka sisa atau progress bar kuota; riwayat pemakaian tetap tercatat.
 - Tinjau perubahan beserta cakupan dan alasan sebelum menyimpan. Pemulihan memakai revisi baru dan dicatat bersama waktu, pelaku, dan revisi sumber.
+
+Setelah naskah video YouTube panjang disetujui, Studio menampilkan dua usulan thumbnail berdampingan pada desktop dan bertumpuk pada ponsel. Pemilik dapat membandingkan thumbnail bersama judul pada ukuran kecil, meminta revisi lewat catatan, dan memilih gambar untuk publikasi. Revisi AI mempertahankan pilihan tersimpan sampai pemilik memilih kembali.

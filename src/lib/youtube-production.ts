@@ -49,6 +49,8 @@ export type YouTubeUsageSummary = { partial: boolean; stages: Partial<Record<'sc
   calls: number; usd: number; unpriced: number; input: number; output: number; characters: number;
 }>> };
 export type YouTubeProduction = {
+  thumbnailSubmitted?: boolean;
+  thumbnails?: { options: (string | null)[]; selected: string | null };
   aiUsage?: YouTubeUsageSummary;
   id: string; revision: number; settings: YouTubeProductionSettings; state: YouTubeProductionState;
   scriptSource?: 'imported'; outline?: YouTubeOutline; blocks: YouTubeScriptBlock[]; completedScenes: number;

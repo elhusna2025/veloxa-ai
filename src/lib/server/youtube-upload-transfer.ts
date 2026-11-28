@@ -227,7 +227,17 @@ export function youtubeUploadProvider(fetcher: typeof fetch = fetch) {
     return parsed.data.items[0] ?? null;
   }
 
-  return { start, transfer, video };
+  async function setThumbnail(accessToken: string, id: string, image: Buffer, signal: UploadWorkSignal) {
+    const url = new URL('/upload/youtube/v3/thumbnails/set', apiOrigin);
+    url.search = new URLSearchParams({ videoId: videoId.parse(id), uploadType: 'media' }).toString();
+    const response = await providerRequest(url, accessToken, signal, {
+      method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: new Uint8Array(image),
+    }, fetcher);
+    if (!response.ok) return failure(response, false);
+    const result = z.object({ items: z.array(z.object({})).min(1) }).safeParse(await smallJson(response));
+    if (!result.success) throw new YouTubeUploadFailure('retry');
+  }
+  return { start, transfer, video, setThumbnail };
 }
 
 export type YouTubeUploadProvider = ReturnType<typeof youtubeUploadProvider>;

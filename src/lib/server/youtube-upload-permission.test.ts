@@ -225,6 +225,7 @@ test('rekonsiliasi setelah retensi membersihkan media dan hanya melepas fence de
       cleanup: async () => { cleanupCalls++; },
     },
     provider: {
+      setThumbnail: async () => { throw new Error('Unexpected thumbnail upload'); },
       start: async () => assert.fail('Rekonsiliasi tidak membuka sesi baru.'),
       video: async (token: string, id: string) => {
         assert.equal(token, 'fixture-reconciliation-access');

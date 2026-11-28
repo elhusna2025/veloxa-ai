@@ -117,7 +117,7 @@ type Job = {
   mediaCleanupRecheckAt?: number | null;
   lease: { id: string; until: number } | null;
 };
-type GeneratedSource = { key: string; generation: string; size: number; width: number; height: number; durationSeconds: number };
+type GeneratedSource = { thumbnailId?: string; key: string; generation: string; size: number; width: number; height: number; durationSeconds: number };
 
 type Dependencies = {
   database?: Database;
@@ -271,17 +271,18 @@ export function youtubeGeneratedUploadCreate(request: Request, productionId: str
   return respond(async () => {
     const { productionMediaAccess } = await import('./youtube-production-jobs');
     const { ref, job, context } = await productionMediaAccess.owned(request, productionId);
-    const input = z.object({ channelId: youtubeChannelId, connectionRevision: z.string().regex(/^[A-Za-z0-9_-]{43}$/), metadata, confirmed: z.literal(true) }).strict().parse(await readJson(request));
+    const input = z.object({ thumbnailId: z.uuid().nullable().optional(), channelId: youtubeChannelId, connectionRevision: z.string().regex(/^[A-Za-z0-9_-]{43}$/), metadata, confirmed: z.literal(true) }).strict().parse(await readJson(request));
     if (job.state !== 'ready' || !job.sourceGeneration || !job.videoBytes || !job.durationSeconds) throw new ApiError(409, 'Tinjau video yang sudah selesai sebelum menerbitkan.');
+    if ((input.thumbnailId ?? null) !== (job.thumbnails?.selected ?? null)) throw new ApiError(409, 'Pilihan thumbnail berubah. Muat ulang dan tinjau sebelum mengirim.');
     const { width, height } = (await import('../youtube-production')).productionResources(job.settings);
     return admitYouTubeUpload(request, { workspaceId: context.workspaceId, businessId: context.businessId,
       operationId: job.id, channelId: input.channelId, connectionRevision: input.connectionRevision,
       kind: job.settings.kind, file: { name: 'veloxa-video.mp4', size: job.videoBytes, mimeType: 'video/mp4', chunkHashes: [] }, metadata: input.metadata, confirmed: true }, {},
-      { key: ref.id, generation: job.sourceGeneration, size: job.videoBytes, width, height, durationSeconds: job.durationSeconds });
+      { ...(input.thumbnailId ? { thumbnailId: input.thumbnailId } : {}), key: ref.id, generation: job.sourceGeneration, size: job.videoBytes, width, height, durationSeconds: job.durationSeconds }, ref);
   });
 }
 
-async function admitYouTubeUpload(request: Request, input: z.infer<typeof createInput>, deps: Dependencies, generatedSource?: GeneratedSource) {
+async function admitYouTubeUpload(request: Request, input: z.infer<typeof createInput>, deps: Dependencies, generatedSource?: GeneratedSource, productionRef?: Ref) {
     const actor = await readAccess(request, input, deps);
     const database = actor.ref.firestore;
     const ref = jobRef(database, jobKey(input, actor.user.uid, input.operationId));
@@ -304,6 +305,12 @@ async function admitYouTubeUpload(request: Request, input: z.infer<typeof create
       await (deps.assertBinding ?? assertYouTubeUploadBinding)(tx, actor.ref, binding, config);
       const current = await tx.get(ref);
       if (current.exists) return sameOperation(getJob(current), fingerprint);
+      if (productionRef && generatedSource) {
+        const production = (await tx.get(productionRef)).data();
+        if (!production || production.state !== 'ready' || production.sourceGeneration !== generatedSource.generation ||
+            (production.thumbnails?.selected ?? null) !== (generatedSource.thumbnailId ?? null))
+          throw new ApiError(409, 'Video atau thumbnail berubah. Muat ulang sebelum mengirim.');
+      }
       const currentDispatch = (await tx.get(dispatchRef(actor.ref, input.businessId))).data();
       if (currentDispatch?.state === 'unknown') throw new ApiError(409, needsReview, 'youtube_upload_unresolved');
       if (currentDispatch) throw new ApiError(409, activeOther, 'youtube_upload_in_progress');
@@ -334,6 +341,7 @@ async function admitYouTubeUpload(request: Request, input: z.infer<typeof create
         nextRunAt: generatedSource ? now : now + day, message: null, retryAt: null, mediaCleaned: false,
         mediaWritePending: null, mediaWriteUncertain: false, mediaCleanupRecheckAt: null, lease: null,
       };
+      if (productionRef) tx.update(productionRef, { thumbnailSubmitted: true });
       tx.create(ref, job);
       tx.set(admission, { jobId: ref.id, ownerUid: actor.user.uid });
       return job;
@@ -813,6 +821,26 @@ async function checkKnownVideo(ref: Ref, job: Job, leaseId: string, signal: Uplo
     signal,
     deps,
   );
+  const source = job.generatedSource;
+  const processed = video?.status.uploadStatus === 'processed' || video?.processingDetails?.processingStatus === 'succeeded';
+  if (source?.thumbnailId && processed && video?.id === job.video?.id && video?.snippet.channelId === job.binding.channelId &&
+      !['failed', 'rejected', 'deleted'].includes(video.status.uploadStatus ?? '') && video.processingDetails?.processingStatus !== 'failed') {
+    try {
+      if (binding !== job.binding) throw new YouTubeUploadFailure('permission');
+      const [image] = await adminBucket().file(`private-youtube-productions/${source.key}/thumb-${z.uuid().parse(source.thumbnailId)}.jpg`).download();
+      const granted = await loadAndVerify(job.binding);
+      await provider.setThumbnail(granted.accessToken, video.id, image, signal);
+    } catch (error) {
+      if (error instanceof YouTubeUploadFailure && error.kind === 'retry' && job.attempts < maxTries) {
+        const next = now() + Math.min(15 * minute, minute * (job.attempts + 1));
+        await commitWork(ref, leaseId, { state: 'processing', attempts: job.attempts + 1, lease: null,
+          retryAt: next, nextRunAt: next, message: 'Video sudah diterima. Pemasangan thumbnail akan dicoba kembali.' }, now);
+        return;
+      }
+      await commitWork(ref, leaseId, finished(job, 'needs_review', now(), 'Video sudah diterima YouTube. Thumbnail belum terpasang. Periksa izin thumbnail channel lalu coba periksa pengiriman ini lagi.'), now);
+      return;
+    }
+  }
   await saveVideoStatus(ref, job, leaseId, video, now);
 }
 

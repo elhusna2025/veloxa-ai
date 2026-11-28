@@ -206,3 +206,21 @@ export async function createYouTubePhoto(scene: YouTubeScene, settings: YouTubeP
   return sharp(Buffer.from(encoded, 'base64'), { limitInputPixels: 30_000_000 }).rotate()
     .resize(vertical ? 720 : 1280, vertical ? 1280 : 720, { fit: 'cover' }).jpeg({ quality: 92 }).toBuffer();
 }
+
+export async function createYouTubeThumbnail(title: string, story: string, slot: number, note: string, model: string, previous?: Buffer) {
+  const prompt = [
+    'Design a single landscape YouTube documentary thumbnail readable at 160 pixels. Feature a clear focal subject and short, legible, high-contrast headline. Keep lettering inside generous safe margins.',
+    'Use the language of the title unless the editor requests another language. Only use facts from the story. Avoid invented documents, quotes, watermarks and unrelated branding.',
+    slot === 0 ? 'Concept A emphasizes the protagonist and a pivotal choice.' : 'Concept B emphasizes the stakes, using a distinctive composition.',
+    JSON.stringify({ title, story, editorNotes: note }),
+  ].join('\n');
+  const params = { model, prompt, n: 1, quality: 'medium' as const, output_format: 'jpeg' as const, size: '1536x864' as '1536x1024' };
+  const images = client().images;
+  const response = previous
+    ? await images.edit({ ...params, image: await toFile(previous, 'thumbnail.jpg', { type: 'image/jpeg' }) })
+    : await images.generate(params);
+  recordYouTubeUsage('images', model, response.usage, response._request_id ?? undefined);
+  const data = response.data?.[0]?.b64_json;
+  if (!data || data.length > 24 * 1024 * 1024) throw new Error('Gambar thumbnail belum lengkap.');
+  return sharp(Buffer.from(data, 'base64'), { limitInputPixels: 30_000_000 }).resize(1280, 720).jpeg({ quality: 88 }).toBuffer();
+}

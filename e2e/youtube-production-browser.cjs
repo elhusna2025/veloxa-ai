@@ -84,6 +84,20 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
         await resume.focus(); await resume.press('Enter');
         await page.getByText('Membuat gambar adegan 11 dari 60', { exact: true }).waitFor();
       }
+      if (state === 'character_review') {
+        const create = page.getByRole('button', { name: 'Buat dua usulan thumbnail' });
+        await create.focus(); await create.press('Enter');
+        await page.getByRole('button', { name: 'Pilih A', exact: true }).click();
+        await page.getByRole('heading', { name: 'Usulan A · Terpilih' }).waitFor();
+        await page.getByRole('button', { name: 'Revisi A' }).click();
+        await page.getByRole('textbox', { name: 'Catatan revisi A' }).fill('Perbesar judul.');
+        await page.getByRole('button', { name: 'Buat revisi dengan AI' }).click();
+        await page.getByRole('img', { name: 'Pilihan tersimpan sebelum revisi' }).waitFor();
+        await page.getByRole('button', { name: 'Pratinjau ukuran ponsel' }).click();
+        assert.equal(await page.getByRole('img', { name: 'Thumbnail usulan A' }).evaluate(el => el.clientWidth), 160);
+        assert.ok(await page.getByRole('link', { name: 'Unduh B' }).getAttribute('href'));
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+      }
       if (state === 'producing') {
         const cost = page.getByText(/^Biaya AI video ini/);
         await cost.focus(); await cost.press('Enter');

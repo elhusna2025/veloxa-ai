@@ -6,7 +6,7 @@ import { youtubeUploadApi, verifiedGoogleAuthorization, youtubeUploadReturnKey }
 import type { YouTubeProduction } from '@/lib/youtube-production';
 import type { YouTubeUploadMetadata, YouTubeUploadOperation, YouTubeUploadPermission } from '@/lib/youtube-upload-types';
 
-type Props = { workspaceId: string; businessId: string; production: YouTubeProduction; onManageConnection: () => void; onBusyChange: (busy: boolean) => void; onDirtyChange: (dirty: boolean) => void };
+type Props = { thumbnailPreview?: string; workspaceId: string; businessId: string; production: YouTubeProduction; onManageConnection: () => void; onBusyChange: (busy: boolean) => void; onDirtyChange: (dirty: boolean) => void };
 const field = 'min-h-11 w-full min-w-0 rounded-lg border bg-white p-3 text-base';
 export function VeloxaYouTubePublish(props: Props) {
   const { production, onBusyChange, onDirtyChange } = props;
@@ -16,6 +16,7 @@ export function VeloxaYouTubePublish(props: Props) {
   const [metadata, setMetadata] = useState(initial), [confirmed, setConfirmed] = useState(false);
   const [permission, setPermission] = useState<YouTubeUploadPermission | null>(null), [operation, setOperation] = useState<YouTubeUploadOperation | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [locked, setLocked] = useState(false);
+  useEffect(() => { setConfirmed(false); }, [production.thumbnails?.selected]);
   const operationId = operation?.id, operationState = operation?.state;
   const load = useCallback(async () => { const [grant, jobs] = await Promise.all([api.permission(), api.list()]); setPermission(grant); setOperation(jobs.operations.find(job => job.id === production.id) ?? null); }, [api, production.id]);
   useEffect(() => { void load().catch(failure => setError(failure.message)); }, [load]);
@@ -36,7 +37,7 @@ export function VeloxaYouTubePublish(props: Props) {
   }); }
   function publish() { if (!connection || !permission?.canUpload || !confirmed) return; void run(async () => {
     setLocked(true);
-    const result = await veloxaApi<{ operation: YouTubeUploadOperation }>(`/api/veloxa/youtube/productions/${production.id}/publish/?${new URLSearchParams(scope)}`, { method: 'POST', redirect: 'error', body: JSON.stringify({ channelId: connection.channelId, connectionRevision: connection.revision, metadata, confirmed: true }) });
+    const result = await veloxaApi<{ operation: YouTubeUploadOperation }>(`/api/veloxa/youtube/productions/${production.id}/publish/?${new URLSearchParams(scope)}`, { method: 'POST', redirect: 'error', body: JSON.stringify({ channelId: connection.channelId, connectionRevision: connection.revision, metadata, thumbnailId: production.thumbnails?.selected ?? null, confirmed: true }) });
     setOperation(result.operation); setLocked(false);
   }); }
   const disabled = busy || locked || Boolean(operation);
@@ -47,6 +48,7 @@ export function VeloxaYouTubePublish(props: Props) {
     {connection && !permission?.canUpload && !permission?.pending && <button className="veloxa-button-secondary" disabled={busy} onClick={grant}>Berikan izin unggah melalui Google</button>}
     {permission && !permission.uploadStorageReady && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">Publikasi belum diaktifkan oleh admin. Video produksi tetap dapat ditinjau dan diunduh.</p>}
     {production.settings.minutes > 15 && <p className="text-sm text-neutral-600">Untuk video lebih dari 15 menit, channel perlu mengaktifkan fitur video panjang melalui <a className="underline" href="https://www.youtube.com/verify" target="_blank" rel="noopener noreferrer">verifikasi YouTube</a>.</p>}
+    {!operation && props.thumbnailPreview && <figure className="space-y-1"><img src={props.thumbnailPreview} alt="Thumbnail yang akan dikirim" className="aspect-video w-40 rounded-lg" /><figcaption className="text-sm">Thumbnail yang akan dikirim</figcaption></figure>}
     {!operation ? <><label className="block space-y-2"><span className="text-sm font-medium">Judul YouTube</span><input disabled={disabled} maxLength={100} value={metadata.title} onChange={event => setMetadata(value => ({ ...value, title: event.target.value }))} className={field} /></label><label className="block space-y-2"><span className="text-sm font-medium">Deskripsi</span><textarea disabled={disabled} rows={5} value={metadata.description} onChange={event => setMetadata(value => ({ ...value, description: event.target.value }))} className={field} /></label><label className="block space-y-2"><span className="text-sm font-medium">Visibilitas</span><VeloxaSelect disabled={disabled} aria-label="Visibilitas YouTube" value={metadata.privacy} onValueChange={privacy => setMetadata(value => ({ ...value, privacy: privacy as typeof value.privacy }))}><option value="private">Pribadi</option><option value="unlisted">Tidak publik · akses melalui tautan</option><option value="public">Publik</option></VeloxaSelect></label>
       <label className="flex items-start gap-3 text-base"><input type="checkbox" disabled={disabled} className="mt-1 size-5 shrink-0" checked={metadata.madeForKids} onChange={event => setMetadata(value => ({ ...value, madeForKids: event.target.checked }))} />Video ini ditujukan khusus untuk anak-anak.</label>
       <label className="flex items-start gap-3 text-base"><input type="checkbox" disabled={disabled} className="mt-1 size-5 shrink-0" checked={metadata.containsSyntheticMedia} onChange={event => setMetadata(value => ({ ...value, containsSyntheticMedia: event.target.checked }))} />Video berisi orang, adegan atau suara realistis yang dibuat atau diubah dengan AI.</label>

@@ -245,3 +245,19 @@ test('resume from stop keeps approvals, legacy checkpoints and the single active
   assert.equal((await resume()).status, 200);
   assert.equal((await ref.get()).data()?.state, 'script_review');
 });
+
+test('long-video thumbnails accept only a saved proposal after approval and freeze on submission', async () => {
+  const f = fixture();
+  await f.create({ kind: 'video', minutes: 5 });
+  const ref = f.jobRef(), job = (await ref.get()).data()!;
+  const id = randomUUID(), thumbnails = { options: [id, randomUUID()], selected: null };
+  const select = () => f.action({ action: 'select_thumbnail', id });
+  f.store.rows.set(ref.path, { ...job, thumbnails, state: 'script_review' });
+  assert.equal((await select()).status, 409);
+  f.store.rows.set(ref.path, { ...job, thumbnails, state: 'ready' });
+  assert.equal((await f.action({ action: 'select_thumbnail', id: randomUUID() })).status, 409);
+  assert.equal((await select()).status, 200);
+  assert.deepEqual((await ref.get()).data()?.thumbnails, { ...thumbnails, selected: id });
+  f.store.rows.set(ref.path, { ...job, thumbnails, state: 'ready', thumbnailSubmitted: true });
+  assert.equal((await select()).status, 409);
+});
