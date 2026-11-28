@@ -41,6 +41,13 @@ test('both video canvases keep measured text on natural photo space and reject u
   }
 });
 
+test('a landscape horizon can separate the title and supporting copy during a pan', async () => {
+  const settings = youtubeProductionSettings.parse({ kind: 'video', minutes: 5, topic: 'Sejarah Kota Bandar Lampung', voice: 'marin' });
+  const photo = Buffer.from('<svg width="1280" height="720"><rect width="1280" height="720" fill="#aac9ed"/><rect y="240" width="1280" height="120" fill="#172137"/></svg>');
+  const frame = await composeYouTubeFrame(photo, { ...scene, title: 'Dua Kota Berbeda', supporting: 'Namun nama itu menyimpan kisah dua kota yang pernah berdiri terpisah.' }, settings, blankBusinessProfile('ws', 'primary', 'Cendekia AI'), 1);
+  assert.equal((await sharp(frame.image).metadata()).width, 1280);
+});
+
 test('a dark object outside the actual moving lettering no longer rejects a readable photograph', async () => {
   const settings = youtubeProductionSettings.parse({ kind: 'short', minutes: 1, topic: 'Pahami manfaat catatan usaha', voice: 'marin' });
   const photo = await sharp({ create: { width: 720, height: 1280, channels: 3, background: '#efefed' } })

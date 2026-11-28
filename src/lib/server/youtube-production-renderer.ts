@@ -13,7 +13,7 @@ import type { BrandProfile } from '../veloxa-types';
 
 const exec = promisify(execFile);
 const fps = 25;
-export const YOUTUBE_LAYOUT_VERSION = 2;
+export const YOUTUBE_LAYOUT_VERSION = 3;
 export function sceneFrameCounts(durations: number[], targetSeconds: number) {
   if (!durations.length || durations.some(value => !Number.isFinite(value) || value <= 0)) throw new Error('Durasi adegan tidak valid.');
   const total = durations.reduce((sum, value) => sum + value, 0);
@@ -32,7 +32,14 @@ export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, se
   const vertical = settings.kind === 'short';
   const x = vertical ? 50 : 70, y = vertical ? 230 : 110, copyWidth = vertical ? 480 : 520;
   const raw = await sharp(photo).resize(width, height).toColourspace('srgb').removeAlpha().raw().toBuffer();
-  const linear = (v: number) => { const n = v / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4; };
+  const linear = Array.from({ length: 256 }, (_, byte) => {
+    const n = byte / 255;
+    return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4;
+  });
+  const light = new Float32Array(width * height);
+  for (let i = 0; i < light.length; i++) {
+    light[i] = .2126 * linear[raw[3 * i]] + .7152 * linear[raw[3 * i + 1]] + .0722 * linear[raw[3 * i + 2]];
+  }
   // Fit first. Contrast applies to the actual lettering, not to unused space below
   // it or the subject beside it. The previous oversized rectangle rejected readable photos.
   const text: { rendered: NonNullable<Awaited<ReturnType<typeof fitVideoText>>>; top: number; samples: [number, number][] }[] = [];
@@ -51,36 +58,72 @@ export async function composeYouTubeFrame(photo: Buffer, scene: YouTubeScene, se
   const headlineHeight = await add(scene.title, headlineTop, vertical ? 230 : 210, vertical ? 48 : 54, true);
   await add(scene.supporting, headlineTop + headlineHeight + (vertical ? 32 : 55), vertical ? 200 : 150, 30);
   const mode = sceneIndex % 4;
-  const inks = [brand.primaryColorHex, '#111111', '#FFFFFF'].filter(color => /^#[0-9a-f]{6}$/i.test(color));
-  const luminance = (color: string) => .2126 * linear(parseInt(color.slice(1, 3), 16)) + .7152 * linear(parseInt(color.slice(3, 5), 16)) + .0722 * linear(parseInt(color.slice(5, 7), 16));
-  let placement: { dx: number; dy: number; ink: string } | undefined;
-  for (const [dx, dy] of [[0, 0], [0, -36], [0, 48], [32, 0], [32, 48], [0, 84]]) {
-    if (text.some(block => x + dx + block.rendered.width > width - 70 || block.top + dy < (vertical ? 180 : 50) || block.top + dy + block.rendered.height > (vertical ? height - 320 : height - 50))) continue;
-    let darkest = 1, brightest = 0;
-    for (let time = 0; time <= 16; time++) {
-      const progress = time / 16, zoom = mode === 3 ? 1.09 - .09 * progress : mode === 0 ? 1 + .09 * progress : 1.09;
-      const horizontal = mode === 1 ? progress : mode === 2 ? 1 - progress : .5;
-      for (const block of text) for (const [col, row] of block.samples) {
-        const sx = Math.min(width - 1, Math.max(0, Math.round((x + dx + col) / zoom + width * (1 - 1 / zoom) * horizontal)));
-        const sy = Math.min(height - 1, Math.max(0, Math.round((block.top + dy + row) / zoom + height * (1 - 1 / zoom) * .5)));
-        const offset = (sy * width + sx) * 3;
-        const light = .2126 * linear(raw[offset]) + .7152 * linear(raw[offset + 1]) + .0722 * linear(raw[offset + 2]);
-        darkest = Math.min(darkest, light); brightest = Math.max(brightest, light);
+  const inks = [...new Set([brand.primaryColorHex, '#111111', '#FFFFFF', '#000000'])]
+    .filter(color => /^#[0-9a-f]{6}$/i.test(color)).map(color => ({
+      color, value: .2126 * linear[parseInt(color.slice(1, 3), 16)] + .7152 * linear[parseInt(color.slice(3, 5), 16)] + .0722 * linear[parseInt(color.slice(5, 7), 16)],
+    }));
+  // Cache the camera's source coordinates. Search within the space reserved for
+  // lettering, leaving the subject on the other side of the frame.
+  const sweep = Array.from({ length: 17 }, (_, t) => {
+    const progress = t / 16;
+    const zoom = mode === 3 ? 1.09 - .09 * progress : mode === 0 ? 1 + .09 * progress : 1.09;
+    const horizontal = mode === 1 ? progress : mode === 2 ? 1 - progress : .5;
+    return {
+      cols: Int32Array.from({ length: width }, (_, n) => Math.round(n / zoom + width * (1 - 1 / zoom) * horizontal)),
+      rows: Int32Array.from({ length: height }, (_, n) => width * Math.round(n / zoom + height * (1 - 1 / zoom) * .5)),
+    };
+  });
+  function readableInk(block: typeof text[number], left: number, top: number) {
+    let min = 1, max = 0;
+    const readable = (ink: typeof inks[number]) => (min + .05) >= 4.5 * (ink.value + .05) || (ink.value + .05) >= 4.5 * (max + .05);
+    for (const { rows, cols } of sweep) {
+      for (const [col, row] of block.samples) {
+        const value = light[rows[top + row] + cols[left + col]];
+        if (value < min || value > max) {
+          min = Math.min(min, value); max = Math.max(max, value);
+          if (!inks.some(readable)) return;
+        }
       }
     }
-    const ink = inks.find(color => { const light = luminance(color); return light <= darkest ? (darkest + .05) / (light + .05) >= 4.5 : light >= brightest && (light + .05) / (brightest + .05) >= 4.5; });
-    if (ink) { placement = { dx, dy, ink }; break; }
+    return inks.find(readable)?.color;
+  }
+  const safeTop = vertical ? 180 : 48, safeBottom = height - (vertical ? 320 : 48);
+  type Placed = { top: number; ink: string; block: typeof text[number] };
+  let placement: { left: number; blocks: Placed[] } | undefined;
+  // Try the original spacing first, then compact spacing. A horizon, doorway,
+  // or other feature may fall in the gap between the title and its explanation.
+  for (const left of [x, x - 16, x + 24]) {
+    if (placement) break;
+    const checked = text.map(() => new Map<number, string | undefined>());
+    for (const start of [y, ...Array.from({ length: Math.ceil((safeBottom - safeTop) / 24) }, (_, i) => safeTop + 24 * i)]) {
+      const blocks: Placed[] = [];
+      let next = start;
+      for (const [i, block] of text.entries()) {
+        const preferred = i === 0 ? start : Math.max(next, start + block.top - y);
+        const options = [preferred, ...Array.from({ length: 8 }, (_, n) => next + 16 * n)];
+        for (const top of options) {
+          if (top + block.rendered.height > safeBottom) continue;
+          if (!checked[i].has(top)) checked[i].set(top, readableInk(block, left, top));
+          const ink = checked[i].get(top);
+          if (!ink) continue;
+          blocks.push({ block, ink, top });
+          next = top + block.rendered.height + (block.top === headlineTop ? 32 : 16);
+          break;
+        }
+        if (blocks.length !== i + 1) break;
+      }
+      if (blocks.length === text.length) { placement = { left, blocks }; break; }
+    }
   }
   if (!placement) throw new Error('Foto perlu ruang teks yang lebih tenang. Adegan ini akan diperbaiki.');
-  const { dx, dy, ink } = placement;
   const layers: OverlayOptions[] = [];
-  for (const block of text) {
+  for (const { block, top, ink } of placement.blocks) {
     const mask = await sharp(block.rendered.data).extractChannel('alpha').raw().toBuffer();
     const rgba = await sharp({ create: { width: block.rendered.width, height: block.rendered.height, channels: 3, background: ink } }).joinChannel(mask, { raw: { width: block.rendered.width, height: block.rendered.height, channels: 1 } }).png().toBuffer();
-    layers.push({ input: rgba, left: x + dx, top: block.top + dy });
+    layers.push({ input: rgba, left: placement.left, top });
   }
   const accent = /^#[0-9a-f]{6}$/i.test(brand.accentColorHex) ? brand.accentColorHex : '#A92E5D';
-  layers.push({ input: Buffer.from(`<svg width="${copyWidth}" height="16"><path d="M2 10 Q${copyWidth / 2} 0 ${copyWidth - 2} 10" fill="none" stroke="${accent}" stroke-width="6"/></svg>`), left: x + dx, top: headlineTop + headlineHeight + 12 + dy });
+  layers.push({ input: Buffer.from(`<svg width="${copyWidth}" height="16"><path d="M2 10 Q${copyWidth / 2} 0 ${copyWidth - 2} 10" fill="none" stroke="${accent}" stroke-width="6"/></svg>`), left: placement.left, top: (placement.blocks.find(item => item.block.top === headlineTop)?.top ?? headlineTop) + headlineHeight + 8 });
   const overlay = await sharp({ create: { width, height, channels: 4, background: '#00000000' } }).composite(layers).png().toBuffer();
   const image = await sharp(photo).resize(width, height).composite([{ input: overlay }]).jpeg({ quality: 92 }).toBuffer();
   return { photo: await sharp(photo).resize(width, height).jpeg({ quality: 92 }).toBuffer(), overlay, image };

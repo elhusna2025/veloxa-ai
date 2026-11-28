@@ -252,7 +252,7 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const hasCandidate = (await object(ref, candidateName).exists())[0];
       const rejectedCandidate = job.lastFailure?.code === 'photo_layout' && job.lastFailure.unit === job.imageIndex && job.lastFailure.layoutVersion === YOUTUBE_LAYOUT_VERSION;
       const photo = hasCandidate && !rejectedCandidate ? await bytes(ref, candidateName)
-        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous);
+        : await createYouTubePhoto(scene, job.settings, job.brand, job.models.imageModel, portraits, previous, rejectedCandidate);
       // Save the generated candidate before layout checks, so diagnostics and repair
       // can reuse it instead of paying for another image after an interrupted write.
       if (!hasCandidate || rejectedCandidate) await save(ref, candidateName, photo, 'image/jpeg');
@@ -324,8 +324,11 @@ export async function runYouTubeProductionStep(ref: Ref, deps: Dependencies = {}
       const attempts = current.attempts + 1;
       const attention = attempts >= 8 || error instanceof ApiError && [400, 401, 403, 409, 429].includes(error.status);
       const retryAt = Date.now() + Math.min(300_000, 15_000 * 2 ** Math.min(attempts, 5));
+      const attentionMessage = code === 'photo_layout'
+        ? `Teks pada gambar adegan ${job.imageIndex + 1} belum terbaca selama kamera bergerak. Lanjutkan produksi yang sama untuk memperbaiki adegan ini.`
+        : error instanceof ApiError ? error.message : 'Satu bagian belum selesai setelah beberapa percobaan. Bagian yang berhasil tetap tersimpan; lanjutkan produksi yang sama.';
       tx.update(ref, { lease: null, attempts, lastFailure, revision: current.revision + 1, updatedAt: Date.now(),
-        ...(attention ? { state: 'attention', nextRunAt: idle, message: error instanceof ApiError ? error.message : 'Satu bagian belum selesai setelah beberapa percobaan. Bagian yang berhasil tetap tersimpan; lanjutkan produksi yang sama.' } : { nextRunAt: retryAt, retryAt, message: 'Sedang memperbaiki bagian yang belum selesai. Hasil sebelumnya tetap tersimpan.' }) });
+        ...(attention ? { state: 'attention', nextRunAt: idle, message: attentionMessage } : { nextRunAt: retryAt, retryAt, message: 'Sedang memperbaiki bagian yang belum selesai. Hasil sebelumnya tetap tersimpan.' }) });
     });
   }
 }
