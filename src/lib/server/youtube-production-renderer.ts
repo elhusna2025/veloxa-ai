@@ -207,8 +207,13 @@ export async function renderYouTubeScene(input: {
     const zoom = mode === 3 ? `1.09-.09*${ease}` : mode === 0 ? `1+.09*${ease}` : '1.09';
     const horizontal = mode === 1 ? ease : mode === 2 ? `1-${ease}` : '.5';
     const filters = [`[0:v]scale=${width * 2}:${height * 2},zoompan=z='${zoom}':x='(iw-iw/zoom)*(${horizontal})':y='(ih-ih/zoom)*.5':d=${input.frames}:s=${width}x${height}:fps=25,setsar=1[photo]`, '[photo][1:v]overlay=shortest=0:format=yuv420[composed]'];
-    if (input.previousFrame) filters.push(`[2:v]loop=loop=-1:size=1:start=0,setpts=N/(25*TB)[old]`, '[composed]format=yuva420p,fade=t=in:st=0:d=0.32:alpha=1[incoming]', '[old][incoming]overlay=shortest=1:format=yuv420[video]');
-    else filters.push('[composed]null[video]');
+    if (input.previousFrame && input.frames >= 4) {
+      // Dissolve from the clean final camera position. Keep the full voice and caption timeline.
+      const dissolveFrames = Math.min(input.kind === 'video' ? 20 : 8, Math.floor(input.frames / 4));
+      filters.push('[2:v]loop=loop=-1:size=1:start=0,setpts=N/(25*TB)[old]',
+        `[composed]format=yuva420p,fade=t=in:s=0:n=${dissolveFrames}:alpha=1[incoming]`,
+        '[old][incoming]overlay=shortest=1:format=yuv420[video]');
+    } else filters.push('[composed]null[video]');
     if (input.caption) {
       await Promise.all([
         writeFile(path.join(dir, 'speech.ass'), sceneSubtitles(input.caption, input.frames, width, height, youtubeSpeechBounds(audio))),

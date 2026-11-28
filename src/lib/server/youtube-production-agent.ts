@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import { z } from 'zod';
 import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import type { BrandProfile } from '../veloxa-types';
-import { validateScriptBlock, validateCast, splitYouTubeSpokenLines, youtubeSceneSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene, type YouTubeStoryGenre } from '../youtube-production';
+import { validateScriptBlock, validateCast, longVideoPassages, splitYouTubeSpokenLines, youtubeSceneSchema, type YouTubeOutline, type YouTubeProductionSettings, type YouTubeScriptBlock, type YouTubeScene, type YouTubeStoryGenre } from '../youtube-production';
 import { ApiError } from './http';
 
 function client() {
@@ -118,7 +118,8 @@ export async function writeYouTubeBlock(settings: YouTubeProductionSettings, bra
     }
     speech = await write({ previousText, instruction: `Draf memiliki ${words} kata. ${words < 105 ? 'Tambahkan' : 'Ringkas'} sekitar ${Math.abs(115 - words)} kata. Kembangkan hanya fakta, alasan atau akibat yang membantu pendengar mengikuti topik.` });
   }
-  const passages = splitYouTubeSpokenLines(speech.lines).map(lines => ({ lines, narration: lines.map(line => line.text).join(' ') }));
+  const groupLines = settings.kind === 'video' ? longVideoPassages : splitYouTubeSpokenLines;
+  const passages = groupLines(speech.lines).map(lines => ({ lines, narration: lines.map(line => line.text).join(' ') }));
   const shotSchema = youtubeSceneSchema.pick({ title: true, supporting: true, visual: true, characterIds: true }).extend({ index: z.number().int() });
   const storyboard = await structured('youtube_storyboard', z.object({ shots: z.array(shotSchema).length(passages.length) }).strict(), JSON.stringify({
     task: 'Susun satu ilustrasi per bagian ucapan yang sudah final. Salin indeks tiap bagian. Gambar mendukung makna dan konteks, termasuk ketika narator menjelaskan keputusan atau perubahan keadaan. Variasikan jarak, lokasi dan tindakan. Judul pendek dan teks pendukung merangkum makna. characterIds hanya untuk pemeran terdaftar yang tampak. Pertahankan konteks waktu dan konsistensi pemeran.',

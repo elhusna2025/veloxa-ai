@@ -117,6 +117,34 @@ export function splitYouTubeSpokenLines(lines: YouTubeScene['lines']) {
   return groups;
 }
 
+/** Keep complete sentences together for a landscape shot, including short lines of dialogue. */
+export function longVideoPassages(lines: YouTubeScene['lines']) {
+  const sentences = new Intl.Segmenter('id', { granularity: 'sentence' });
+  const groups: YouTubeScene['lines'][] = [];
+  let group: YouTubeScene['lines'] = [];
+  let words = 0, chars = 0;
+  for (const line of lines) for (const part of sentences.segment(line.text)) {
+    const text = part.segment.trim();
+    if (!text) continue;
+    const count = text.split(/\s+/u).length;
+    const changesSpeaker = group.at(-1)?.speakerId !== line.speakerId;
+    const turningPoint = /^(?:kemudian|namun|bertahun-tahun kemudian|keesokan harinya|akhirnya)\b/iu.test(text);
+    if (group.length && ((words >= 16 && turningPoint) || (words >= 21 && words + count > 35) ||
+      chars + 1 + text.length > 650 || (changesSpeaker && group.length >= 6))) {
+      groups.push(group);
+      group = []; words = 0; chars = 0;
+    }
+    const last = group.at(-1);
+    if (last?.speakerId === line.speakerId) last.text += ' ' + text;
+    else group.push({ speakerId: line.speakerId, text });
+    if (words) chars++;
+    chars += text.length;
+    words += count;
+  }
+  if (group.length) groups.push(group);
+  return groups;
+}
+
 /** Preserve the script and speaker bindings when an editor splits an existing shot. */
 export function segmentYouTubeNarration(block: YouTubeScriptBlock): YouTubeScriptBlock {
   return { ...block, scenes: block.scenes.flatMap(scene => {

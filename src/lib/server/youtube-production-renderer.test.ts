@@ -84,6 +84,12 @@ test('real segmented rendering produces a continuous H264/AAC MP4 with both scen
     assert.ok(Math.abs(Number(result.format.duration) - 4) < .2, `Duration ${result.format.duration}`);
     assert.equal(Number(result.streams.find((stream: { codec_type: string }) => stream.codec_type === 'video').nb_read_frames), 100);
     const binary = (await import('@ffmpeg-installer/ffmpeg')).default.path;
+    const colors = execFileSync(binary, ['-v', 'error', '-i', filename, '-map', '0:v:0', '-vf', 'scale=1:1,format=rgb24', '-f', 'rawvideo', 'pipe:1']);
+    const [red, blue] = [0, 2].map(channel => Array.from({ length: 13 }, (_, i) => colors[(50 + i) * 3 + channel]));
+    assert.ok(red[0] > 220 && blue[0] < 80);
+    assert.ok(red[9] > 75 && blue[9] > 150, 'outgoing image remains visible through the dissolve');
+    assert.ok(blue[12] > 220 && red[12] < 80);
+    assert.ok(red.every((value, i) => i === 0 || value <= red[i - 1] + 2));
     const decoded = execFileSync(binary, ['-v', 'error', '-i', filename, '-map', '0:a:0', '-f', 's16le', '-ar', '24000', '-ac', '1', 'pipe:1'], { maxBuffer: 1024 * 1024 });
     // The former all-silence fixture missed ~700ms of chopped speech at EVERY join.
     // A continuous voiced signal must survive both the boundary and the final word.

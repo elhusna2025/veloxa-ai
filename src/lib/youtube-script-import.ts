@@ -1,11 +1,11 @@
-import { scriptWords, type YouTubeProductionSettings, type YouTubeScriptBlock } from './youtube-production';
+import { longVideoPassages, scriptWords, type YouTubeProductionSettings, type YouTubeScriptBlock } from './youtube-production';
 
 export const importExample = 'Menit 1 — Awal perjalanan\nNarator: Pagi itu, Nisa membuka tokonya untuk pertama kali.\n\nMenit 2 — Keputusan Nisa\nNarator: Saat pesanan pertama datang, ia harus memilih.';
 
 const segmenter = new Intl.Segmenter('id', { granularity: 'sentence' });
 const excerpt = (value: string, size: number) => value.length <= size ? value : value.slice(0, size - 1).trimEnd() + '…';
 
-export function parseYouTubeScript(text: string, cast: YouTubeProductionSettings['characters'] = []) {
+export function parseYouTubeScript(text: string, cast: YouTubeProductionSettings['characters'] = [], kind?: YouTubeProductionSettings['kind']) {
   if (!text.trim()) throw new Error('Tempel naskah yang ingin ditinjau.');
   const blocks: YouTubeScriptBlock[] = [];
   const speakers = new Map(cast.map(actor => [actor.name.trim().toLowerCase(), actor.id]));
@@ -76,6 +76,27 @@ export function parseYouTubeScript(text: string, cast: YouTubeProductionSettings
     if (!item.scenes.length) throw new Error(`Isi narasi untuk Menit ${item.index + 1}.`);
     if (item.scenes.map(scene => scene.narration).join(' ').length > 4000)
       throw new Error(`Narasi Menit ${item.index + 1} terlalu panjang untuk satu menit. Bagi ke beberapa menit.`);
+    if (kind === 'video') {
+      const grouped: YouTubeScriptBlock['scenes'] = [];
+      let lines: YouTubeScriptBlock['scenes'][number]['lines'] = [];
+      const flushLines = () => {
+        for (const passage of longVideoPassages(lines)) {
+          const narration = passage.map(line => line.text).join(' ');
+          const actors = passage.map(line => line.speakerId).filter(id => id !== 'narrator');
+          grouped.push({ title: excerpt(narration, 48), supporting: excerpt(narration, 110), narration,
+            lines: passage, characterIds: [...new Set(actors)], visual: 'Ilustrasikan isi narasi berikut. ' + narration });
+        }
+        lines = [];
+      };
+      for (const scene of item.scenes) {
+        if (scene.visual.startsWith('Arahan gambar adegan: ')) {
+          flushLines();
+          grouped.push(scene);
+        } else lines.push(...scene.lines);
+      }
+      flushLines();
+      item.scenes = grouped;
+    }
   }
   return blocks;
 }

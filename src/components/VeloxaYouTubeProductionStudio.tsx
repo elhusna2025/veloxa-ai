@@ -27,7 +27,7 @@ export function VeloxaYouTubeProductionStudio(props: Props) {
   const preview = useMemo(() => {
     if (!ownScript || !scriptText.trim()) return { minutes: 0, error: '' };
     try {
-      const blocks = parseYouTubeScript(scriptText, settings.characters);
+      const blocks = parseYouTubeScript(scriptText, settings.characters, settings.kind);
       return { minutes: blocks.length, error: settings.kind === 'short' && blocks.length > 1 ? 'Pilih Video YouTube untuk naskah lebih dari satu menit.' : '' };
     } catch (failure) { return { minutes: 0, error: (failure as Error).message }; }
   }, [ownScript, scriptText, settings.kind, settings.characters]);

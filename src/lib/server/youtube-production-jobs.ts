@@ -114,7 +114,7 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       if (new Set(input.settings.characters.map(actor => actor.id)).size !== input.settings.characters.length) throw new ApiError(400, 'ID karakter harus unik.');
       let imported: YouTubeScriptBlock[] | undefined;
       if (input.scriptText !== undefined) {
-        try { imported = parseYouTubeScript(input.scriptText, input.settings.characters); }
+        try { imported = parseYouTubeScript(input.scriptText, input.settings.characters, input.settings.kind); }
         catch (error) { throw new ApiError(400, (error as Error).message); }
         if (imported.length !== input.settings.minutes) throw new ApiError(400, 'Jumlah menit dalam naskah harus sesuai durasi produksi.');
       }

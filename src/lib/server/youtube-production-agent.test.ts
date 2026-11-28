@@ -102,3 +102,13 @@ test('imported short sentences share an illustration while narration and explici
   assert.match(block.scenes[0].visual, /kamar asrama/);
   assert.equal(block.scenes[1].narration, 'Kemudian ada tawaran.');
 });
+
+test('landscape import holds short narrator fragments together and respects a directed shot', () => {
+  const phrases = Array.from({ length: 14 }, (_, i) => `Pada hari ke-${i + 1} dia menerima sebuah surat baru.`);
+  const input = phrases.join('\n\n') + '\n\nIa akhirnya berangkat.\nVisual: Sebuah kereta meninggalkan stasiun.';
+  const [landscape] = parseYouTubeScript(input, [], 'video');
+  assert.ok(landscape.scenes.length >= 3 && landscape.scenes.length <= 5);
+  assert.equal(landscape.scenes.map(scene => scene.narration).join(' '), phrases.join(' ') + ' Ia akhirnya berangkat.');
+  assert.match(landscape.scenes.at(-1)!.visual, /kereta meninggalkan stasiun/);
+  assert.equal(parseYouTubeScript(input, [], 'short')[0].scenes.length, 15);
+});
