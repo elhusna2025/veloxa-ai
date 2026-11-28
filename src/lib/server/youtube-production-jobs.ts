@@ -9,9 +9,9 @@ import { DEFAULT_CONTENT_MODELS } from '../admin-settings';
 import { effectiveWorkspacePlan } from '../subscription';
 import { reserveGenerationAttempt } from './generation-policy';
 import { ApiError, errorResponse, noStoreJson, readJson } from './http';
-import { youtubeProductionSettings, youtubeVoiceSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
+import { youtubeProductionSettings, youtubeVoiceSchema, youtubeBlockSchema, youtubeNarratorDelivery, validateScriptBlock, validateCast, youtubeSceneLocation, type YouTubeProduction, type YouTubeOutline, type YouTubeScriptBlock } from '../youtube-production';
 import type { BrandProfile } from '../veloxa-types';
-import { planYouTubeVideo, writeYouTubeBlock, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
+import { planYouTubeVideo, writeYouTubeBlock, suggestYouTubeScriptRevision, createYouTubeCharacter, createYouTubePhoto } from './youtube-production-agent';
 import { paceYouTubeSpeech } from './youtube-speech-pacing';
 import { generateYouTubeNarration, generateDialogueVoiceover, generateCharacterVoiceSample } from './reels-voice';
 import { composeYouTubeFrame, renderYouTubeScene, remuxYouTubeVideo, normalizeYouTubeSceneAudio, sceneFrameCounts, YOUTUBE_LAYOUT_VERSION } from './youtube-production-renderer';
@@ -40,7 +40,7 @@ const blockRef = (ref: Ref, index: number) => ref.collection('blocks').doc(Strin
 const sceneRef = (ref: Ref, index: number) => ref.collection('scenes').doc(String(index).padStart(4, '0'));
 type Dependencies = {
   authorize?: typeof requireWorkspace; models?: typeof resolveAdminModels;
-  reserve?: typeof reserveGenerationAttempt; plan?: typeof planYouTubeVideo; script?: typeof writeYouTubeBlock;
+  reserve?: typeof reserveGenerationAttempt; plan?: typeof planYouTubeVideo; script?: typeof writeYouTubeBlock; suggest?: typeof suggestYouTubeScriptRevision;
 };
 async function save(ref: Ref, name: string, bytes: Buffer, contentType: string) {
   await object(ref, name).save(bytes, { resumable: false, timeout: 30_000, metadata: { contentType, cacheControl: 'private, no-store' } });
@@ -116,13 +116,21 @@ export async function youtubeProductionApi(request: Request, rawId?: string, dep
       });
       return noStoreJson({ production: await dto(ref, job) });
     }
-    const { ref, context } = await owned(request, rawId, deps);
+    const { ref, context, job } = await owned(request, rawId, deps);
     const input = z.discriminatedUnion('action', [
       z.object({ action: z.literal('process') }).strict(),
       z.object({ action: z.enum(['approve_script', 'approve_characters', 'stop', 'resume', 'retry_now']), revision: z.number().int(), confirmed: z.literal(true) }).strict(),
+      z.object({ action: z.literal('suggest_edit'), revision: z.number().int(), index: z.number().int().min(0).max(119),
+        note: z.string().trim().min(1).max(2000), block: youtubeBlockSchema }).strict(),
       z.object({ action: z.literal('edit'), revision: z.number().int(), index: z.number().int().min(0).max(119), block: youtubeBlockSchemaForEdit() }).strict(),
       z.object({ action: z.literal('revise_character'), revision: z.number().int(), characterId: z.string().regex(/^actor_[1-5]$/), appearance: z.string().trim().min(15).max(1000), voice: youtubeVoiceSchema, delivery: z.string().trim().max(500), confirmed: z.literal(true) }).strict(),
     ]).parse(await readJson(request));
+    if (input.action === 'suggest_edit') {
+      if (job.state !== 'script_review' || job.revision !== input.revision || !job.outline || input.index >= job.scriptIndex)
+        throw new ApiError(409, 'Naskah sudah berubah. Buka kembali menit yang ingin direvisi.');
+      const proposal = await (deps.suggest ?? suggestYouTubeScriptRevision)(job.settings, job.outline, input.index, input.block.scenes, input.note, job.models.scriptModel);
+      return noStoreJson({ proposal });
+    }
     const savedCounts = input.action === 'edit' ? (await ref.collection('blocks').orderBy('index').get()).docs.map(doc => (doc.data() as YouTubeScriptBlock).scenes.length) : [];
     if (input.action === 'process') await runYouTubeProductionStep(ref, deps);
     else await ref.firestore.runTransaction(async tx => {

@@ -80,6 +80,30 @@ export async function writeYouTubeBlock(settings: YouTubeProductionSettings, bra
   validateCast(result, settings);
   return result;
 }
+export async function suggestYouTubeScriptRevision(settings: YouTubeProductionSettings, outline: YouTubeOutline, index: number,
+  scenes: YouTubeScene[], note: string, model: string) {
+  const schema = z.object({ scenes: z.array(youtubeSceneSchema.omit({ narration: true })).min(1) });
+  const brief = {
+    task: 'Sunting hanya menit terpilih sesuai catatan. Gunakan naskah editor sebagai dasar, pertahankan fakta, gaya bicara, kesinambungan bab dan pemeran. Ubah arahan visual bila isi baru memerlukannya. Targetkan 115 kata lisan dalam lines untuk seluruh menit (105–125).',
+    topic: settings.topic, delivery: settings.delivery, cast: settings.characters.map(({ id, name }) => ({ id, name })),
+    outline, minute: index + 1, scenes, note,
+  };
+  let correction = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await structured('youtube_script_revision', schema, JSON.stringify({ ...brief, correction }), model, 6000);
+    const revised = result.scenes.map(scene => ({ ...scene, narration: scene.lines.map(line => line.text).join(' ') }));
+    try {
+      const block = { ...validateScriptBlock({ scenes: revised }), index, chapter: outline.chapters[index] };
+      validateCast(block, settings);
+      return block;
+    } catch {
+      const words = revised.map(scene => scene.narration).join(' ').trim().split(/\s+/u).length;
+      correction = `Usulan sebelumnya berjumlah ${words} kata. Susun ulang dengan total 105–125 kata lisan. Gunakan hanya pembicara terdaftar dan narasi minimal 20 karakter tiap adegan.`;
+    }
+  }
+  throw new ApiError(422, 'Usulan AI belum sesuai durasi atau pemeran. Perjelas catatan lalu coba kembali.');
+}
+
 export async function createYouTubeCharacter(character: YouTubeProductionSettings['characters'][number], model = String(DEFAULT_CONTENT_MODELS.imageModel)): Promise<Buffer> {
   const response = await client().images.generate({ model, n: 1, quality: 'medium', output_format: 'jpeg', size: '1024x1024',
     prompt: `Create one original fictional character reference portrait: ${JSON.stringify(character)}. Three-quarter upper body, clearly visible face and hair, natural daylight, neutral background, realistic photography. No text or panels. This is the canonical appearance to preserve in all later scenes: facial geometry, skin tone, age, hair, clothing and identifying details. Do not depict a celebrity.` });

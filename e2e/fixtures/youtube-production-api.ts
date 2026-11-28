@@ -12,7 +12,16 @@ const item = { id: '00000000-0000-4000-8000-000000000001', revision: 1, state,
   portraits: characters.map(actor => actor.id), completedScenes: 0, createdAt: 1, updatedAt: 1, durationSeconds: 900 };
 export async function veloxaApi(path: string, init?: RequestInit) {
   if (path.includes('/media/')) return { ready: true };
-  if (init?.method === 'POST') return { production: item };
+  if (init?.method === 'POST') {
+    const body = JSON.parse(String(init.body));
+    if (body.action === 'suggest_edit') {
+      const proposal = structuredClone(item.blocks[body.index]);
+      proposal.scenes[0].title = 'Pembukaan baru dari AI';
+      return { proposal };
+    }
+    if (body.action === 'edit') item.blocks[body.index].scenes = body.block.scenes;
+    return { production: item };
+  }
   if (path.includes(item.id)) return { production: item };
   if (state !== 'empty') item.blocks = Array.from({ length: 15 }, (_, index) => ({ ...item.blocks[0], index }));
   return { productions: state === 'empty' ? [] : [item] };

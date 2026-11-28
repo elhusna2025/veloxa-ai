@@ -36,6 +36,21 @@ const watchdog = setTimeout(() => process.exit(124), 50_000);
         assert.equal(await page.getByRole('button', { name: 'Tambah karakter', exact: true }).isDisabled(), true);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
       }
+      if (state === 'script_review') {
+        await page.locator('summary').first().click();
+        await page.getByRole('button', { name: 'Edit menit 1', exact: true }).click();
+        const note = page.getByRole('textbox', { name: 'Catatan revisi untuk AI' });
+        assert.ok(await note.evaluate(el => el === document.activeElement));
+        await note.fill('Perjelas pembukaan.');
+        await note.press('Tab'); await page.keyboard.press('Enter');
+        await page.getByText('Usulan AI · belum disimpan').waitFor();
+        assert.ok(await page.getByRole('button', { name: 'Simpan naskah' }).isDisabled());
+        await page.getByRole('button', { name: 'Abaikan usulan' }).click();
+        await page.getByRole('button', { name: 'Usulkan revisi dengan AI' }).click();
+        await page.getByRole('button', { name: 'Gunakan usulan' }).click();
+        await page.getByRole('button', { name: 'Simpan naskah' }).click();
+        await page.getByRole('heading', {name: '1. Pembukaan baru dari AI'}).waitFor();
+      }
       if (state === 'retry') { await page.getByText('Menunggu percobaan ulang otomatis', { exact: true }).waitFor(); assert.equal(await page.getByRole('progressbar', { name: 'Bagian produksi yang selesai', exact: true }).getAttribute('max'), '157'); }
       if (state === 'audio') await page.getByText('Membuat suara untuk menit 1 dari 15', { exact: true }).waitFor();
       if (state === 'merge') await page.getByText('Menggabungkan adegan menjadi video akhir', { exact: true }).waitFor();

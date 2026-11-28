@@ -133,3 +133,23 @@ test('new Shorts and long videos both opt into full-frame narrative production f
     assert.equal((await f.jobRef().get()).data()?.narrativeComposition, true);
   }
 });
+
+test('revision notes return an unsaved proposal only while reviewing the matching revision', async () => {
+  const f = fixture(); await f.create();
+  const ref = f.jobRef(), job = (await ref.get()).data()!;
+  const original = block();
+  f.store.rows.set(ref.path, { ...job, state: 'script_review', scriptIndex: 1, outline: { title: 'Catatan', chapters: [original.chapter], description: '' } });
+  f.store.rows.set(ref.path + '/blocks/000', original);
+  const input = { action: 'suggest_edit', index: 0, revision: job.revision, note: 'Perjelas pembukaan', block: { scenes: original.scenes } };
+  let calls = 0;
+  const deps = { ...f.deps, suggest: async () => { calls++; return { ...original, scenes: original.scenes.map(s => ({ ...s, title: 'Pembuka baru' })) }; } };
+  const response = await youtubeProductionApi(f.request(input), f.id, deps);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).proposal.scenes[0].title, 'Pembuka baru');
+  assert.deepEqual(f.store.rows.get(ref.path + '/blocks/000'), original);
+  assert.equal(f.store.rows.get(ref.path)?.revision, job.revision);
+  assert.equal((await youtubeProductionApi(f.request({ ...input, revision: -1 }), f.id, deps)).status, 409);
+  f.store.rows.set(ref.path, { ...job, state: 'producing' });
+  assert.equal((await youtubeProductionApi(f.request(input), f.id, deps)).status, 409);
+  assert.equal(calls, 1);
+});
